@@ -11,11 +11,13 @@
 #![forbid(unsafe_code)]
 
 pub mod log;
+pub mod memory;
 pub mod rules;
 pub mod shell;
 pub mod types;
 
 pub use log::{ChainStatus, EventLog, LogError, LoggedEvent, GENESIS_HASH};
+pub use memory::command_hash;
 pub use rules::{classify, classify_and_decide, classify_line, decide, RuleMatch};
 pub use types::{Class, Decision, Mode, ProposedCommand, Verdict};
 

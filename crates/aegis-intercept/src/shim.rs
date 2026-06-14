@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use aegis_core::{Decision, ProposedCommand, Verdict};
-use aegis_daemon::Client;
+use aegis_daemon::{Client, Resolution};
 
 /// Exit code used when Aegis refuses to run a command (mirrors shell "cannot
 /// execute": 126).
@@ -72,10 +72,11 @@ enum DaemonOutcome {
     Refuse(u8),
 }
 
-/// Ask the daemon and translate its verdict into an allow/refuse outcome.
+/// Ask the daemon and translate its verdict into an allow/refuse outcome,
+/// prompting the human with the hold card when the command is held.
 fn consult_daemon(proposed: &ProposedCommand) -> DaemonOutcome {
     match Client::send(proposed) {
-        Ok(verdict) => enforce(&verdict),
+        Ok(verdict) => enforce(proposed, &verdict),
         Err(e) => {
             if fail_closed() {
                 eprintln!("aegis: daemon unreachable; blocking (fail-closed): {e}");
@@ -88,23 +89,75 @@ fn consult_daemon(proposed: &ProposedCommand) -> DaemonOutcome {
     }
 }
 
-/// Map a verdict to an outcome. Phase 0 only ever returns Allow; Deny/Hold are
-/// handled here so Phase 1's gate works through the same shim unchanged.
-fn enforce(verdict: &Verdict) -> DaemonOutcome {
+/// Map a verdict to an outcome, prompting on Hold.
+fn enforce(proposed: &ProposedCommand, verdict: &Verdict) -> DaemonOutcome {
     match verdict.decision {
         Decision::Allow => DaemonOutcome::Allow,
         Decision::Deny => {
             eprintln!("aegis: blocked [{}]: {}", verdict.class, verdict.reason);
             DaemonOutcome::Refuse(EXIT_BLOCKED)
         }
-        Decision::Hold => {
-            eprintln!(
-                "aegis: held [{}] (no approver attached to this shell): {}",
-                verdict.class, verdict.reason
-            );
-            DaemonOutcome::Refuse(EXIT_BLOCKED)
+        Decision::Hold => prompt_and_resolve(proposed, verdict),
+    }
+}
+
+/// Show the hold card, read one key from the terminal, and record the human's
+/// resolution. With no terminal/stdin available, default to deny (safe).
+fn prompt_and_resolve(proposed: &ProposedCommand, verdict: &Verdict) -> DaemonOutcome {
+    let color = std::env::var_os("NO_COLOR").is_none();
+    eprint!("{}", crate::holdcard::render(&proposed.raw, verdict, color));
+
+    let (decision, remember) = match read_key() {
+        Some('a') => (Decision::Allow, false),
+        Some('r') => (Decision::Allow, true),
+        Some('d') => (Decision::Deny, false),
+        _ => {
+            // No answer (no TTY, EOF, or anything else) → safe default: deny,
+            // and do not record a resolution (the held event already stands).
+            eprintln!("aegis: no decision given; leaving the command held (not run).");
+            return DaemonOutcome::Refuse(EXIT_BLOCKED);
+        }
+    };
+
+    // Record the human's resolution (best-effort).
+    let resolution = Resolution {
+        command: proposed.clone(),
+        decision,
+        remember,
+    };
+    if let Err(e) = Client::resolve(&resolution) {
+        eprintln!("aegis: warning: could not record resolution: {e}");
+    }
+
+    match decision {
+        Decision::Allow => DaemonOutcome::Allow,
+        _ => DaemonOutcome::Refuse(EXIT_BLOCKED),
+    }
+}
+
+/// Read a single decision key from the controlling terminal, falling back to
+/// stdin. Returns the lowercased first non-whitespace character, if any.
+fn read_key() -> Option<char> {
+    use std::io::BufReader;
+
+    // Prefer the real terminal so we read the human, not an agent's piped stdin.
+    #[cfg(unix)]
+    if let Ok(tty) = std::fs::File::open("/dev/tty") {
+        if let Some(c) = first_char(BufReader::new(tty)) {
+            return Some(c);
         }
     }
+    // Fall back to stdin (used in tests and non-TTY pipelines).
+    let stdin = std::io::stdin();
+    first_char(BufReader::new(stdin.lock()))
+}
+
+fn first_char<R: std::io::BufRead>(mut reader: R) -> Option<char> {
+    let mut line = String::new();
+    if reader.read_line(&mut line).ok()? == 0 {
+        return None;
+    }
+    line.trim().chars().next().map(|c| c.to_ascii_lowercase())
 }
 
 /// Whether the shim should block when the daemon is unreachable.

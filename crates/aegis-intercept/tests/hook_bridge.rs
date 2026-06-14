@@ -34,7 +34,9 @@ fn start(requests: usize) -> Harness {
     let server = Server::bind().unwrap();
     let handle = thread::spawn(move || {
         let daemon = Daemon::open(&db_for_thread).unwrap();
-        server.serve_n(requests, |cmd| daemon.handle(cmd)).unwrap();
+        server
+            .serve_n(requests, |req| daemon.handle_request(req))
+            .unwrap();
     });
 
     Harness {

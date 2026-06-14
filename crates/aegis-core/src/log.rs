@@ -52,6 +52,8 @@ pub struct LoggedEvent {
     pub class: Class,
     /// The decision recorded.
     pub decision: Decision,
+    /// The rule name or resolution reason behind the decision.
+    pub reason: String,
     /// Tier that produced the decision.
     pub tier: u8,
     /// Optional severity score.
@@ -120,6 +122,7 @@ impl EventLog {
                 argv       TEXT NOT NULL,
                 class      TEXT NOT NULL,
                 decision   TEXT NOT NULL,
+                reason     TEXT NOT NULL,
                 tier       INTEGER NOT NULL,
                 risk       INTEGER,
                 summary    TEXT,
@@ -127,9 +130,68 @@ impl EventLog {
                 prev_hash  TEXT NOT NULL,
                 hash       TEXT NOT NULL
             );
+
+            -- Decision memory. Unlike `events`, this table is intentionally
+            -- mutable state: per-repo always-allow / always-deny by command hash.
+            CREATE TABLE IF NOT EXISTS memory (
+                repo         TEXT NOT NULL,
+                command_hash TEXT NOT NULL,
+                action       TEXT NOT NULL,
+                updated_at   TEXT NOT NULL,
+                PRIMARY KEY (repo, command_hash)
+            );
             "#,
         )?;
         Ok(Self { conn })
+    }
+
+    /// Remember a per-repo decision for an exact command (always-allow / -deny).
+    ///
+    /// Only `Allow` and `Deny` are meaningful; `Hold` is rejected.
+    pub fn remember(
+        &self,
+        repo: &str,
+        command_hash: &str,
+        action: crate::types::Decision,
+    ) -> Result<(), LogError> {
+        use crate::types::Decision;
+        if action == Decision::Hold {
+            return Err(LogError::Corrupt(
+                "cannot remember a Hold decision".to_string(),
+            ));
+        }
+        let now = OffsetDateTime::now_utc().format(&Rfc3339)?;
+        self.conn.execute(
+            r#"
+            INSERT INTO memory (repo, command_hash, action, updated_at)
+            VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(repo, command_hash) DO UPDATE SET action = ?3, updated_at = ?4
+            "#,
+            rusqlite::params![repo, command_hash, action.as_str(), now],
+        )?;
+        Ok(())
+    }
+
+    /// Look up a remembered decision for an exact command in a repo.
+    pub fn memory_lookup(
+        &self,
+        repo: &str,
+        command_hash: &str,
+    ) -> Result<Option<crate::types::Decision>, LogError> {
+        use crate::types::Decision;
+        let action: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT action FROM memory WHERE repo = ?1 AND command_hash = ?2",
+                rusqlite::params![repo, command_hash],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(match action.as_deref() {
+            Some("allow") => Some(Decision::Allow),
+            Some("deny") => Some(Decision::Deny),
+            _ => None,
+        })
     }
 
     /// Compute the canonical hash for a row given its predecessor.
@@ -147,13 +209,14 @@ impl EventLog {
         argv_json: &str,
         class: Class,
         decision: Decision,
+        reason: &str,
         tier: u8,
         risk: Option<u8>,
         summary: Option<&str>,
         snapshot_id: Option<&str>,
     ) -> String {
         let payload = format!(
-            "{prev}\u{1f}{id}\u{1f}{ts}\u{1f}{agent}\u{1f}{cwd}\u{1f}{cmd}\u{1f}{argv}\u{1f}{class}\u{1f}{dec}\u{1f}{tier}\u{1f}{risk}\u{1f}{summary}\u{1f}{snap}",
+            "{prev}\u{1f}{id}\u{1f}{ts}\u{1f}{agent}\u{1f}{cwd}\u{1f}{cmd}\u{1f}{argv}\u{1f}{class}\u{1f}{dec}\u{1f}{reason}\u{1f}{tier}\u{1f}{risk}\u{1f}{summary}\u{1f}{snap}",
             prev = prev_hash,
             id = id,
             ts = ts_rfc3339,
@@ -163,6 +226,7 @@ impl EventLog {
             argv = argv_json,
             class = class.as_str(),
             dec = decision.as_str(),
+            reason = reason,
             tier = tier,
             risk = risk.map(|r| r.to_string()).unwrap_or_default(),
             summary = summary.unwrap_or_default(),
@@ -209,6 +273,7 @@ impl EventLog {
             &argv_json,
             verdict.class,
             verdict.decision,
+            &verdict.reason,
             verdict.tier,
             verdict.risk,
             verdict.summary.as_deref(),
@@ -218,8 +283,8 @@ impl EventLog {
         self.conn.execute(
             r#"
             INSERT INTO events
-                (id, ts, agent, cwd, command, argv, class, decision, tier, risk, summary, snapshot_id, prev_hash, hash)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+                (id, ts, agent, cwd, command, argv, class, decision, reason, tier, risk, summary, snapshot_id, prev_hash, hash)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
             "#,
             rusqlite::params![
                 cmd.id.to_string(),
@@ -230,6 +295,7 @@ impl EventLog {
                 argv_json,
                 verdict.class.as_str(),
                 verdict.decision.as_str(),
+                verdict.reason,
                 verdict.tier as i64,
                 verdict.risk.map(|r| r as i64),
                 verdict.summary,
@@ -250,6 +316,7 @@ impl EventLog {
             argv: cmd.argv.clone(),
             class: verdict.class,
             decision: verdict.decision,
+            reason: verdict.reason.clone(),
             tier: verdict.tier,
             risk: verdict.risk,
             summary: verdict.summary.clone(),
@@ -264,7 +331,7 @@ impl EventLog {
         // Pull the newest n by seq desc, then reverse so callers see chronological order.
         let mut stmt = self.conn.prepare(
             r#"
-            SELECT seq, id, ts, agent, cwd, command, argv, class, decision, tier,
+            SELECT seq, id, ts, agent, cwd, command, argv, class, decision, reason, tier,
                    risk, summary, snapshot_id, prev_hash, hash
             FROM (
                 SELECT * FROM events ORDER BY seq DESC LIMIT ?1
@@ -293,7 +360,7 @@ impl EventLog {
     pub fn verify_chain(&self) -> Result<ChainStatus, LogError> {
         let mut stmt = self.conn.prepare(
             r#"
-            SELECT seq, id, ts, agent, cwd, command, argv, class, decision, tier,
+            SELECT seq, id, ts, agent, cwd, command, argv, class, decision, reason, tier,
                    risk, summary, snapshot_id, prev_hash, hash
             FROM events ORDER BY seq ASC
             "#,
@@ -328,6 +395,7 @@ impl EventLog {
                 &argv_json,
                 ev.class,
                 ev.decision,
+                &ev.reason,
                 ev.tier,
                 ev.risk,
                 ev.summary.as_deref(),
@@ -361,12 +429,13 @@ impl EventLog {
         let argv_s: String = row.get(6)?;
         let class_s: String = row.get(7)?;
         let decision_s: String = row.get(8)?;
-        let tier: i64 = row.get(9)?;
-        let risk: Option<i64> = row.get(10)?;
-        let summary: Option<String> = row.get(11)?;
-        let snapshot_id: Option<String> = row.get(12)?;
-        let prev_hash: String = row.get(13)?;
-        let hash: String = row.get(14)?;
+        let reason: String = row.get(9)?;
+        let tier: i64 = row.get(10)?;
+        let risk: Option<i64> = row.get(11)?;
+        let summary: Option<String> = row.get(12)?;
+        let snapshot_id: Option<String> = row.get(13)?;
+        let prev_hash: String = row.get(14)?;
+        let hash: String = row.get(15)?;
 
         Ok((|| {
             let id = Uuid::parse_str(&id_s)
@@ -395,6 +464,7 @@ impl EventLog {
                 argv,
                 class,
                 decision,
+                reason,
                 tier,
                 risk,
                 summary,

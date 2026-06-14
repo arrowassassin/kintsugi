@@ -1,14 +1,16 @@
 //! Local IPC transport between interception and the daemon.
 //!
 //! Wire format: one newline-delimited JSON value per message. The interception
-//! side connects, writes a [`ProposedCommand`], and blocks reading a [`Verdict`].
-//! Transport is a Unix domain socket (filesystem) or a Windows named pipe
+//! side connects and sends a [`Request`]; the daemon replies with a [`Response`].
+//! A `Propose` carries a [`ProposedCommand`] and is answered with a [`Verdict`];
+//! a `Resolve` records a human's decision on a held command and is answered with
+//! `Ack`. Transport is a Unix domain socket (filesystem) or a Windows named pipe
 //! (namespaced), abstracted by the `interprocess` crate.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 
-use aegis_core::{ProposedCommand, Verdict};
+use aegis_core::{Decision, ProposedCommand, Verdict};
 use anyhow::{Context, Result};
 use interprocess::local_socket::prelude::*;
 #[cfg(unix)]
@@ -16,6 +18,40 @@ use interprocess::local_socket::GenericFilePath;
 #[cfg(not(unix))]
 use interprocess::local_socket::GenericNamespaced;
 use interprocess::local_socket::{ListenerOptions, Name, Stream};
+use serde::{Deserialize, Serialize};
+
+/// A request from interception to the daemon.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum Request {
+    /// "Here is a command I'm about to run — what's the verdict?"
+    Propose(ProposedCommand),
+    /// "A human resolved a held command; record it (and maybe remember it)."
+    Resolve(Resolution),
+}
+
+/// A human's resolution of a held command.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Resolution {
+    /// The original command being resolved.
+    pub command: ProposedCommand,
+    /// The human's decision — `Allow` or `Deny` (never `Hold`).
+    pub decision: Decision,
+    /// Whether to remember this decision for this exact command in this repo.
+    pub remember: bool,
+}
+
+/// The daemon's reply.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum Response {
+    /// Verdict for a `Propose`.
+    Verdict(Verdict),
+    /// Acknowledgement of a `Resolve`.
+    Ack,
+    /// Something went wrong handling the request.
+    Error { message: String },
+}
 
 /// Resolve the socket path. Override with `AEGIS_SOCKET` (handy in tests).
 ///
@@ -51,7 +87,6 @@ fn make_name() -> Result<Name<'static>> {
     }
     #[cfg(not(unix))]
     {
-        // Windows: use a namespaced pipe name (ignore the filesystem path form).
         let _ = &path;
         "aegis"
             .to_ns_name::<GenericNamespaced>()
@@ -60,7 +95,7 @@ fn make_name() -> Result<Name<'static>> {
 }
 
 /// Write one JSON message followed by a newline.
-fn write_message<W: Write, T: serde::Serialize>(w: &mut W, value: &T) -> Result<()> {
+fn write_message<W: Write, T: Serialize>(w: &mut W, value: &T) -> Result<()> {
     let mut line = serde_json::to_string(value).context("serialize IPC message")?;
     line.push('\n');
     w.write_all(line.as_bytes()).context("write IPC message")?;
@@ -78,18 +113,35 @@ fn read_message<R: BufRead, T: serde::de::DeserializeOwned>(r: &mut R) -> Result
     serde_json::from_str(line.trim_end()).context("deserialize IPC message")
 }
 
-/// Client side: connect, send a proposal, and block for the verdict.
+/// Send a request and read the response on a fresh connection.
+fn round_trip(req: &Request) -> Result<Response> {
+    let name = make_name()?;
+    let mut stream = Stream::connect(name).context("connect to aegis daemon (is it running?)")?;
+    write_message(&mut stream, req)?;
+    let mut reader = BufReader::new(&mut stream);
+    read_message(&mut reader)
+}
+
+/// Client side: connect, send a request, and block for the response.
 pub struct Client;
 
 impl Client {
-    /// Send a proposed command to the daemon and await its verdict.
+    /// Propose a command and await its verdict.
     pub fn send(cmd: &ProposedCommand) -> Result<Verdict> {
-        let name = make_name()?;
-        let mut stream =
-            Stream::connect(name).context("connect to aegis daemon (is it running?)")?;
-        write_message(&mut stream, cmd)?;
-        let mut reader = BufReader::new(&mut stream);
-        read_message(&mut reader)
+        match round_trip(&Request::Propose(cmd.clone()))? {
+            Response::Verdict(v) => Ok(v),
+            Response::Error { message } => anyhow::bail!("daemon error: {message}"),
+            Response::Ack => anyhow::bail!("unexpected Ack in response to Propose"),
+        }
+    }
+
+    /// Record a human's resolution of a held command.
+    pub fn resolve(resolution: &Resolution) -> Result<()> {
+        match round_trip(&Request::Resolve(resolution.clone()))? {
+            Response::Ack => Ok(()),
+            Response::Error { message } => anyhow::bail!("daemon error: {message}"),
+            Response::Verdict(_) => anyhow::bail!("unexpected Verdict in response to Resolve"),
+        }
     }
 
     /// Whether a daemon appears to be listening.
@@ -113,7 +165,6 @@ impl Server {
         {
             let path = socket_path();
             if path.exists() {
-                // A stale socket file from a previous run blocks rebinding.
                 let _ = std::fs::remove_file(&path);
             }
         }
@@ -131,13 +182,9 @@ impl Server {
     }
 
     /// Serve connections sequentially, calling `handler` for each request.
-    ///
-    /// Sequential by design: the event log holds a single SQLite connection that
-    /// is not shared across threads, and each request is sub-millisecond. The
-    /// interception side blocks on the response, so ordering is preserved.
     pub fn serve<F>(self, mut handler: F) -> Result<()>
     where
-        F: FnMut(ProposedCommand) -> Verdict,
+        F: FnMut(Request) -> Response,
     {
         for incoming in self.listener.incoming() {
             let stream = match incoming {
@@ -157,7 +204,7 @@ impl Server {
     /// Serve exactly `count` connections then stop. Used by tests.
     pub fn serve_n<F>(self, count: usize, mut handler: F) -> Result<()>
     where
-        F: FnMut(ProposedCommand) -> Verdict,
+        F: FnMut(Request) -> Response,
     {
         if count == 0 {
             return Ok(());
@@ -167,8 +214,6 @@ impl Server {
             let stream = incoming.context("accept connection")?;
             Self::handle_one(stream, &mut handler)?;
             served += 1;
-            // Break immediately after the last request so we never block waiting
-            // for an accept that will not come.
             if served >= count {
                 break;
             }
@@ -178,14 +223,14 @@ impl Server {
 
     fn handle_one<F>(mut stream: Stream, handler: &mut F) -> Result<()>
     where
-        F: FnMut(ProposedCommand) -> Verdict,
+        F: FnMut(Request) -> Response,
     {
-        let cmd: ProposedCommand = {
+        let req: Request = {
             let mut reader = BufReader::new(&mut stream);
             read_message(&mut reader)?
         };
-        let verdict = handler(cmd);
-        write_message(&mut stream, &verdict)?;
+        let resp = handler(req);
+        write_message(&mut stream, &resp)?;
         Ok(())
     }
 }

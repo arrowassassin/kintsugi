@@ -48,3 +48,11 @@ the locked product decisions this build implements.
   mode)` so it is one source of truth across daemon and adapters. Attended holds
   catastrophic+ambiguous; unattended hard-denies catastrophic and (rules-only,
   pre-model) denies ambiguous on the safe side; notify always allows+records.
+- P1.3/P1.4: Interactive approval lives in the shim (it owns the TTY): it reads
+  one key from /dev/tty, falling back to stdin, defaulting to deny when there is
+  no answer. Resolutions are a second IPC message (Resolve) so the daemon stays
+  the single logger. Added a persisted `reason` column to the event log (also
+  folded into the hash chain) so provenance — rule name, human:allow,
+  memory:allow — is auditable. Decision memory is mutable state in the same DB,
+  keyed by (repo-root, exact-command-hash); consulted before rules, allow-only
+  in spirit but supports always-deny too. Memory never erases the rule class.

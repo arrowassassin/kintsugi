@@ -60,6 +60,16 @@ All notable changes to Aegis are documented here. The format loosely follows
   Catastrophic/Ambiguous→Deny; Notify→Allow). Held commands pause and do not run
   across the shim, hook (→`ask`), and MCP adapters.
 
+- **P1.3** — The hold card and one-key approval. On a Hold the shim prints a
+  calm card (plain-English risk line, the raw command verbatim, `[a]llow /
+  [d]eny / [r] always-allow-here`), reads one key from `/dev/tty` (falling back
+  to stdin), and records the human's resolution. No answer ⇒ stays held (safe).
+  IPC gains a `Resolve` request; the event log gains a persisted `reason` column.
+- **P1.4** — Decision memory. `[r]` stores a per-repo always-allow keyed by the
+  exact command hash; the daemon consults memory before the rules, so a
+  remembered command auto-allows next time and is logged as `memory:allow`. The
+  repo key is the nearest ancestor `.git` directory.
+
 ### Changed
 - Pinned all dependencies to latest stable. `rusqlite` held at 0.39 because 0.40
   pulls `libsqlite3-sys` 0.38 which needs the unstable `cfg_select!` feature.

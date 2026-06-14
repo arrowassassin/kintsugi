@@ -112,7 +112,7 @@ mod tests {
         // Build a LoggedEvent via the log so timestamps/fields are realistic.
         let log = aegis_core::EventLog::open_in_memory().unwrap();
         let cmd = ProposedCommand::new(agent, "/tmp", vec![raw.into()], raw);
-        let verdict = Verdict::rules(class, decision, "test");
+        let verdict = Verdict::rules(class, decision, "test-rule");
         log.log_event(&cmd, &verdict, None).unwrap()
     }
 
