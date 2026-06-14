@@ -39,6 +39,12 @@ All notable changes to Aegis are documented here. The format loosely follows
   `initialize`, `tools/list`, `tools/call`, `ping`. Wiring documented in
   `docs/mcp.md`.
 
+- **P0.7** — `aegis-cli`: `aegis init` (detect agents via config dirs, create
+  `$PATH` shims, wire the Claude Code hook idempotently with a backup, start the
+  daemon), `aegis status` (daemon/socket/log/chain health), and `aegis log` (a
+  calm timeline — outcome words not just color, one reserved accent, `NO_COLOR`
+  respected, designed empty state). Completes **Phase 0 — Recorder**.
+
 ### Changed
 - Pinned all dependencies to latest stable. `rusqlite` held at 0.39 because 0.40
   pulls `libsqlite3-sys` 0.38 which needs the unstable `cfg_select!` feature.

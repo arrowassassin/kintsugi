@@ -32,3 +32,9 @@ the locked product decisions this build implements.
   MCP framework dep, keeping the dependency surface small). The tool executes
   allowed commands itself via `sh -c` / `cmd /C` and returns exit code + stdout
   + stderr; Deny/Hold are returned as tool errors without running.
+- P0.7: `aegis init` detects agents by config-dir presence (most reliable
+  cross-platform signal), wires Claude Code via a hook merged idempotently into
+  ~/.claude/settings.json (backed up first), and links a default risky-command
+  set into a shim dir the user prepends to PATH. `aegis log` is calm by design:
+  outcome words (allowed/denied/held) not color alone, one reserved accent for
+  danger, NO_COLOR respected. Phase 0 (Recorder) complete.
