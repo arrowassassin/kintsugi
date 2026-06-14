@@ -10,4 +10,10 @@
 
 #![forbid(unsafe_code)]
 
+pub mod log;
+pub mod types;
+
+pub use log::{ChainStatus, EventLog, LogError, LoggedEvent, GENESIS_HASH};
+pub use types::{Class, Decision, ProposedCommand, Verdict};
+
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
