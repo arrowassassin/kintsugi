@@ -29,3 +29,4 @@ directories.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+aegis-core.workspace = true

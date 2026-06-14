@@ -13,3 +13,7 @@ the locked product decisions this build implements.
 - Deps: pinned to latest stable per user request. `rusqlite` pinned to 0.39 (not
   0.40) because `libsqlite3-sys` 0.38 uses the unstable `cfg_select!` macro and
   fails to build on stable Rust 1.94. Revisit when that stabilizes.
+- P0.3: IPC is newline-delimited JSON over an `interprocess` local socket
+  (Unix path / Windows namespaced pipe). The daemon serves connections
+  sequentially because the SQLite event-log connection is single-threaded and
+  each request is sub-millisecond; the client blocks on the response.
