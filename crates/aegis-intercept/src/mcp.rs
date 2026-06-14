@@ -232,18 +232,24 @@ fn error_response(id: Value, code: i64, message: &str) -> String {
 
 /// Run the MCP server: read JSON-RPC lines from stdin, write responses to stdout.
 pub fn run() -> anyhow::Result<()> {
-    use std::io::{BufRead, Write};
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
-    let mut out = stdout.lock();
-    for line in stdin.lock().lines() {
+    run_io(stdin.lock(), stdout.lock())
+}
+
+/// The server loop over arbitrary reader/writer (testable).
+pub fn run_io<R: std::io::BufRead, W: std::io::Write>(
+    reader: R,
+    mut writer: W,
+) -> anyhow::Result<()> {
+    for line in reader.lines() {
         let line = line?;
         if line.trim().is_empty() {
             continue;
         }
         if let Some(resp) = handle_message(&line) {
-            writeln!(out, "{resp}")?;
-            out.flush()?;
+            writeln!(writer, "{resp}")?;
+            writer.flush()?;
         }
     }
     Ok(())
@@ -291,5 +297,22 @@ mod tests {
         let req = r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"aegis-exec","arguments":{}}}"#;
         let resp: Value = serde_json::from_str(&handle_message(req).unwrap()).unwrap();
         assert_eq!(resp["error"]["code"], -32602);
+    }
+
+    #[test]
+    fn run_io_responds_to_requests_and_skips_notifications() {
+        let input = concat!(
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}\n",
+            "\n",
+            "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n",
+            "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}\n",
+        );
+        let mut out = Vec::new();
+        run_io(std::io::Cursor::new(input), &mut out).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        // Two responses (initialize, tools/list); the notification yields none.
+        assert_eq!(text.lines().count(), 2);
+        assert!(text.contains("serverInfo"));
+        assert!(text.contains(TOOL_NAME));
     }
 }

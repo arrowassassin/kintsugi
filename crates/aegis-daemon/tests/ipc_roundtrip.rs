@@ -8,6 +8,7 @@ use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::thread;
 
 use aegis_core::{Class, Decision, EventLog, ProposedCommand};
+use aegis_daemon::ipc::{Resolution, Response};
 use aegis_daemon::{Client, Daemon, Server};
 
 /// Tests mutate process-global env vars (`AEGIS_SOCKET`/`AEGIS_DB`), so they must
@@ -114,6 +115,52 @@ fn catastrophic_command_is_held() {
     let tail = log.tail(1).unwrap();
     assert_eq!(tail[0].decision, Decision::Hold);
     assert_eq!(tail[0].class, Class::Catastrophic);
+}
+
+#[test]
+fn client_send_errors_on_unexpected_response() {
+    let _g = serial_lock();
+    let tmp = tempfile::tempdir().unwrap();
+    std::env::set_var("AEGIS_SOCKET", tmp.path().join("aegis.sock"));
+    let server = Server::bind().unwrap();
+    // Server replies with an Ack to a Propose — a protocol mismatch.
+    let h = thread::spawn(move || {
+        server.serve_n(1, |_req| Response::Ack).unwrap();
+    });
+    let cmd = ProposedCommand::new("t", "/tmp", vec!["ls".into()], "ls");
+    assert!(Client::send(&cmd).is_err());
+    h.join().unwrap();
+}
+
+#[test]
+fn client_resolve_errors_on_error_response() {
+    let _g = serial_lock();
+    let tmp = tempfile::tempdir().unwrap();
+    std::env::set_var("AEGIS_SOCKET", tmp.path().join("aegis.sock"));
+    let server = Server::bind().unwrap();
+    let h = thread::spawn(move || {
+        server
+            .serve_n(1, |_req| Response::Error {
+                message: "boom".into(),
+            })
+            .unwrap();
+    });
+    let res = Resolution {
+        command: ProposedCommand::new("t", "/tmp", vec!["ls".into()], "ls"),
+        decision: Decision::Allow,
+        remember: false,
+    };
+    assert!(Client::resolve(&res).is_err());
+    h.join().unwrap();
+}
+
+#[test]
+fn is_daemon_running_is_false_without_a_listener() {
+    let _g = serial_lock();
+    let tmp = tempfile::tempdir().unwrap();
+    std::env::set_var("AEGIS_SOCKET", tmp.path().join("nobody.sock"));
+    assert!(!Client::is_daemon_running());
+    assert!(Client::send(&ProposedCommand::new("t", "/tmp", vec!["ls".into()], "ls")).is_err());
 }
 
 #[test]

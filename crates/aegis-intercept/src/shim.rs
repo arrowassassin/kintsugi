@@ -346,6 +346,33 @@ mod tests {
     }
 
     #[test]
+    fn render_command_quotes_empty_and_quoted_args() {
+        assert_eq!(render_command("x", &["".into()]), r#"x """#);
+        assert_eq!(render_command("echo", &[r#"a"b"#.into()]), r#"echo "a\"b""#);
+    }
+
+    #[test]
+    fn resolve_explicit_path_is_used_directly() {
+        #[cfg(unix)]
+        {
+            assert_eq!(
+                resolve_real_binary("/bin/sh"),
+                Some(PathBuf::from("/bin/sh"))
+            );
+            assert!(resolve_real_binary("/definitely/not/here").is_none());
+        }
+    }
+
+    #[test]
+    fn first_char_reads_lowercased_first_nonspace() {
+        use std::io::Cursor;
+        assert_eq!(first_char(Cursor::new(b"A\n".to_vec())), Some('a'));
+        assert_eq!(first_char(Cursor::new(b"  d ".to_vec())), Some('d'));
+        assert_eq!(first_char(Cursor::new(b"".to_vec())), None);
+        assert_eq!(first_char(Cursor::new(b"\n".to_vec())), None);
+    }
+
+    #[test]
     fn resolve_finds_a_real_binary_on_path() {
         // `sh` exists on every Unix CI image.
         #[cfg(unix)]

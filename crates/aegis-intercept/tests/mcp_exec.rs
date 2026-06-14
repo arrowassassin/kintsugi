@@ -126,3 +126,54 @@ fn aegis_exec_reports_nonzero_exit_as_error() {
     let log = EventLog::open(&h.db).unwrap();
     assert_eq!(log.tail(1).unwrap()[0].agent, "mcp");
 }
+
+#[test]
+fn aegis_exec_blocks_catastrophic_without_running() {
+    let mut h = start(1);
+    let work = h.tmp.path().join("guard");
+    std::fs::create_dir_all(&work).unwrap();
+    std::fs::write(work.join("keep"), b"x").unwrap();
+    let work_s = work.to_string_lossy().to_string();
+
+    let req = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 11,
+        "method": "tools/call",
+        "params": {
+            "name": "aegis-exec",
+            "arguments": { "command": "rm -rf .", "cwd": work_s, "agent": "codex" }
+        }
+    })
+    .to_string();
+
+    let resp: Value = serde_json::from_str(&handle_message(&req).unwrap()).unwrap();
+    assert_eq!(
+        resp["result"]["isError"], true,
+        "catastrophic must be blocked"
+    );
+    assert!(
+        work.join("keep").exists(),
+        "the file must survive — command not run"
+    );
+
+    h.join();
+    let log = EventLog::open(&h.db).unwrap();
+    let last = log.tail(1).unwrap().pop().unwrap();
+    assert_eq!(last.agent, "codex");
+    assert_eq!(last.decision, Decision::Hold);
+}
+
+#[test]
+fn unknown_tool_name_is_an_error() {
+    let req =
+        r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"nope","arguments":{}}}"#;
+    let resp: Value = serde_json::from_str(&handle_message(req).unwrap()).unwrap();
+    assert_eq!(resp["error"]["code"], -32602);
+}
+
+#[test]
+fn ping_is_answered() {
+    let req = r#"{"jsonrpc":"2.0","id":5,"method":"ping"}"#;
+    let resp: Value = serde_json::from_str(&handle_message(req).unwrap()).unwrap();
+    assert!(resp["result"].is_object());
+}

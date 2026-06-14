@@ -144,15 +144,21 @@ fn fail_closed() -> bool {
 
 /// Read the hook payload from stdin and emit the outcome.
 pub fn run() -> i32 {
-    use std::io::Read;
+    let stdin = std::io::stdin();
+    let stdout = std::io::stdout();
+    run_io(stdin.lock(), stdout.lock())
+}
+
+/// The hook over arbitrary reader/writer (testable).
+pub fn run_io<R: std::io::Read, W: std::io::Write>(mut reader: R, mut writer: W) -> i32 {
     let mut input = String::new();
-    if let Err(e) = std::io::stdin().read_to_string(&mut input) {
+    if let Err(e) = reader.read_to_string(&mut input) {
         eprintln!("aegis-hook: failed to read stdin: {e}");
         return 0; // fail-open
     }
     let outcome = handle(&input);
     if let Some(out) = outcome.stdout {
-        println!("{out}");
+        let _ = writeln!(writer, "{out}");
     }
     outcome.exit_code
 }
@@ -176,6 +182,15 @@ mod tests {
     fn empty_command_is_allowed_silently() {
         let payload = r#"{"tool_name":"Bash","tool_input":{"command":"   "}}"#;
         assert_eq!(handle(payload), HookOutcome::allow_silent());
+    }
+
+    #[test]
+    fn run_io_allows_non_shell_tool_silently() {
+        let input = br#"{"tool_name":"Edit","tool_input":{"file_path":"x"}}"#;
+        let mut out = Vec::new();
+        let code = run_io(&input[..], &mut out);
+        assert_eq!(code, 0);
+        assert!(out.is_empty(), "allow-silent writes nothing");
     }
 
     #[test]

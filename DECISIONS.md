@@ -72,3 +72,9 @@ the locked product decisions this build implements.
   GIF is produced on a workstation with `vhs scripts/demo.tape`. Phase 1 (Gate)
   complete: dangerous commands from any wired agent are held for one-key
   approval, with per-repo memory and policy, deterministic and sub-ms.
+- Coverage: pushed workspace line coverage to ~90% with targeted tests
+  (rule branches, enum surfaces, daemon resolve/memory/policy-merge, IPC error
+  mapping, adapter fail-open/closed, run-loop refactors to run_io for testability).
+  Sub-90% remainder is concentrated in process-replacement (`exec`) and the
+  detached-daemon spawn paths, which are exercised by the demo + integration
+  tests rather than unit-covered; the thin bin wrappers just call lib functions.

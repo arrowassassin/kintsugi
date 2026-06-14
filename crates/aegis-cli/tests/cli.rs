@@ -30,6 +30,31 @@ fn seed_log(db: &std::path::Path) {
 }
 
 #[test]
+fn bare_invocation_prints_banner() {
+    let out = aegis().output().unwrap();
+    assert!(out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("local-first"));
+    assert!(text.contains("aegis init"));
+}
+
+#[test]
+fn log_respects_number_flag() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = tmp.path().join("events.db");
+    seed_log(&db);
+    let out = aegis()
+        .args(["log", "-n", "1"])
+        .env("AEGIS_DB", &db)
+        .env("NO_COLOR", "1")
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    // Only the most recent (rm -rf data) should show, not the earlier ls.
+    assert!(text.contains("rm -rf data"));
+}
+
+#[test]
 fn log_shows_recorded_events() {
     let tmp = tempfile::tempdir().unwrap();
     let db = tmp.path().join("events.db");
@@ -82,6 +107,49 @@ fn status_reports_event_count_and_chain() {
     assert!(text.contains("events:  2"), "status:\n{text}");
     assert!(text.contains("intact"));
     assert!(text.contains("stopped"));
+}
+
+#[test]
+fn init_starts_daemon_and_status_reports_running() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().join("home");
+    let data = home.join(".local/share");
+    let run = tmp.path().join("run");
+    std::fs::create_dir_all(&run).unwrap();
+
+    let common = |cmd: &mut Command| {
+        cmd.env("HOME", &home)
+            .env("XDG_DATA_HOME", &data)
+            .env("XDG_RUNTIME_DIR", &run)
+            .env("AEGIS_CONFIG", tmp.path().join("none.toml"));
+    };
+
+    // Full init (starts the daemon as a detached child).
+    let mut init = aegis();
+    init.arg("init");
+    common(&mut init);
+    let out = init.output().unwrap();
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stdout).contains("daemon"));
+
+    // Status should now see a running daemon.
+    let mut status = aegis();
+    status.arg("status");
+    common(&mut status);
+    let s = status.output().unwrap();
+    let text = String::from_utf8_lossy(&s.stdout);
+
+    // Stop the daemon we started before asserting (best-effort cleanup).
+    let daemon_bin =
+        std::path::Path::new(env!("CARGO_BIN_EXE_aegis")).with_file_name("aegis-daemon");
+    let _ = std::process::Command::new("pkill")
+        .args(["-f", &daemon_bin.to_string_lossy()])
+        .status();
+
+    assert!(
+        text.contains("running"),
+        "status should show running daemon:\n{text}"
+    );
 }
 
 #[test]
