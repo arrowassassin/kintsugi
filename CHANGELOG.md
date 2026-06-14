@@ -33,6 +33,12 @@ All notable changes to Aegis are documented here. The format loosely follows
   hold→`ask`). Fail-open on malformed payloads, non-shell tools, or a down
   daemon. Adds `aegis_core::shell::split`, a quote-aware tokenizer.
 
+- **P0.6** — `aegis-mcp`: the `aegis-exec` MCP server (hand-rolled JSON-RPC 2.0
+  over stdio, no framework dependency). Exposes one tool that runs a shell
+  command guarded + recorded by Aegis, tagged with the calling agent. Handles
+  `initialize`, `tools/list`, `tools/call`, `ping`. Wiring documented in
+  `docs/mcp.md`.
+
 ### Changed
 - Pinned all dependencies to latest stable. `rusqlite` held at 0.39 because 0.40
   pulls `libsqlite3-sys` 0.38 which needs the unstable `cfg_select!` feature.

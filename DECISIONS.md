@@ -28,3 +28,7 @@ the locked product decisions this build implements.
   "deny", Hold -> "ask" (a hook cannot block interactively, so defer to the
   user). Fail-open on parse errors / non-shell tools / daemon down. Added
   `aegis_core::shell::split` (single/double quote + backslash aware).
+- P0.6: MCP `aegis-exec` server is a hand-rolled JSON-RPC 2.0 stdio loop (no
+  MCP framework dep, keeping the dependency surface small). The tool executes
+  allowed commands itself via `sh -c` / `cmd /C` and returns exit code + stdout
+  + stderr; Deny/Hold are returned as tool errors without running.
