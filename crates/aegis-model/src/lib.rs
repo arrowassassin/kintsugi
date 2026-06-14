@@ -15,3 +15,12 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub fn model_available() -> bool {
     false
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn no_model_in_phase_0_1() {
+        assert!(!super::model_available());
+        assert!(!super::VERSION.is_empty());
+    }
+}
