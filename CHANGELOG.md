@@ -82,6 +82,13 @@ All notable changes to Aegis are documented here. The format loosely follows
   daemon (classify + log + IPC) is sub-millisecond on a warm daemon (~350µs).
   The event log now runs SQLite with `synchronous=NORMAL` under WAL.
 
+- **P1.7** — The 30-second demo. `scripts/demo.sh` runs the full flow
+  self-contained (its own socket/log/shim): a safe command passes, `rm -rf` is
+  held *before* it runs, you press `a`/`d`/`r`, and the tamper-evident timeline
+  shows the result with an intact chain. Non-interactive via `DEMO_KEY`. A VHS
+  tape (`scripts/demo.tape`) and capture instructions live in `docs/demo.md`.
+  Completes **Phase 1 — Gate**.
+
 ### Changed
 - Pinned all dependencies to latest stable. `rusqlite` held at 0.39 because 0.40
   pulls `libsqlite3-sys` 0.38 which needs the unstable `cfg_select!` feature.

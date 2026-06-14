@@ -44,7 +44,17 @@ cargo build
 
 `aegis init` prints a `PATH` line to prepend so the shim can guard raw
 shell-outs. Pointing tool-calling agents at the MCP server is documented in
-[`docs/mcp.md`](docs/mcp.md).
+[`docs/mcp.md`](docs/mcp.md); per-repo policy in [`docs/policy.md`](docs/policy.md).
+
+## Demo
+
+See [`docs/demo.md`](docs/demo.md). The 30-second flow — an agent's `rm -rf` is
+held *before* it runs, you deny it, and it lands on the tamper-evident timeline:
+
+```sh
+bash scripts/demo.sh            # interactive (press a/d/r at the hold card)
+DEMO_KEY=d bash scripts/demo.sh # non-interactive
+```
 
 ## Building & testing
 

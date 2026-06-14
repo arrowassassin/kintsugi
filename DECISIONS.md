@@ -66,3 +66,9 @@ the locked product decisions this build implements.
   fsync on every commit (keeps the round-trip sub-ms); a crash can only lose the
   last few transactions and the surviving hash chain stays verifiable. Measured:
   rules classify ~3.5us, safe daemon round-trip ~345us.
+- P1.7: Demo is a self-contained shell script (temp socket/log/shim, real rm
+  captured before shimming so cleanup is not itself intercepted). GIF capture is
+  scripted via a VHS tape; this headless build environment cannot record, so the
+  GIF is produced on a workstation with `vhs scripts/demo.tape`. Phase 1 (Gate)
+  complete: dangerous commands from any wired agent are held for one-key
+  approval, with per-repo memory and policy, deterministic and sub-ms.
