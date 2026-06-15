@@ -10,6 +10,11 @@ destructive actions reversible, and keeps a tamper-evident record of everything
 every agent did on your machine. No kernel code, no OS-vendor approvals, no code
 leaves your machine.
 
+![Aegis cast: a destructive command is held before it runs, denied, and lands on the tamper-evident timeline; then the live TUI](docs/img/cast.svg)
+
+*Real captured Aegis frames, looping: hold card → denied timeline → live TUI.
+(If the animation doesn't play in your viewer, the individual frames are below.)*
+
 ![Aegis holds a catastrophic command before it runs](docs/img/holdcard.svg)
 
 > **Security spine:** rules block, the model only explains. The decision to

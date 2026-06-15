@@ -24,6 +24,12 @@ All notable changes to Aegis are documented here. The format loosely follows
   redacted events drop out of the live timeline automatically.
 
 ### Docs/site
+- **Autoplaying cast** (`docs/img/cast.svg`, mirrored to `site/cast.svg`): one
+  looping animation composed from the real captured frames (hold card → denied
+  timeline → live TUI) via SMIL, so it animates as a plain `<img>` on the site
+  and the README with no JS or external tooling. Built by `scripts/gen_cast_svg.py`.
+  (A live Claude-driven GIF is a deliberate human capture — this sandbox blocks
+  the destructive step of a nested agent and ships no video encoder.)
 - **Fix clipped SVG frames**: the doc/site terminal "screenshots" sized their
   frame at 8.6 px/glyph, but the fallback monospace fonts advance wider, so the
   hold card's reason line and the TUI risk gauge overflowed the right border.
