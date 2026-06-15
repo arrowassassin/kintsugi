@@ -162,3 +162,13 @@ the locked product decisions this build implements.
   --with-model. Rationale (researched 2026-06): the field moves fast, so the
   mechanism (override + picker) is the future-proof choice; Qwen3 stays the
   Apache-2.0 default. Installer itself still never auto-downloads a model.
+- Agent coverage: added Cursor CLI to init's detection (~/.cursor → MCP), joining
+  Claude Code (hook) and Codex/Qwen/Gemini (MCP). Verified each CLI's execution
+  model before claiming support: all run shell commands (covered by the $PATH
+  shim) and all speak stdio MCP (covered by aegis-exec) — Codex via
+  ~/.codex/config.toml [mcp_servers], Cursor via ~/.cursor/mcp.json mcpServers,
+  Qwen via ~/.qwen/settings.json mcpServers, Gemini via ~/.gemini/settings.json.
+  Reframed README/site/docs to lead with "works with any agent and any shell"
+  (protection is at the process/PATH layer; the Claude hook is best-UX, not
+  required), with the honest $PATH-vs-absolute-path caveat and the FS-watcher
+  backstop as the safety net. Added a per-agent MCP-config table to docs/mcp.md.

@@ -99,7 +99,28 @@ The Tier-2 model, snapshots/undo, the TUI, the FS backstop, and the kill-switch
 are documented in [`docs/`](docs/) (`model.md`, `policy.md`, `mcp.md`, `queue.md`,
 `demo.md`).
 
-## Claude Code plugin
+## Works with any agent (and any shell)
+
+Aegis is agent-agnostic. Protection lives at the process/PATH layer, not inside
+any one tool, so anything that runs commands on your machine is covered:
+
+| agent | how Aegis intercepts it |
+|-------|--------------------------|
+| **Claude Code** | native `PreToolUse` hook (tightest UX) + `aegis-exec` MCP |
+| **Cursor CLI**, **Codex CLI**, **Qwen Code**, **Gemini CLI** | the `aegis-exec` MCP server (stdio) — add it to the agent's MCP config |
+| any other MCP client | the same `aegis-exec` MCP server |
+| **any tool or raw shell** (Aider, Continue, a `bash` script, a Makefile, you) | the `$PATH` shim — `aegis init` prints the `PATH` line to prepend |
+
+`aegis init` detects installed agents (`~/.claude`, `~/.codex`, `~/.cursor`,
+`~/.qwen`, `~/.gemini`), wires the Claude Code hook, prints the MCP server command
+for the rest, and prints the shim `PATH` line that guards every other shell-out.
+The only caveat (consistent with the security spine): the shim is a `$PATH`
+mechanism, not a kernel hook — a process that calls a binary by absolute path
+bypasses it, which is exactly why the FS-watcher backstop exists so "nothing is
+unrecoverable." See [`docs/mcp.md`](docs/mcp.md) and
+[`docs/policy.md`](docs/policy.md).
+
+### Claude Code plugin
 
 This repo doubles as a Claude Code plugin marketplace. Install the binaries (see
 above), then enable the plugin (which wires the hook + MCP server):
@@ -112,10 +133,6 @@ above), then enable the plugin (which wires the hook + MCP server):
 The plugin is a thin wiring layer (`plugin/aegis/`); install the native binaries
 with the one-liner above (they're not bundled). See
 [`plugin/aegis/README.md`](plugin/aegis/README.md).
-
-`aegis init` prints a `PATH` line to prepend so the shim can guard raw
-shell-outs. Pointing tool-calling agents at the MCP server is documented in
-[`docs/mcp.md`](docs/mcp.md); per-repo policy in [`docs/policy.md`](docs/policy.md).
 
 ## Demo
 

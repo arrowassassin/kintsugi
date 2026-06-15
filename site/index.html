@@ -75,8 +75,10 @@
       an LLM, so it can't be argued past by prompt injection. The raw command is
       always shown verbatim. The log is append-only and hash-chained.
     </div>
-    <p class="muted">Agent-agnostic from day one: Claude Code, Qwen, Codex, Gemini,
-      or any custom/MCP agent — via a native hook, an MCP server, or a $PATH shim.</p>
+    <p class="muted">Agent-agnostic from day one: Claude Code, Cursor CLI, Codex CLI,
+      Qwen Code, Gemini CLI, any custom/MCP agent — <em>and any raw shell</em> — via a
+      native hook, an MCP server, or a $PATH shim. Protection lives at the
+      process/PATH layer, not inside any one tool.</p>
   </section>
 
   <section id="flow">

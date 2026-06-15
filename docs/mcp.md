@@ -11,7 +11,7 @@ Transport is newline-delimited JSON-RPC 2.0 over stdio (the MCP stdio transport)
 
 The daemon must be running (`aegis-daemon`, or `aegis init` which starts it).
 
-### Codex CLI / generic MCP (`~/.codex/config.toml` style)
+### Codex CLI — `~/.codex/config.toml` (TOML `mcp_servers`)
 
 ```toml
 [mcp_servers.aegis]
@@ -19,7 +19,19 @@ command = "aegis-mcp"
 args = []
 ```
 
-### Qwen CLI / Claude Desktop style (`mcpServers` JSON)
+### Cursor CLI — `~/.cursor/mcp.json` (or `.cursor/mcp.json` per project)
+
+```json
+{
+  "mcpServers": {
+    "aegis": { "command": "aegis-mcp", "args": [] }
+  }
+}
+```
+
+### Qwen Code — `~/.qwen/settings.json` · Gemini CLI — `~/.gemini/settings.json`
+
+Both use the same `mcpServers` JSON shape (also matches Claude Desktop):
 
 ```json
 {
@@ -31,6 +43,9 @@ args = []
   }
 }
 ```
+
+> `aegis init` detects these agents and prints this command for you; the `$PATH`
+> shim still covers any raw shell-out an agent makes outside the MCP tool.
 
 Then instruct the agent to run shell commands via the `aegis-exec` tool rather
 than its built-in shell. The tool accepts:

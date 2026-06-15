@@ -69,6 +69,7 @@ pub fn detect_agents(home: &Path) -> Vec<DetectedAgent> {
     }
     for (dir, id, name) in [
         (".codex", "codex", "Codex CLI"),
+        (".cursor", "cursor", "Cursor CLI"),
         (".qwen", "qwen", "Qwen CLI"),
         (".gemini", "gemini", "Gemini CLI"),
     ] {
@@ -205,6 +206,22 @@ mod tests {
     fn detects_nothing_in_empty_home() {
         let tmp = tempfile::tempdir().unwrap();
         assert!(detect_agents(tmp.path()).is_empty());
+    }
+
+    #[test]
+    fn detects_cursor_qwen_gemini_via_mcp() {
+        let tmp = tempfile::tempdir().unwrap();
+        for dir in [".cursor", ".qwen", ".gemini"] {
+            std::fs::create_dir_all(tmp.path().join(dir)).unwrap();
+        }
+        let found = detect_agents(tmp.path());
+        for id in ["cursor", "qwen", "gemini"] {
+            let a = found
+                .iter()
+                .find(|a| a.id == id)
+                .unwrap_or_else(|| panic!("expected to detect {id}"));
+            assert_eq!(a.via, Interception::Mcp);
+        }
     }
 
     #[test]

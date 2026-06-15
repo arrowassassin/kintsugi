@@ -60,6 +60,15 @@
     <p class="muted">Then run a command through any wired agent — or a raw shell with
       the shim dir on your PATH — and watch <span class="t-grn">aegis log</span> /
       <span class="t-grn">aegis tui</span>.</p>
+    <p class="muted"><strong>Works with any agent.</strong> <span class="t-grn">aegis init</span>
+      detects Claude Code (<span class="muted">~/.claude</span>), Cursor CLI
+      (<span class="muted">~/.cursor</span>), Codex CLI (<span class="muted">~/.codex</span>),
+      Qwen Code (<span class="muted">~/.qwen</span>), and Gemini CLI
+      (<span class="muted">~/.gemini</span>): it wires Claude's native hook, prints the
+      <span class="t-grn">aegis-exec</span> MCP server line for the rest, and the
+      $PATH shim covers every other tool or raw shell-out
+      (Aider, Continue, a Makefile, you). See
+      <a href="https://github.com/arrowassassin/aegis/blob/main/docs/mcp.md">docs/mcp.md</a>.</p>
     <ul class="checks">
       <li>Sub-second warnings; SAFE commands add negligible overhead.</li>
       <li>Fail-open by default (a down daemon never blocks you);

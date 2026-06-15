@@ -1,7 +1,8 @@
 //! The `aegis-exec` MCP server.
 //!
-//! Tool-calling agents (Qwen, Codex, custom) that speak the Model Context
-//! Protocol can call the `aegis-exec` tool to run a shell command *through*
+//! Tool-calling agents (Cursor CLI, Codex CLI, Qwen Code, Gemini CLI, and any
+//! custom MCP client) that speak the Model Context Protocol can call the
+//! `aegis-exec` tool to run a shell command *through*
 //! Aegis instead of shelling out raw. Each call is normalized to a
 //! [`ProposedCommand`], sent to the daemon, and — on allow — executed, with the
 //! command's output returned to the agent. Every call is recorded.

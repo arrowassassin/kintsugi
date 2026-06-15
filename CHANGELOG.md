@@ -5,6 +5,16 @@ All notable changes to Aegis are documented here. The format loosely follows
 
 ## [Unreleased]
 
+### Agent coverage
+- **Cursor CLI detection**: `aegis init` now recognizes `~/.cursor` and reports
+  it as intercepted via the `aegis-exec` MCP server (verified: Cursor CLI runs in
+  the terminal and speaks stdio MCP via `~/.cursor/mcp.json`). Joins the existing
+  Claude Code / Codex CLI / Qwen Code / Gemini CLI detection.
+- Docs/site now lead with the agent-agnostic story: the `$PATH` shim covers *any*
+  tool or raw shell-out; MCP covers any MCP client; the Claude Code hook is one
+  (best-UX) option, not a requirement. Added a per-agent MCP-config table to
+  `docs/mcp.md` (Codex TOML vs. Cursor/Qwen/Gemini `mcpServers` JSON).
+
 ### Model
 - **Bring-your-own model (`AEGIS_MODEL_FILE`)**: point the daemon at any local
   GGUF and it loads that one — no recompile, no pinned spec. The durable answer

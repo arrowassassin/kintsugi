@@ -290,7 +290,9 @@ fn cmd_init(no_daemon: bool) -> Result<()> {
     let home = home_dir();
     let agents = home.as_deref().map(init::detect_agents).unwrap_or_default();
     if agents.is_empty() {
-        println!("  • no agent config dirs detected (~/.claude, ~/.codex, ~/.qwen, ~/.gemini)");
+        println!(
+            "  • no agent config dirs detected (~/.claude, ~/.codex, ~/.cursor, ~/.qwen, ~/.gemini)"
+        );
     }
     let mut mcp_agents = Vec::new();
     for agent in &agents {
