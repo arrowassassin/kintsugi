@@ -230,17 +230,31 @@ fn render_detail(f: &mut Frame, app: &App, area: Rect, full: bool) {
     };
 
     let label = |k: &str| Span::styled(format!("{k:<9}"), dim(app));
+    let headline = if ev.redacted {
+        "redacted · hidden".to_string()
+    } else {
+        format!("{} · {}", outcome_word(ev.decision), ev.class.as_str())
+    };
     let mut lines = vec![
         Line::from(Span::styled(
-            format!("{} · {}", outcome_word(ev.decision), ev.class.as_str()),
+            headline,
             accent_fg(app, decision_color(ev.decision)).add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
         Line::from(vec![label("command"), Span::raw(ev.command.clone())]),
         Line::from(vec![label("agent"), Span::raw(ev.agent.clone())]),
-        Line::from(vec![label("when"), Span::raw(fmt_time(ev))]),
-        Line::from(vec![label("reason"), Span::raw(ev.reason.clone())]),
     ];
+    if let Some(session) = &ev.session {
+        lines.push(Line::from(vec![
+            label("session"),
+            Span::raw(session.clone()),
+        ]));
+    }
+    lines.push(Line::from(vec![label("when"), Span::raw(fmt_time(ev))]));
+    lines.push(Line::from(vec![
+        label("reason"),
+        Span::raw(ev.reason.clone()),
+    ]));
     if let Some(summary) = &ev.summary {
         lines.push(Line::from(vec![
             label("summary"),
@@ -266,7 +280,20 @@ fn render_detail(f: &mut Frame, app: &App, area: Rect, full: bool) {
             .label(format!("risk {risk}/100"))
             .gauge_style(accent_fg(app, color))
             .use_unicode(true);
-        f.render_widget(gauge, area);
+        // Auto width: size the bar to ~half the panel (bounded 14..=40), one row
+        // high, so it reads as a meter — not a full-width block that overruns.
+        f.render_widget(gauge, gauge_rect(area));
+    }
+}
+
+/// A bounded, single-row sub-rect for the risk meter inside its reserved area.
+fn gauge_rect(area: Rect) -> Rect {
+    let width = (area.width / 2).clamp(14, 40).min(area.width);
+    Rect {
+        x: area.x,
+        y: area.y,
+        width,
+        height: 1,
     }
 }
 
@@ -310,6 +337,29 @@ mod tests {
     use aegis_core::{EventLog, ProposedCommand, Verdict};
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
+
+    #[test]
+    fn gauge_rect_is_bounded_and_single_row() {
+        // Wide panel: capped at 40, one row high, anchored at the area origin.
+        let wide = gauge_rect(Rect {
+            x: 5,
+            y: 9,
+            width: 200,
+            height: 2,
+        });
+        assert_eq!(wide.width, 40);
+        assert_eq!(wide.height, 1);
+        assert_eq!((wide.x, wide.y), (5, 9));
+        // Narrow panel: never wider than the area it's given.
+        let narrow = gauge_rect(Rect {
+            x: 0,
+            y: 0,
+            width: 10,
+            height: 2,
+        });
+        assert!(narrow.width <= 10);
+        assert_eq!(narrow.height, 1);
+    }
 
     fn ev(agent: &str, raw: &str, class: Class, decision: Decision) -> LoggedEvent {
         let log = EventLog::open_in_memory().unwrap();

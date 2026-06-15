@@ -138,7 +138,11 @@ impl FilterArgs {
     }
 
     /// Build a core [`Filter`] from these flags.
-    fn to_filter(&self, include_redacted: bool, limit: Option<usize>) -> Result<aegis_core::Filter> {
+    fn to_filter(
+        &self,
+        include_redacted: bool,
+        limit: Option<usize>,
+    ) -> Result<aegis_core::Filter> {
         let class = match self.class.as_deref() {
             None => None,
             Some("safe") => Some(aegis_core::Class::Safe),
@@ -177,7 +181,9 @@ fn parse_instant(s: &str) -> Result<time::OffsetDateTime> {
                 ago(Duration::hours(n))
             } else {
                 OffsetDateTime::parse(other, &time::format_description::well_known::Rfc3339)
-                    .with_context(|| format!("invalid time '{other}' (RFC3339 or day|week|month|<N>d|<N>h)"))?
+                    .with_context(|| {
+                        format!("invalid time '{other}' (RFC3339 or day|week|month|<N>d|<N>h)")
+                    })?
             }
         }
     };
@@ -211,7 +217,11 @@ fn main() -> Result<()> {
             filter,
         }) => cmd_log(number, show_redacted, &filter),
         Some(Command::Redact { id, reason, filter }) => cmd_redact(id, &reason, &filter),
-        Some(Command::Purge { yes, reason, filter }) => cmd_purge(yes, &reason, &filter),
+        Some(Command::Purge {
+            yes,
+            reason,
+            filter,
+        }) => cmd_purge(yes, &reason, &filter),
         Some(Command::Undo { session }) => cmd_undo(session),
         Some(Command::Watch { paths }) => aegis_daemon::watch::run(&paths),
         Some(Command::Tui) => aegis_tui::run(&default_db_path(), &snapshot_dir()),
@@ -572,7 +582,9 @@ fn cmd_redact(id: Option<String>, reason: &str, filter: &FilterArgs) -> Result<(
     }
     let f = filter.to_filter(false, None)?;
     let n = log.redact_matching(&f, reason)?;
-    println!("redacted {n} event(s) — hidden from views; chain intact (use `aegis purge` to erase)");
+    println!(
+        "redacted {n} event(s) — hidden from views; chain intact (use `aegis purge` to erase)"
+    );
     Ok(())
 }
 
@@ -581,7 +593,9 @@ fn cmd_purge(yes: bool, reason: &str, filter: &FilterArgs) -> Result<()> {
     let log = EventLog::open(&db).with_context(|| format!("open log {}", db.display()))?;
 
     if filter.is_empty() {
-        anyhow::bail!("refusing to purge everything: pass at least one filter (--agent/--before/…)");
+        anyhow::bail!(
+            "refusing to purge everything: pass at least one filter (--agent/--before/…)"
+        );
     }
     let f = filter.to_filter(true, None)?;
     let count = log.count_matching(&f)?;

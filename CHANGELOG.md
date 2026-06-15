@@ -5,6 +5,24 @@ All notable changes to Aegis are documented here. The format loosely follows
 
 ## [Unreleased]
 
+### Log: sessions, search/filter, redaction & purge
+- **Per-CLI / per-session grouping**: events now carry an originating session id
+  (Claude Code hook `session_id`; one session per MCP server process, overridable
+  via a `session` tool arg; `$AEGIS_SESSION` for the shim). Stored as view
+  metadata (not hashed), with a migration for older DBs.
+- **Search & filter** on `aegis log`: `--agent`, `--session`, `--class`, `--grep`
+  (literal substring), `--since`/`--before` (RFC3339 or `day|week|month|<N>d|<N>h`).
+- **Delete, two ways** (the chain stays the source of truth):
+  - `aegis redact <id|filters>` — append-only hide; the row and hash chain stay
+    intact and verifiable. Redacted rows show as dim `⟨redacted⟩` placeholders
+    (or hidden); refuses to redact everything without an id/filter.
+  - `aegis purge --yes <filters>` — explicit hard erasure: delete rows, rebuild
+    the chain over survivors, record an `audit:purge` marker. Never automatic;
+    refuses without a filter or `--yes`.
+- **TUI**: the risk gauge is now an auto-width, single-row meter (no full-width
+  white block); the detail pane shows `session` and a `redacted` headline;
+  redacted events drop out of the live timeline automatically.
+
 ### Docs/site
 - **Fix clipped SVG frames**: the doc/site terminal "screenshots" sized their
   frame at 8.6 px/glyph, but the fallback monospace fonts advance wider, so the

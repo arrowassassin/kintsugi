@@ -91,6 +91,10 @@ impl App {
                     || e.decision.as_str().contains(&needle)
                     || outcome_word(e.decision).contains(&needle) // the displayed word
                     || e.reason.to_lowercase().contains(&needle)
+                    || e
+                        .session
+                        .as_deref()
+                        .is_some_and(|s| s.to_lowercase().contains(&needle))
             })
             .map(|(i, _)| i)
             .collect()

@@ -172,3 +172,15 @@ the locked product decisions this build implements.
   (protection is at the process/PATH layer; the Claude hook is best-UX, not
   required), with the honest $PATH-vs-absolute-path caveat and the FS-watcher
   backstop as the safety net. Added a per-agent MCP-config table to docs/mcp.md.
+- Sessions + log slicing + deletion: added an originating session id (Claude hook
+  session_id; one-per-process for MCP, overridable; $AEGIS_SESSION for the shim),
+  stored as non-hashed view metadata so old hashes/chains stay valid (migration
+  adds the column). Single hash chain kept — we deliberately did NOT partition
+  storage per session/CLI (that would weaken tamper-evidence and the one
+  cross-agent timeline); per-CLI/per-session is a *view* via the new Filter
+  (agent/session/class/grep/since/until). Deletion: redaction is the spine-safe
+  default (append-only redactions table; hides from views, chain intact),
+  hard purge is the explicit escape hatch (delete + rechain + audit:purge marker,
+  requires a filter and --yes). TUI: free-text `/` filter now also matches
+  session; risk gauge bounded to an auto-width single-row meter; detail shows
+  session + a redacted headline; redacted rows drop from the live timeline.

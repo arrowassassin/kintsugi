@@ -18,9 +18,7 @@ pub mod shell;
 pub mod snapshot;
 pub mod types;
 
-pub use log::{
-    ChainStatus, EventLog, Filter, LogError, LoggedEvent, PendingItem, GENESIS_HASH,
-};
+pub use log::{ChainStatus, EventLog, Filter, LogError, LoggedEvent, PendingItem, GENESIS_HASH};
 pub use memory::command_hash;
 pub use policy::{adjust_for_policy, Policy, PolicyAction};
 pub use rules::{classify, classify_and_decide, classify_line, decide, RuleMatch};

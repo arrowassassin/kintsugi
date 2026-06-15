@@ -23,10 +23,18 @@ fn cat() -> Verdict {
 
 fn seed() -> EventLog {
     let log = EventLog::open_in_memory().unwrap();
-    log.log_event(&cmd("claude-code", Some("s1"), "git status"), &allow(), None)
-        .unwrap();
-    log.log_event(&cmd("claude-code", Some("s1"), "rm -rf build"), &cat(), None)
-        .unwrap();
+    log.log_event(
+        &cmd("claude-code", Some("s1"), "git status"),
+        &allow(),
+        None,
+    )
+    .unwrap();
+    log.log_event(
+        &cmd("claude-code", Some("s1"), "rm -rf build"),
+        &cat(),
+        None,
+    )
+    .unwrap();
     log.log_event(&cmd("cursor", Some("s2"), "npm test"), &allow(), None)
         .unwrap();
     log.log_event(&cmd("shim", None, "git push --force"), &cat(), None)
@@ -122,7 +130,9 @@ fn redaction_hides_from_views_but_keeps_chain_intact() {
         .unwrap()[0]
         .clone();
 
-    assert!(log.redact(&target.id.to_string(), "contained a token").unwrap());
+    assert!(log
+        .redact(&target.id.to_string(), "contained a token")
+        .unwrap());
     // Idempotent: a second redaction reports "nothing new".
     assert!(!log.redact(&target.id.to_string(), "again").unwrap());
 
@@ -138,7 +148,9 @@ fn redaction_hides_from_views_but_keeps_chain_intact() {
         })
         .unwrap();
     assert_eq!(with_redacted.len(), 4);
-    assert!(with_redacted.iter().any(|e| e.redacted && e.command == "git push --force"));
+    assert!(with_redacted
+        .iter()
+        .any(|e| e.redacted && e.command == "git push --force"));
 
     // The chain is untouched — redaction never mutates events.
     assert!(log.verify_chain().unwrap().is_intact());

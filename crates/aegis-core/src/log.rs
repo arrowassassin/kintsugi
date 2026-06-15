@@ -146,7 +146,9 @@ impl Filter {
 
 /// Escape LIKE wildcards so a user's grep text matches literally.
 fn like_escape(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
+    s.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
 }
 
 /// One entry in the approval queue (a held command awaiting a human decision).
@@ -671,7 +673,9 @@ impl EventLog {
             "SELECT COUNT(*) FROM events LEFT JOIN redactions r ON r.event_id = events.id WHERE {where_body}"
         );
         let bound: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
-        Ok(self.conn.query_row(&sql, bound.as_slice(), |row| row.get(0))?)
+        Ok(self
+            .conn
+            .query_row(&sql, bound.as_slice(), |row| row.get(0))?)
     }
 
     /// Redact a single event by id (append-only; idempotent). Returns whether a
