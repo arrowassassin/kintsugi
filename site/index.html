@@ -117,8 +117,8 @@
 │                                                                  ││history.                                        │
 │                                                                  ││                                                │
 │                                                                  ││                                                │
-│                                                                  ││█████████████████████████████████████████████▋  │
-│                                                                  ││██████████████████risk 95/100 ███████████████▋  │
+│                                                                  ││                                                │
+│                                                                  ││risk 95/100  ███████████████████░░              │
 ╰──────────────────────────────────────────────────────────────────╯╰────────────────────────────────────────────────╯
 j/k move · enter detail · a/d approve/deny · u undo · / filter · q quit
 </pre>
@@ -130,15 +130,22 @@ j/k move · enter detail · a/d approve/deny · u undo · / filter · q quit
   <section id="highlights">
     <h2><span class="n">&gt;</span> why it's different</h2>
     <div class="cards">
-      <div class="card"><h3>Deterministic gate</h3>
-        <p>Rules block, not an LLM. <span class="k">Zero</span> catastrophic-as-safe,
-          enforced by a golden corpus + property tests.</p></div>
-      <div class="card"><h3>Reversible</h3>
+      <div class="card"><h3>Stops it before it happens</h3>
+        <p>Rules block — not an LLM rolling the dice. The decision is predictable
+          and <span class="k">can't be talked out of</span> by a clever prompt.
+          Zero catastrophic-as-safe, enforced by a golden corpus + property tests.</p></div>
+      <div class="card"><h3>Works with every agent</h3>
+        <p>Claude Code, Cursor, Codex, Qwen, Gemini — <span class="k">or any raw shell</span>.
+          One layer at the process level, wired in a single <span class="k">aegis init</span>.</p></div>
+      <div class="card"><h3>Reversible by default</h3>
         <p>Snapshots before destructive ops (reflink CoW). <span class="k">aegis undo</span>
-          brings files back — last action or whole session.</p></div>
-      <div class="card"><h3>One cross-agent log</h3>
-        <p>Every command from every agent on one <span class="k">hash-chained</span>,
-          tamper-evident timeline you can scrub in the TUI.</p></div>
+          brings files back; a filesystem backstop catches what slips past.</p></div>
+      <div class="card"><h3>Private &amp; auditable</h3>
+        <p>No cloud, no account, no telemetry. Every command lands on one
+          <span class="k">hash-chained</span>, tamper-evident log you own.</p></div>
+      <div class="card"><h3>Calm, then loud</h3>
+        <p>Safe commands fly through in <span class="k">sub-millisecond</span> time;
+          Aegis only interrupts for the ones that can actually hurt you.</p></div>
     </div>
     <p class="muted" style="margin-top:22px">See all six features, each with a real
       captured frame → <a href="features.html">features</a>.</p>
