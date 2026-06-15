@@ -66,7 +66,7 @@ One line — downloads the prebuilt binaries (checksum-verified), or builds from
 source if there's no prebuilt build for your platform:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/arrowassassin/aegis/main/scripts/install.sh | sh
+curl -fsSL https://arrowassassin.github.io/aegis/install.sh | sh
 ```
 
 Or straight from source with Cargo (no clone):
@@ -99,8 +99,8 @@ above), then enable the plugin (which wires the hook + MCP server):
 /plugin install aegis@aegis
 ```
 
-The plugin is a thin wiring layer (`plugin/aegis/`); the native binaries are
-distributed via cargo/Homebrew, not bundled. See
+The plugin is a thin wiring layer (`plugin/aegis/`); install the native binaries
+with the one-liner above (they're not bundled). See
 [`plugin/aegis/README.md`](plugin/aegis/README.md).
 
 `aegis init` prints a `PATH` line to prepend so the shim can guard raw

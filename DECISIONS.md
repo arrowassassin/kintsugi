@@ -144,3 +144,10 @@ the locked product decisions this build implements.
   install --git` from source when no prebuilt build matches or no release exists
   yet — so the one-liner works today (source) and gets fast binaries post-release.
   No repo clone required. Homebrew deferred per request (formula stays in repo).
+- Model upgraded to Qwen3 (4B primary / 1.7B low-RAM fallback) — newer, stronger
+  per byte, same footprint; consts renamed MODEL_PRIMARY/MODEL_FALLBACK. The
+  installer never fetches a model (default heuristic build stays small/offline);
+  the GGUF is opt-in via --features llama,download. Installer is now served from
+  GitHub Pages (site/install.sh) so the one-liner is the short
+  arrowassassin.github.io/aegis/install.sh instead of the raw.githubusercontent
+  path. Homebrew de-emphasized in README/site per request.

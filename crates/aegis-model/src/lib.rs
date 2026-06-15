@@ -21,7 +21,7 @@ pub mod llama;
 use aegis_core::{Class, ProposedCommand};
 
 pub use heuristic::HeuristicScorer;
-pub use manage::{select_spec, ModelSpec, MODEL_1_5B, MODEL_3B};
+pub use manage::{select_spec, ModelSpec, MODEL_FALLBACK, MODEL_PRIMARY};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 

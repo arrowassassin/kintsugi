@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 /// A pinned model: where to fetch it, its checksum, and the RAM it needs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelSpec {
-    /// Stable id, e.g. `"qwen2.5-3b-instruct-q4_k_m"`.
+    /// Stable id, e.g. `"qwen3-4b-instruct-q4_k_m"`.
     pub id: &'static str,
     /// File name on disk.
     pub file: &'static str,
@@ -34,20 +34,23 @@ impl ModelSpec {
     }
 }
 
-/// Default 3B Q4_K_M model. URL/sha must be pinned before enabling `download`.
-pub const MODEL_3B: ModelSpec = ModelSpec {
-    id: "qwen2.5-3b-instruct-q4_k_m",
-    file: "qwen2.5-3b-instruct-q4_k_m.gguf",
+/// Primary model: Qwen3-4B-Instruct, Q4_K_M (~2.5 GB). A current, strong small
+/// instruct model — better quality-per-byte than the older 3B it replaces, while
+/// staying in the same footprint. URL/sha must be pinned before enabling `download`.
+pub const MODEL_PRIMARY: ModelSpec = ModelSpec {
+    id: "qwen3-4b-instruct-q4_k_m",
+    file: "qwen3-4b-instruct-q4_k_m.gguf",
     url: "",
     sha256: "",
-    size_bytes: 2_100_000_000,
+    size_bytes: 2_500_000_000,
     min_ram_mb: 6_000,
 };
 
-/// Low-RAM 1.5B fallback. URL/sha must be pinned before enabling `download`.
-pub const MODEL_1_5B: ModelSpec = ModelSpec {
-    id: "qwen2.5-1.5b-instruct-q4_k_m",
-    file: "qwen2.5-1.5b-instruct-q4_k_m.gguf",
+/// Low-RAM fallback: Qwen3-1.7B-Instruct, Q4_K_M (~1.1 GB), auto-selected on
+/// machines with less RAM. URL/sha must be pinned before enabling `download`.
+pub const MODEL_FALLBACK: ModelSpec = ModelSpec {
+    id: "qwen3-1.7b-instruct-q4_k_m",
+    file: "qwen3-1.7b-instruct-q4_k_m.gguf",
     url: "",
     sha256: "",
     size_bytes: 1_100_000_000,
@@ -56,10 +59,10 @@ pub const MODEL_1_5B: ModelSpec = ModelSpec {
 
 /// Choose the largest model that comfortably fits in the available RAM.
 pub fn select_spec(ram_mb: u64) -> &'static ModelSpec {
-    if ram_mb >= MODEL_3B.min_ram_mb {
-        &MODEL_3B
+    if ram_mb >= MODEL_PRIMARY.min_ram_mb {
+        &MODEL_PRIMARY
     } else {
-        &MODEL_1_5B
+        &MODEL_FALLBACK
     }
 }
 
@@ -173,11 +176,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn selects_3b_with_enough_ram_else_1_5b() {
-        assert_eq!(select_spec(16_000).id, MODEL_3B.id);
-        assert_eq!(select_spec(6_000).id, MODEL_3B.id);
-        assert_eq!(select_spec(4_000).id, MODEL_1_5B.id);
-        assert_eq!(select_spec(0).id, MODEL_1_5B.id);
+    fn selects_primary_with_enough_ram_else_fallback() {
+        assert_eq!(select_spec(16_000).id, MODEL_PRIMARY.id);
+        assert_eq!(select_spec(6_000).id, MODEL_PRIMARY.id);
+        assert_eq!(select_spec(4_000).id, MODEL_FALLBACK.id);
+        assert_eq!(select_spec(0).id, MODEL_FALLBACK.id);
     }
 
     #[test]
@@ -188,10 +191,10 @@ mod tests {
     #[test]
     fn unpinned_specs_are_refused() {
         // Default specs ship unpinned; using them must error, not load a blob.
-        assert!(!MODEL_3B.is_pinned());
+        assert!(!MODEL_PRIMARY.is_pinned());
         let tmp = tempfile::tempdir().unwrap();
-        assert!(ensure_weights(&MODEL_3B, tmp.path()).is_err());
-        assert!(verify(&MODEL_3B, tmp.path()).is_err());
+        assert!(ensure_weights(&MODEL_PRIMARY, tmp.path()).is_err());
+        assert!(verify(&MODEL_PRIMARY, tmp.path()).is_err());
     }
 
     #[test]
@@ -205,12 +208,12 @@ mod tests {
         // A spec pinned to the real digest verifies; a wrong pin does not.
         let good = ModelSpec {
             sha256: Box::leak(digest.clone().into_boxed_str()),
-            ..MODEL_1_5B
+            ..MODEL_FALLBACK
         };
         assert!(verify(&good, &f).unwrap());
         let bad = ModelSpec {
             sha256: "0000000000000000000000000000000000000000000000000000000000000000",
-            ..MODEL_1_5B
+            ..MODEL_FALLBACK
         };
         assert!(!verify(&bad, &f).unwrap());
     }

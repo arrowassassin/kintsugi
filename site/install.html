@@ -45,7 +45,7 @@
       (checksum-verified) or builds from source if your platform has no prebuilt:</p>
     <div class="cmd">
       <button class="copy">copy</button>
-<pre>curl -fsSL https://raw.githubusercontent.com/arrowassassin/aegis/main/scripts/install.sh | sh</pre>
+<pre>curl -fsSL https://arrowassassin.github.io/aegis/install.sh | sh</pre>
     </div>
     <p class="muted">Or straight from source with Cargo (also no clone):</p>
     <div class="cmd">
@@ -59,8 +59,7 @@
     </div>
     <p class="muted">Then run a command through any wired agent — or a raw shell with
       the shim dir on your PATH — and watch <span class="t-grn">aegis log</span> /
-      <span class="t-grn">aegis tui</span>. Prefer Homebrew? See the
-      <a href="https://github.com/arrowassassin/aegis/blob/main/docs/homebrew.md">tap guide</a>.</p>
+      <span class="t-grn">aegis tui</span>.</p>
     <ul class="checks">
       <li>Sub-second warnings; SAFE commands add negligible overhead.</li>
       <li>Fail-open by default (a down daemon never blocks you);
@@ -73,7 +72,7 @@
   <section id="plugin">
     <h2><span class="n">&gt;</span> 2 · claude code plugin</h2>
     <p class="lead">Aegis ships as a Claude Code plugin + marketplace. The plugin is a
-      thin wiring layer; the binaries come from cargo/Homebrew.</p>
+      thin wiring layer; install the binaries with the one-liner above.</p>
     <div class="cmd">
       <button class="copy">copy</button>
 <pre>/plugin marketplace add arrowassassin/aegis
