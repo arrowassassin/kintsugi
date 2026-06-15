@@ -1,37 +1,22 @@
 # Aegis
 
-**Website:** https://arrowassassin.github.io/aegis/ (8-bit product site with live
-feature frames — deploys from [`site/`](site/) once GitHub Pages is enabled with
-source "GitHub Actions").
-
 A local-first safety layer for AI coding agents. Aegis intercepts the commands an
 agent is about to run, warns you in plain English **before** they execute, makes
 destructive actions reversible, and keeps a tamper-evident record of everything
-every agent did on your machine. No kernel code, no OS-vendor approvals, no code
-leaves your machine.
+every agent did on your machine. No kernel code, no cloud, no code leaves your
+machine.
 
-![Aegis cast: a destructive command is held before it runs, denied, and lands on the tamper-evident timeline; then the live TUI](docs/img/cast.svg)
+**Website:** https://arrowassassin.github.io/aegis/ · **Docs:** [`docs/`](docs/)
 
-*Real captured Aegis frames, looping: hold card → denied timeline → live TUI.
-(If the animation doesn't play in your viewer, the individual frames are below.)*
+![Aegis: a destructive command is held before it runs, denied, and lands on the tamper-evident timeline; then the live TUI](docs/img/cast.svg)
 
-![Aegis holds a catastrophic command before it runs](docs/img/holdcard.svg)
+*Real Aegis output, looping: hold card → denied timeline → live TUI. (Static
+frames in [`docs/img/`](docs/img/) if the animation doesn't play.)*
 
-> **Security spine:** rules block, the model only explains. The decision to
-> hold/deny a catastrophic command is made by deterministic rules, never by an
-> LLM. The raw command is always shown verbatim. The event log is append-only and
-> hash-chained. See [`CLAUDE.md`](CLAUDE.md) for the full, non-negotiable rules.
-
-### See it
-
-The live TUI — bordered timeline + detail panels, a risk gauge (all real output):
-
-![Aegis TUI](docs/img/tui.svg)
-
-The cross-agent timeline and the approval queue:
-
-![aegis log](docs/img/log.svg)
-![aegis queue](docs/img/queue.svg)
+> **Security spine:** the decision to hold/deny a catastrophic command is made by
+> deterministic **rules, never an LLM**. The raw command is always shown verbatim;
+> the model only explains. The event log is append-only and hash-chained, and
+> nothing leaves your machine. See [`CLAUDE.md`](CLAUDE.md) for the full rules.
 
 ## Status
 
@@ -62,45 +47,31 @@ All build phases are implemented (see
 | `aegis-core` | shared types, rule engine, policy, decision memory, hash-chained event log |
 | `aegis-daemon` | resident process: local IPC server + decision loop |
 | `aegis-intercept` | the `$PATH` shim, Claude Code hook bridge, and `aegis-exec` MCP server |
-| `aegis-cli` | the `aegis` binary: `init`, `status`, `log` |
-| `aegis-model` | Tier-2 model wrapper (stub until Phase 2) |
-| `aegis-tui` | ratatui timeline (Phase 4) |
+| `aegis-cli` | the `aegis` binary: `init`, `status`, `stop`, `log`, `tui`, … |
+| `aegis-model` | Tier-2 scorer: heuristic by default, real GGUF behind `--features llama` |
+| `aegis-tui` | live `ratatui` timeline |
 
-## Install (no clone needed)
+## Install
 
-One line — downloads the prebuilt binaries (checksum-verified), or builds from
-source if there's no prebuilt build for your platform:
+One line. It downloads the checksum-verified binaries (or builds from source if
+your platform has none), then walks you through wiring your agents and an
+**optional** local model — everything optional can be skipped:
 
 ```sh
 curl -fsSL https://github.com/arrowassassin/aegis/releases/latest/download/install.sh | sh
 ```
 
-Or straight from source with Cargo (no clone):
+Prefer Cargo? `cargo install --git https://github.com/arrowassassin/aegis aegis-cli aegis-daemon aegis-intercept`
 
-```sh
-cargo install --git https://github.com/arrowassassin/aegis aegis-cli aegis-daemon aegis-intercept
-```
+That's it — Aegis works immediately with **no model** (an offline heuristic
+scorer). The optional model just sharpens the plain-English summary and risk
+score for ambiguous commands; the installer can set it up, or do it later (see
+[`docs/model.md`](docs/model.md)).
 
-Then:
-
-```sh
-aegis init        # detect agents, wire interception, start the daemon
-aegis status      # daemon / socket / log / kill-switch health
-aegis tui         # live, interactive timeline (j/k, enter, a/d, u, /, q)
-```
-
-Aegis runs with **no model** (the offline heuristic scorer is always on). To also
-get a plain-English summary + risk score, pick a small local GGUF — the picker
-lists RAM-appropriate options from the Hugging Face API and prints the one env var
-to set (or fold it into install with `| sh -s -- --with-model`):
-
-```sh
-curl -fsSL https://github.com/arrowassassin/aegis/releases/latest/download/pick-model.sh | sh
-# already have a GGUF? skip the picker:  export AEGIS_MODEL_FILE=/path/to/model.gguf
-```
-
-Other commands: `aegis log`, `aegis undo [--session]`, `aegis queue` /
-`approve <id>` / `deny <id>`, `aegis watch <path>`, `aegis panic` / `resume`.
+Day-to-day: `aegis status`, `aegis tui` (live timeline), `aegis stop` (stop the
+daemon — the inverse of `init`). Also: `aegis log`, `aegis undo [--session]`,
+`aegis queue` / `approve <id>` / `deny <id>`, `aegis watch <path>`,
+`aegis panic` / `resume`.
 The Tier-2 model, snapshots/undo, the TUI, the FS backstop, and the kill-switch
 are documented in [`docs/`](docs/) (`model.md`, `policy.md`, `mcp.md`, `queue.md`,
 `demo.md`).

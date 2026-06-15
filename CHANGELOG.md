@@ -5,6 +5,19 @@ All notable changes to Aegis are documented here. The format loosely follows
 
 ## [Unreleased]
 
+### CLI & install
+- **`aegis stop`** — stop the background daemon (the inverse of `aegis init`). The
+  daemon writes its own PID file on startup; `stop` reads it and terminates it
+  cleanly, idempotent when nothing's running.
+- **Guided installer** — `install.sh` runs a short cross-OS stepper after
+  installing: it wires your agents (`aegis init`) and *optionally* sets up a local
+  model (installs `cmake` + a C/C++ toolchain for the detected OS, builds the
+  llama engine, and downloads a Qwen GGUF from Hugging Face). Everything optional
+  is skippable; the default install needs no model and no toolchain. Flags:
+  `--with-model`, `--init`/`--no-init`, `--yes`.
+- Trimmed README/site clutter (one looping demo instead of five stacked images;
+  fewer duplicate install one-liners) so the surface reads simply.
+
 ### Security (multi-model review fixes)
 - **Monotonic model influence restored (spine #2):** the Tier-2 model no longer
   downgrades a rules Deny→Allow for the unattended ambiguous band. Unattended

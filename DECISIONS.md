@@ -199,3 +199,12 @@ the locked product decisions this build implements.
   NOT scrub secrets from the verbatim command (spine #3 mandates verbatim) —
   protected at rest instead. AEGIS_SOCKET kept as a documented trusted override
   (single-user threat model). Notify mode left as documented design debt.
+- aegis stop + guided installer + docs declutter: daemon writes its own PID file
+  (pid_file_path, next to the log) on startup; `aegis stop` reads it and
+  kill/taskkills the process (idempotent). install.sh became a cross-OS stepper:
+  default install = prebuilt binaries (no model/toolchain, works everywhere),
+  then /dev/tty prompts (so it works under curl|sh) to wire agents and optionally
+  set up a local model (detect OS pkg mgr → install cmake + toolchain + libomp,
+  cargo install aegis-daemon --features aegis-model/llama, pick-model.sh from
+  Hugging Face, persist AEGIS_MODEL_FILE). Reduced README/site image+text
+  redundancy for a simpler, more trustworthy first impression.
