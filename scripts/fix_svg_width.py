@@ -13,10 +13,16 @@ import re
 import sys
 
 PADX = 18
-CHARW = 10.0  # generous upper bound on real monospace advance at font-size 15
+CHARW = 9.1  # monospace cell width at font-size 15 (close to the real advance)
 
-TEXT_BODY = re.compile(r'<text x="18"[^>]*>(.*?)</text>', re.DOTALL)
+# Body lines are the font-size 15 <text> rows (the title is font-size 11).
+TEXT_BODY = re.compile(r'<text [^>]*font-size="15"[^>]*>(.*?)</text>', re.DOTALL)
+BODY_ELEM = re.compile(r'(<text [^>]*font-size="15"[^>]*)>(.*?)</text>', re.DOTALL)
 TSPAN = re.compile(r"<tspan[^>]*>(.*?)</tspan>", re.DOTALL)
+
+
+def grid_x(n: int) -> str:
+    return " ".join(f"{PADX + k * CHARW:.1f}" for k in range(n)) if n else str(PADX)
 
 
 def glyphs(inner: str) -> int:
@@ -35,19 +41,14 @@ def is_frame(svg: str) -> bool:
     return '<rect x="1" y="20"' in svg
 
 
-BODY_ELEM = re.compile(r'(<text x="18"[^>]*)>(.*?)</text>', re.DOTALL)
-
-
 def inject_grid(svg: str) -> str:
-    """Pin every body line to a fixed grid (glyphs × CHARW) with uniform spacing,
-    so box-drawing glyphs can't drift columns vs. letters in the render font."""
+    """Give every body line an explicit per-glyph x list so columns can't drift."""
 
     def repl(m: "re.Match[str]") -> str:
         tag = re.sub(r'\s+(?:textLength|lengthAdjust)="[^"]*"', "", m.group(1))
         inner = m.group(2)
-        g = glyphs(inner)
-        grid = f' textLength="{g * CHARW:.1f}" lengthAdjust="spacing"' if g else ""
-        return f"{tag}{grid}>{inner}</text>"
+        tag = re.sub(r'\bx="[^"]*"', f'x="{grid_x(glyphs(inner))}"', tag, count=1)
+        return f"{tag}>{inner}</text>"
 
     return BODY_ELEM.sub(repl, svg)
 
@@ -60,22 +61,27 @@ def fix(path: str) -> bool:
     orig = svg
 
     max_glyphs = max((glyphs(m) for m in TEXT_BODY.findall(svg)), default=0)
-    new_w = int(PADX * 2 + max_glyphs * CHARW + 0.999)
+    if max_glyphs == 0:
+        # A frame with no text body lines (e.g. the flow diagram) — leave it alone.
+        print(f"skip   {path} (no text rows)")
+        return False
+    # Width = grid span + a right margin matching the left pad. Always set it
+    # (grow or shrink) so the frame fits the pinned grid exactly.
+    new_w = int(PADX + max_glyphs * CHARW + PADX + 0.999)
     m = re.search(r'<svg[^>]*\bwidth="(\d+)"', svg)
     old_w = int(m.group(1))
-    if new_w > old_w:
+    if new_w != old_w:
         svg = re.sub(r'(<svg[^>]*\bwidth=")\d+(")', rf"\g<1>{new_w}\g<2>", svg, count=1)
         svg = re.sub(r'(viewBox="0 0 )\d+( \d+")', rf"\g<1>{new_w}\g<2>", svg, count=1)
         svg = svg.replace(f'width="{old_w - 2}"', f'width="{new_w - 2}"')
 
-    # Always pin the column grid (idempotent — strips any previous textLength).
     svg = inject_grid(svg)
 
     if svg == orig:
-        print(f"ok     {path} ({old_w}px, {max_glyphs} glyphs, grid pinned)")
+        print(f"ok     {path} ({old_w}px, {max_glyphs} glyphs)")
         return False
     open(path, "w", encoding="utf-8").write(svg)
-    print(f"fixed  {path}: width {old_w}->{max(old_w, new_w)}, grid pinned ({max_glyphs} glyphs)")
+    print(f"fixed  {path}: width {old_w}->{new_w}, grid pinned ({max_glyphs} glyphs)")
     return True
 
 

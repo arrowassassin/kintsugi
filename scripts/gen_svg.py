@@ -16,8 +16,12 @@ PAL = {
 }
 # CHARW is a safe upper bound on the real monospace advance at FS=15 (DejaVu Sans
 # Mono ≈9.03px); undersizing it clips the longest line and the TUI risk gauge.
-CHARW, LINEH, FS = 10.0, 20, 15
+CHARW, LINEH, FS = 9.1, 20, 15
 PADX, TOP = 18, 44  # title bar height ~36 + gap
+
+def grid_x(n):
+    """Explicit x position for each of n glyphs on the monospace grid."""
+    return " ".join(f"{PADX + k * CHARW:.1f}" for k in range(n)) if n else str(PADX)
 
 def colorize(line, rules):
     """Split a line into (text,color) segments by non-overlapping token rules."""
@@ -64,13 +68,11 @@ def main():
 
     y = TOP + 4
     for line in lines:
-        x = PADX
-        # Pin the whole line to a fixed grid (glyphs × CHARW) with uniform
-        # spacing, so box-drawing glyphs can't drift columns vs. letters even if
-        # the render font advances them differently.
-        glyphs = len(line)
-        grid = f' textLength="{glyphs * CHARW:.1f}" lengthAdjust="spacing"' if glyphs else ""
-        p.append(f'<text x="{x}" y="{y}" font-size="{FS}"{grid} xml:space="preserve">')
+        # Place EVERY glyph at an explicit x = PADX + col*CHARW. This pins a true
+        # monospace grid: box-drawing glyphs (│ ─ ╭) can't drift the columns even
+        # if the render font advances them differently from letters.
+        xs = grid_x(len(line))
+        p.append(f'<text x="{xs}" y="{y}" font-size="{FS}" xml:space="preserve">')
         for txt, col in colorize(line, rules):
             if not txt:
                 continue
