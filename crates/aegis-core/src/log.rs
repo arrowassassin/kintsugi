@@ -4,8 +4,12 @@
 //! `SHA-256(prev_hash || canonical(row))`, so any edit to a past row — or any
 //! reordering — breaks the chain and is detectable by [`EventLog::verify_chain`].
 //!
-//! Security spine: this log is append-only. There is deliberately no update or
-//! delete API. Past events are immutable.
+//! Security spine: the event chain is append-only. Day-to-day "delete" is
+//! **redaction** — an append-only [`redactions`](EventLog::redact) row that hides
+//! an entry from views while the original row and the hash chain stay intact and
+//! verifiable. True erasure is the separate, explicit [`EventLog::purge_matching`]
+//! (hard delete + re-chain): it deliberately rewrites history for the purged span
+//! and records a marker event, and is never invoked automatically.
 
 use rusqlite::{Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
@@ -62,10 +66,87 @@ pub struct LoggedEvent {
     pub summary: Option<String>,
     /// Optional snapshot reference.
     pub snapshot_id: Option<String>,
+    /// Optional originating session id (view metadata; not part of the hash).
+    pub session: Option<String>,
     /// Hash of the predecessor row.
     pub prev_hash: String,
     /// This row's hash.
     pub hash: String,
+    /// Whether this event has been redacted (hidden from default views).
+    pub redacted: bool,
+}
+
+/// A filter over the event log, used by views, redaction, and purge.
+#[derive(Debug, Clone, Default)]
+pub struct Filter {
+    /// Restrict to one agent (`claude-code`, `cursor`, `shim`, …).
+    pub agent: Option<String>,
+    /// Restrict to one session id.
+    pub session: Option<String>,
+    /// Only events at or after this instant.
+    pub since: Option<OffsetDateTime>,
+    /// Only events strictly before this instant.
+    pub until: Option<OffsetDateTime>,
+    /// Case-insensitive substring match on the raw command.
+    pub grep: Option<String>,
+    /// Restrict to one classification.
+    pub class: Option<Class>,
+    /// Include redacted rows (default: hidden).
+    pub include_redacted: bool,
+    /// Cap the number of rows returned (newest kept).
+    pub limit: Option<usize>,
+}
+
+impl Filter {
+    /// Build the SQL `WHERE` body (without the `WHERE` keyword) and its params.
+    /// `events`-qualified so it composes with the redaction LEFT JOIN.
+    fn where_clause(&self) -> (String, Vec<Box<dyn rusqlite::ToSql>>) {
+        let mut clauses: Vec<String> = Vec::new();
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        if let Some(a) = &self.agent {
+            clauses.push("events.agent = ?".into());
+            params.push(Box::new(a.clone()));
+        }
+        if let Some(s) = &self.session {
+            clauses.push("events.session = ?".into());
+            params.push(Box::new(s.clone()));
+        }
+        if let Some(c) = &self.class {
+            clauses.push("events.class = ?".into());
+            params.push(Box::new(c.as_str().to_string()));
+        }
+        if let Some(g) = &self.grep {
+            clauses.push("events.command LIKE ? ESCAPE '\\'".into());
+            params.push(Box::new(format!("%{}%", like_escape(g))));
+        }
+        // ts is stored as RFC3339 text; lexical compare is chronological for UTC Z.
+        if let Some(since) = &self.since {
+            if let Ok(s) = since.format(&Rfc3339) {
+                clauses.push("events.ts >= ?".into());
+                params.push(Box::new(s));
+            }
+        }
+        if let Some(until) = &self.until {
+            if let Ok(s) = until.format(&Rfc3339) {
+                clauses.push("events.ts < ?".into());
+                params.push(Box::new(s));
+            }
+        }
+        if !self.include_redacted {
+            clauses.push("r.event_id IS NULL".into());
+        }
+        let body = if clauses.is_empty() {
+            "1=1".to_string()
+        } else {
+            clauses.join(" AND ")
+        };
+        (body, params)
+    }
+}
+
+/// Escape LIKE wildcards so a user's grep text matches literally.
+fn like_escape(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
 }
 
 /// One entry in the approval queue (a held command awaiting a human decision).
@@ -150,7 +231,16 @@ impl EventLog {
                 summary    TEXT,
                 snapshot_id TEXT,
                 prev_hash  TEXT NOT NULL,
-                hash       TEXT NOT NULL
+                hash       TEXT NOT NULL,
+                session    TEXT
+            );
+
+            -- Append-only redactions: hide an event from views without mutating
+            -- it or breaking the chain. The original row and its hash are intact.
+            CREATE TABLE IF NOT EXISTS redactions (
+                event_id   TEXT PRIMARY KEY,
+                ts         TEXT NOT NULL,
+                reason     TEXT NOT NULL
             );
 
             -- Decision memory. Unlike `events`, this table is intentionally
@@ -186,6 +276,13 @@ impl EventLog {
             );
             "#,
         )?;
+        // Migrate older DBs created before the `session` column existed.
+        let has_session = conn
+            .prepare("SELECT 1 FROM pragma_table_info('events') WHERE name = 'session'")?
+            .exists([])?;
+        if !has_session {
+            conn.execute_batch("ALTER TABLE events ADD COLUMN session TEXT")?;
+        }
         Ok(Self { conn })
     }
 
@@ -456,8 +553,8 @@ impl EventLog {
         self.conn.execute(
             r#"
             INSERT INTO events
-                (id, ts, agent, cwd, command, argv, class, decision, reason, tier, risk, summary, snapshot_id, prev_hash, hash)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+                (id, ts, agent, cwd, command, argv, class, decision, reason, tier, risk, summary, snapshot_id, prev_hash, hash, session)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
             "#,
             rusqlite::params![
                 cmd.id.to_string(),
@@ -475,6 +572,7 @@ impl EventLog {
                 snapshot_id,
                 prev_hash,
                 hash,
+                cmd.session,
             ],
         )?;
         Ok((prev_hash, hash, self.conn.last_insert_rowid()))
@@ -523,29 +621,208 @@ impl EventLog {
             risk: verdict.risk,
             summary: verdict.summary.clone(),
             snapshot_id: snapshot_id.map(str::to_string),
+            session: cmd.session.clone(),
             prev_hash,
             hash,
+            redacted: false,
         })
     }
 
-    /// Return the most recent `n` events, oldest first.
+    /// Return the most recent `n` non-redacted events, oldest first.
     pub fn tail(&self, n: usize) -> Result<Vec<LoggedEvent>, LogError> {
-        // Pull the newest n by seq desc, then reverse so callers see chronological order.
-        let mut stmt = self.conn.prepare(
+        self.query(&Filter {
+            limit: Some(n),
+            ..Filter::default()
+        })
+    }
+
+    /// Return events matching `filter`, oldest first (capped by `filter.limit`).
+    pub fn query(&self, filter: &Filter) -> Result<Vec<LoggedEvent>, LogError> {
+        let (where_body, params) = filter.where_clause();
+        let limit = filter.limit.map(|n| n as i64).unwrap_or(-1);
+        // Newest `limit` by seq, then reversed to chronological order.
+        let sql = format!(
             r#"
             SELECT seq, id, ts, agent, cwd, command, argv, class, decision, reason, tier,
-                   risk, summary, snapshot_id, prev_hash, hash
+                   risk, summary, snapshot_id, prev_hash, hash, session, redacted
             FROM (
-                SELECT * FROM events ORDER BY seq DESC LIMIT ?1
+                SELECT events.*, (r.event_id IS NOT NULL) AS redacted
+                FROM events LEFT JOIN redactions r ON r.event_id = events.id
+                WHERE {where_body}
+                ORDER BY events.seq DESC LIMIT ?
             ) ORDER BY seq ASC
-            "#,
-        )?;
-        let rows = stmt.query_map([n as i64], Self::row_to_event)?;
+            "#
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let mut bound: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
+        bound.push(&limit);
+        let rows = stmt.query_map(bound.as_slice(), Self::row_to_event)?;
         let mut out = Vec::new();
         for r in rows {
             out.push(r??);
         }
         Ok(out)
+    }
+
+    /// Count events matching `filter` (ignores `limit`).
+    pub fn count_matching(&self, filter: &Filter) -> Result<i64, LogError> {
+        let (where_body, params) = filter.where_clause();
+        let sql = format!(
+            "SELECT COUNT(*) FROM events LEFT JOIN redactions r ON r.event_id = events.id WHERE {where_body}"
+        );
+        let bound: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
+        Ok(self.conn.query_row(&sql, bound.as_slice(), |row| row.get(0))?)
+    }
+
+    /// Redact a single event by id (append-only; idempotent). Returns whether a
+    /// matching, not-already-redacted event existed.
+    pub fn redact(&self, event_id: &str, reason: &str) -> Result<bool, LogError> {
+        let now = OffsetDateTime::now_utc().format(&Rfc3339)?;
+        let exists: bool = self
+            .conn
+            .prepare("SELECT 1 FROM events WHERE id = ?1")?
+            .exists([event_id])?;
+        if !exists {
+            return Ok(false);
+        }
+        let n = self.conn.execute(
+            "INSERT INTO redactions (event_id, ts, reason) VALUES (?1, ?2, ?3)
+             ON CONFLICT(event_id) DO NOTHING",
+            rusqlite::params![event_id, now, reason],
+        )?;
+        Ok(n > 0)
+    }
+
+    /// Redact every event matching `filter` (newest-first, no limit applied).
+    /// Returns the number newly redacted.
+    pub fn redact_matching(&self, filter: &Filter, reason: &str) -> Result<usize, LogError> {
+        // Match against not-yet-redacted rows regardless of the filter's flag.
+        let f = Filter {
+            include_redacted: false,
+            limit: None,
+            ..filter.clone()
+        };
+        let (where_body, params) = f.where_clause();
+        let now = OffsetDateTime::now_utc().format(&Rfc3339)?;
+        let sql = format!(
+            "INSERT INTO redactions (event_id, ts, reason)
+             SELECT events.id, ?, ? FROM events
+             LEFT JOIN redactions r ON r.event_id = events.id
+             WHERE {where_body}"
+        );
+        let mut bound: Vec<&dyn rusqlite::ToSql> = vec![&now, &reason];
+        let pbound: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
+        bound.extend(pbound);
+        Ok(self.conn.execute(&sql, bound.as_slice())?)
+    }
+
+    /// **Hard erasure** — physically delete events matching `filter`, rebuild the
+    /// hash chain over the survivors, and append a marker event recording the
+    /// purge. Deliberately rewrites history for the purged span; never automatic.
+    /// Returns the number of events removed.
+    ///
+    /// `include_redacted`/`limit` on the filter are ignored: purge always targets
+    /// every matching row. Catastrophic-or-not is irrelevant — this is the user's
+    /// explicit erasure of their own local data.
+    pub fn purge_matching(&self, filter: &Filter, reason: &str) -> Result<usize, LogError> {
+        let f = Filter {
+            include_redacted: true,
+            limit: None,
+            ..filter.clone()
+        };
+        let (where_body, params) = f.where_clause();
+
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        let removed = (|| -> Result<usize, LogError> {
+            // Drop redaction rows for the doomed events, then the events.
+            let del_red = format!(
+                "DELETE FROM redactions WHERE event_id IN (
+                     SELECT events.id FROM events
+                     LEFT JOIN redactions r ON r.event_id = events.id WHERE {where_body})"
+            );
+            let bound: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
+            self.conn.execute(&del_red, bound.as_slice())?;
+
+            let del = format!(
+                "DELETE FROM events WHERE id IN (
+                     SELECT events.id FROM events
+                     LEFT JOIN redactions r ON r.event_id = events.id WHERE {where_body})"
+            );
+            let bound: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
+            let n = self.conn.execute(&del, bound.as_slice())?;
+            self.rechain()?;
+            Ok(n)
+        })();
+        let removed = match removed {
+            Ok(n) => {
+                self.conn.execute_batch("COMMIT")?;
+                n
+            }
+            Err(e) => {
+                let _ = self.conn.execute_batch("ROLLBACK");
+                return Err(e);
+            }
+        };
+
+        // Record the purge itself as an immutable marker (outside the txn so it
+        // links to the freshly re-chained head).
+        if removed > 0 {
+            let marker = ProposedCommand::new(
+                "aegis",
+                std::path::PathBuf::from("."),
+                vec!["purge".into()],
+                format!("aegis purge --hard ({removed} event(s): {reason})"),
+            );
+            let verdict = Verdict::rules(Class::Safe, Decision::Allow, "audit:purge");
+            self.log_event(&marker, &verdict, None)?;
+        }
+        Ok(removed)
+    }
+
+    /// Recompute prev_hash/hash for every surviving row in seq order so the chain
+    /// is valid again after a purge. Caller holds the write transaction.
+    fn rechain(&self) -> Result<(), LogError> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT seq, id, ts, agent, cwd, command, argv, class, decision, reason, tier,
+                   risk, summary, snapshot_id, prev_hash, hash, session, 0 AS redacted
+            FROM events ORDER BY seq ASC
+            "#,
+        )?;
+        let mut events: Vec<LoggedEvent> = Vec::new();
+        for r in stmt.query_map([], Self::row_to_event)? {
+            events.push(r??);
+        }
+        drop(stmt);
+
+        let mut prev = GENESIS_HASH.to_string();
+        for ev in events {
+            let ts = ev.ts.format(&Rfc3339)?;
+            let argv_json = serde_json::to_string(&ev.argv)
+                .map_err(|e| LogError::Corrupt(format!("argv serialize: {e}")))?;
+            let hash = Self::compute_hash(
+                &prev,
+                &ev.id,
+                &ts,
+                &ev.agent,
+                &ev.cwd,
+                &ev.command,
+                &argv_json,
+                ev.class,
+                ev.decision,
+                &ev.reason,
+                ev.tier,
+                ev.risk,
+                ev.summary.as_deref(),
+                ev.snapshot_id.as_deref(),
+            );
+            self.conn.execute(
+                "UPDATE events SET prev_hash = ?1, hash = ?2 WHERE seq = ?3",
+                rusqlite::params![prev, hash, ev.seq],
+            )?;
+            prev = hash;
+        }
+        Ok(())
     }
 
     /// Total number of events.
@@ -563,7 +840,7 @@ impl EventLog {
         let mut stmt = self.conn.prepare(
             r#"
             SELECT seq, id, ts, agent, cwd, command, argv, class, decision, reason, tier,
-                   risk, summary, snapshot_id, prev_hash, hash
+                   risk, summary, snapshot_id, prev_hash, hash, session, 0 AS redacted
             FROM events ORDER BY seq ASC
             "#,
         )?;
@@ -638,6 +915,8 @@ impl EventLog {
         let snapshot_id: Option<String> = row.get(13)?;
         let prev_hash: String = row.get(14)?;
         let hash: String = row.get(15)?;
+        let session: Option<String> = row.get(16)?;
+        let redacted: bool = row.get(17)?;
 
         Ok((|| {
             let id = Uuid::parse_str(&id_s)
@@ -671,8 +950,10 @@ impl EventLog {
                 risk,
                 summary,
                 snapshot_id,
+                session,
                 prev_hash,
                 hash,
+                redacted,
             })
         })())
     }

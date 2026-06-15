@@ -26,6 +26,11 @@ pub struct ProposedCommand {
     pub argv: Vec<String>,
     /// A human-readable rendering of the command exactly as proposed.
     pub raw: String,
+    /// Optional originating session id, for per-CLI / per-session grouping.
+    /// Supplied by adapters that have one (Claude Code hook, MCP connection);
+    /// best-effort / absent for raw shell-outs. View metadata, not hashed.
+    #[serde(default)]
+    pub session: Option<String>,
 }
 
 impl ProposedCommand {
@@ -43,7 +48,14 @@ impl ProposedCommand {
             cwd: cwd.into(),
             argv,
             raw: raw.into(),
+            session: None,
         }
+    }
+
+    /// Attach an originating session id (builder style).
+    pub fn with_session(mut self, session: Option<String>) -> Self {
+        self.session = session.filter(|s| !s.is_empty());
+        self
     }
 }
 
