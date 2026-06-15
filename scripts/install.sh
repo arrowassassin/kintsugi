@@ -251,20 +251,28 @@ setup_model() {
     [ "$ok" -eq 1 ] || { warn "model engine build failed; Aegis keeps working on the heuristic scorer."; return 0; }
   fi
 
-  say "choosing a model from Hugging Face…"
-  # Show the picker's menu and let the user choose — including the ★ recommended
-  # models alongside the popularity-ranked ones. The picker reads /dev/tty for the
-  # choice, so the menu works even under `curl | sh` (piped stdin). We only force
-  # --auto for a fully non-interactive install (--yes), where there's no human to
-  # answer; otherwise the picker itself falls back to the top recommendation when
-  # no terminal is available.
-  pickargs=""
-  [ "$ASSUME_YES" -eq 1 ] && pickargs="--auto"
-  if have curl; then curl -fsSL "$PICKER_URL" | sh -s -- $pickargs
-  elif have wget; then wget -qO- "$PICKER_URL" | sh -s -- $pickargs; fi
+  # If a model is already configured and present, keep it — don't re-pick or
+  # re-download. This is what makes `aegis update` rebuild the engine for the new
+  # version while preserving the user's chosen model.
+  if [ -n "${AEGIS_MODEL_FILE:-}" ] && [ -f "${AEGIS_MODEL_FILE:-}" ]; then
+    say "keeping the configured model: $(basename "$AEGIS_MODEL_FILE")"
+    model="$AEGIS_MODEL_FILE"
+  else
+    say "choosing a model from Hugging Face…"
+    # Show the picker's menu and let the user choose — including the ★ recommended
+    # models alongside the popularity-ranked ones. The picker reads /dev/tty for the
+    # choice, so the menu works even under `curl | sh` (piped stdin). We only force
+    # --auto for a fully non-interactive install (--yes), where there's no human to
+    # answer; otherwise the picker itself falls back to the top recommendation when
+    # no terminal is available.
+    pickargs=""
+    [ "$ASSUME_YES" -eq 1 ] && pickargs="--auto"
+    if have curl; then curl -fsSL "$PICKER_URL" | sh -s -- $pickargs
+    elif have wget; then wget -qO- "$PICKER_URL" | sh -s -- $pickargs; fi
 
-  mdir="${AEGIS_MODEL_DIR:-${AEGIS_DATA_DIR:-$HOME/.local/share/aegis}/models}"
-  model="$(ls -t "$mdir"/*.gguf 2>/dev/null | head -n1 || true)"
+    mdir="${AEGIS_MODEL_DIR:-${AEGIS_DATA_DIR:-$HOME/.local/share/aegis}/models}"
+    model="$(ls -t "$mdir"/*.gguf 2>/dev/null | head -n1 || true)"
+  fi
   if [ -n "$model" ]; then
     persist_env "AEGIS_MODEL_FILE" "$model"
     # Export into this process so the `aegis init` that runs after this (in the

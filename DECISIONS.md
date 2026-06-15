@@ -243,6 +243,13 @@ the locked product decisions this build implements.
   pick-model.sh skips the GGUF download when the file already exists (delete to
   re-fetch). Added a dependency-free `aegis-daemon --has-llama` probe that prints
   the build version + exits 0 when the engine is compiled in, else exits 1.
+- aegis update preserves llama: `aegis update` probes `aegis-daemon --has-llama`
+  and, when the engine is present, runs install.sh with `--version <tag> --no-init
+  --with-model` (rebuilds the engine for the new version, keeps the configured
+  model) instead of `--bin-only` (which would install the prebuilt heuristic-only
+  daemon). The tag is pinned so binaries and engine match. setup_model now keeps an
+  already-configured AEGIS_MODEL_FILE (skips the picker/download) so the rebuild
+  doesn't re-pick a model. Closes the earlier gap where updating dropped llama.
 - TUI paging: Space/b page the timeline by one screenful (the last-rendered
   data-row count, plumbed from the event loop via App.page_rows); f and
   PageUp/PageDown are aliases. Space/b are primary because Mac keyboards lack

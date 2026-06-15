@@ -8,11 +8,13 @@ All notable changes to Aegis are documented here. The format loosely follows
 ### CLI & install
 - **`aegis update`** — check GitHub for a newer release and install it in place.
   Compares the running version to the latest release tag and, with your consent,
-  re-runs the checksum-verifying installer in `--bin-only` mode (no re-wiring, no
-  model prompts) targeting the binary's own directory. `--check` reports only;
-  `--yes` skips the prompt. Manual and explicit: no automatic or background
-  checks, and no command/code/telemetry is ever sent — the one deliberate
-  exception to "never phone home", documented in DECISIONS.md.
+  re-runs the checksum-verifying installer (pinned to that tag) targeting the
+  binary's own directory. If your daemon has the local model engine, the update
+  **rebuilds the engine for the new version and keeps your configured model**
+  instead of dropping back to the prebuilt heuristic-only build; otherwise it just
+  swaps the binaries. `--check` reports only; `--yes` skips the prompt. Manual and
+  explicit: no automatic or background checks, and no command/code/telemetry is
+  ever sent — the one deliberate exception to "never phone home", per DECISIONS.md.
 - **Active scorer is now visible.** `aegis status`, `aegis init`, and the bare
   `aegis` banner report which scorer the daemon is using — the loaded local model
   (`<model> (local model)`) or the offline `heuristic fallback (… set
