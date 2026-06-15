@@ -87,19 +87,20 @@ pub fn handle(input: &str) -> HookOutcome {
     handle_with(Dialect::Claude, input)
 }
 
-/// Augment a catastrophic deny with honest guidance.
+/// Augment a catastrophic deny with the guarded way to run it yourself.
 ///
-/// A hook is one-shot: by the time you see this, the agent already got the deny
-/// and moved on, so there is no waiting process to run the command on approval
-/// (unlike the MCP/shim in-band paths). Approving the queue entry would record
-/// the decision but not execute it. So don't promise "approve to run" — tell the
-/// human the truth: it's blocked, and to run it themselves through a guarded
-/// path that snapshots first (the `$PATH` shim) so `aegis undo` can roll it back.
-fn held_for_approval(reason: &str, _id: &str) -> String {
+/// A hook is one-shot: by the time you see this, the agent already got the deny.
+/// The agent must never run a catastrophic itself, but the human can — via
+/// `aegis run <id>`, which snapshots first (so `aegis undo` works), runs the
+/// command in its original directory, and is gated on a real-terminal keypress
+/// (so an agent shelling out to it still can't self-approve). The queue id is
+/// the command's id, so we surface its short prefix here.
+fn held_for_approval(reason: &str, id: &str) -> String {
+    let short = id.get(..8).unwrap_or(id);
     format!(
-        "{reason} Aegis blocked it and the agent will not run it (an in-agent \
-         allow would skip the snapshot). If you want it, run it yourself through \
-         the Aegis shim — it snapshots first, so `aegis undo` can roll it back."
+        "{reason} Aegis blocked it; the agent will not run it. To run it yourself: \
+         `aegis run {short}` — it snapshots the affected files first (so `aegis undo` \
+         can roll them back) and confirms with a code typed at your terminal."
     )
 }
 
@@ -175,11 +176,17 @@ mod tests {
     }
 
     #[test]
-    fn held_for_approval_is_honest_about_no_agent_run() {
+    fn held_for_approval_points_at_aegis_run_with_short_id() {
         let msg = held_for_approval("recursively deletes files.", "abcd1234-5678-90ab-cdef");
         assert!(msg.contains("recursively deletes files."));
-        assert!(msg.contains("will not run"), "must say the agent won't run it");
-        assert!(msg.contains("shim"), "should point at the guarded shim path");
+        assert!(
+            msg.contains("will not run"),
+            "must say the agent won't run it"
+        );
+        assert!(
+            msg.contains("aegis run abcd1234"),
+            "should give the guarded run command"
+        );
         assert!(msg.contains("undo"), "should mention reversibility");
     }
 

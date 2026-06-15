@@ -112,8 +112,8 @@ fn catastrophic_bash_hook_payload_is_denied_not_ask() {
         .as_str()
         .unwrap();
     assert!(
-        reason.contains("will not run") && reason.contains("shim"),
-        "deny reason should explain the agent won't run it and how to run it safely: {reason}"
+        reason.contains("will not run") && reason.contains("aegis run "),
+        "deny reason should explain the agent won't run it and give `aegis run <id>`: {reason}"
     );
 
     h.join();

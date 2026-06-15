@@ -55,6 +55,18 @@ fn hold_enqueues_and_approve_resolves() {
         .unwrap()
         .iter()
         .any(|e| e.reason == "human:allow"));
+
+    // A second approve of the same id is a no-op (returns false) and does NOT
+    // log a second human:allow — the CAS guard prevents a double-run.
+    assert!(!daemon.resolve_pending(&id, Decision::Allow).unwrap());
+    let allows = daemon
+        .log()
+        .tail(20)
+        .unwrap()
+        .iter()
+        .filter(|e| e.reason == "human:allow")
+        .count();
+    assert_eq!(allows, 1, "approve must be exactly-once");
 }
 
 #[test]

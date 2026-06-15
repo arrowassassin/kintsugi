@@ -97,6 +97,20 @@ fn queue_without_daemon_is_graceful() {
 }
 
 #[test]
+fn run_without_daemon_errors() {
+    let tmp = tempfile::tempdir().unwrap();
+    // No daemon → `aegis run` should fail cleanly (non-zero), not panic.
+    let out = aegis()
+        .args(["run", "abc"])
+        .env("AEGIS_SOCKET", tmp.path().join("none.sock"))
+        .env("AEGIS_DB", tmp.path().join("e.db"))
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("daemon"));
+}
+
+#[test]
 fn approve_unknown_prefix_errors() {
     let tmp = tempfile::tempdir().unwrap();
     // No daemon → the command should fail cleanly (non-zero), not panic.

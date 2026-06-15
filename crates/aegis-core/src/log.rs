@@ -330,6 +330,21 @@ impl EventLog {
         Ok(())
     }
 
+    /// Atomically move a queued command from status `from` to `to`. Returns true
+    /// iff *this* call performed the transition (the row existed and was `from`).
+    ///
+    /// This is the exactly-once guard: a held command must resolve/run once even
+    /// if two `aegis approve`/`aegis run` invocations race — only the winner of
+    /// the compare-and-swap proceeds; the loser sees `false` and does nothing.
+    pub fn cas_pending_status(&self, id: &str, from: &str, to: &str) -> Result<bool, LogError> {
+        let now = OffsetDateTime::now_utc().format(&Rfc3339)?;
+        let changed = self.conn.execute(
+            "UPDATE pending SET status = ?3, updated_at = ?4 WHERE id = ?1 AND status = ?2",
+            rusqlite::params![id, from, to, now],
+        )?;
+        Ok(changed == 1)
+    }
+
     /// The stored command for a queued id (for resolve/re-run).
     pub fn pending_command(&self, id: &str) -> Result<Option<ProposedCommand>, LogError> {
         let json: Option<String> = self
