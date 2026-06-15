@@ -480,42 +480,43 @@
     </header>
     <div class="scene-grid">
       <figure class="scene-svg" aria-hidden="true">
-        <svg viewBox="0 0 480 240" xmlns="http://www.w3.org/2000/svg" role="img">
+        <svg viewBox="0 0 480 250" xmlns="http://www.w3.org/2000/svg" role="img">
           <!-- computer outline -->
           <g>
-            <rect x="80" y="40" width="320" height="140" fill="#0e1320" stroke="#283557" stroke-width="3"/>
-            <rect x="80" y="40" width="320" height="20" fill="#141c30"/>
-            <rect x="150" y="180" width="180" height="14" fill="#0e1320" stroke="#283557" stroke-width="3"/>
-            <text x="240" y="56" text-anchor="middle" font-family="Press Start 2P" font-size="9" fill="#8b95ad">your machine</text>
+            <rect x="56" y="40" width="348" height="140" fill="#0e1320" stroke="#283557" stroke-width="3"/>
+            <rect x="56" y="40" width="348" height="20" fill="#141c30"/>
+            <rect x="170" y="180" width="120" height="14" fill="#0e1320" stroke="#283557" stroke-width="3"/>
+            <text x="230" y="55" text-anchor="middle" font-family="Press Start 2P" font-size="9" fill="#8b95ad">your machine</text>
 
-            <!-- inside: the agent, aegis, the model -->
-            <rect x="100" y="80" width="80" height="70" fill="#121a2b" stroke="#6bd6ff" stroke-width="2"/>
-            <text x="140" y="106" text-anchor="middle" font-family="Press Start 2P" font-size="8" fill="#6bd6ff">AGENT</text>
-            <text x="140" y="128" text-anchor="middle" font-family="ui-monospace" font-size="10" fill="#8b95ad">claude</text>
+            <!-- inside: the agent, aegis, the model. Boxes are 96 wide and the
+                 labels are sized/trimmed to sit inside them and the frame. -->
+            <rect x="68" y="78" width="96" height="74" fill="#121a2b" stroke="#6bd6ff" stroke-width="2"/>
+            <text x="116" y="106" text-anchor="middle" font-family="Press Start 2P" font-size="8" fill="#6bd6ff">AGENT</text>
+            <text x="116" y="130" text-anchor="middle" font-family="ui-monospace" font-size="11" fill="#8b95ad">claude</text>
 
-            <rect x="200" y="80" width="80" height="70" fill="#121a2b" stroke="#5af78e" stroke-width="2"/>
-            <text x="240" y="106" text-anchor="middle" font-family="Press Start 2P" font-size="8" fill="#5af78e">AEGIS</text>
-            <text x="240" y="128" text-anchor="middle" font-family="ui-monospace" font-size="10" fill="#8b95ad">rules + log</text>
+            <rect x="182" y="78" width="96" height="74" fill="#121a2b" stroke="#5af78e" stroke-width="2"/>
+            <text x="230" y="106" text-anchor="middle" font-family="Press Start 2P" font-size="8" fill="#5af78e">AEGIS</text>
+            <text x="230" y="130" text-anchor="middle" font-family="ui-monospace" font-size="11" fill="#8b95ad">rules + log</text>
 
-            <rect x="300" y="80" width="80" height="70" fill="#121a2b" stroke="#ffd866" stroke-width="2"/>
-            <text x="340" y="106" text-anchor="middle" font-family="Press Start 2P" font-size="8" fill="#ffd866">LOCAL MODEL</text>
-            <text x="340" y="128" text-anchor="middle" font-family="ui-monospace" font-size="10" fill="#8b95ad">small · offline</text>
+            <rect x="296" y="78" width="96" height="74" fill="#121a2b" stroke="#ffd866" stroke-width="2"/>
+            <text x="344" y="106" text-anchor="middle" font-family="Press Start 2P" font-size="7" fill="#ffd866">LOCAL MODEL</text>
+            <text x="344" y="130" text-anchor="middle" font-family="ui-monospace" font-size="11" fill="#8b95ad">offline</text>
           </g>
 
-          <!-- network arrow tries to leave, bounces -->
+          <!-- network packet tries to leave, bounces off the wall -->
           <g>
-            <rect x="0" y="0" width="14" height="14" fill="#ff5d5d" opacity="0">
-              <animate attributeName="x"   values="240;240;420;380;240" keyTimes="0;0.1;0.35;0.45;0.6" dur="4s" repeatCount="indefinite"/>
-              <animate attributeName="y"   values="200;200;200;200;200" dur="4s" repeatCount="indefinite"/>
+            <rect x="0" y="0" width="12" height="12" fill="#ff5d5d" opacity="0">
+              <animate attributeName="x"   values="230;230;392;360;230" keyTimes="0;0.1;0.35;0.45;0.6" dur="4s" repeatCount="indefinite"/>
+              <animate attributeName="y"   values="160;160;160;160;160" dur="4s" repeatCount="indefinite"/>
               <animate attributeName="opacity" values="0;1;1;1;0" keyTimes="0;0.1;0.35;0.5;0.6" dur="4s" repeatCount="indefinite"/>
             </rect>
           </g>
-          <!-- the wall -->
-          <line x1="400" y1="190" x2="400" y2="220" stroke="#ff5d5d" stroke-width="3"/>
-          <text x="416" y="212" font-family="ui-monospace" font-size="11" fill="#ff5d5d">no egress</text>
+          <!-- the wall + label (kept inside the 480 viewBox) -->
+          <line x1="404" y1="150" x2="404" y2="178" stroke="#ff5d5d" stroke-width="3"/>
+          <text x="412" y="172" font-family="ui-monospace" font-size="10" fill="#ff5d5d">no egress</text>
 
           <!-- caption -->
-          <text x="240" y="228" text-anchor="middle" font-family="ui-monospace" font-size="11" fill="#8b95ad">no cloud · no account · no telemetry</text>
+          <text x="230" y="232" text-anchor="middle" font-family="ui-monospace" font-size="11" fill="#8b95ad">no cloud · no account · no telemetry</text>
         </svg>
       </figure>
       <div class="scene-body">
