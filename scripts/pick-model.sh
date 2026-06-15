@@ -28,6 +28,23 @@ AUTO=0
 QUERY=""
 DIR="${AEGIS_MODEL_DIR:-${AEGIS_DATA_DIR:-$HOME/.local/share/aegis}/models}"
 
+# Curated "known good" GGUF repos — small, instruct-tuned, well-quantised, from
+# publishers we've actually used. Listed in preference order; we pin Aegis's
+# recommended model first and surface these at the top of the picker. When the
+# Hugging Face search returns one of these IDs, it gets a ★ marker and (with
+# --auto / no TTY) is selected ahead of the popularity ranking.
+RECOMMENDED_4B="\
+bartowski/Qwen3-4B-Instruct-2507-GGUF
+lmstudio-community/Qwen3-4B-Instruct-2507-GGUF
+MaziyarPanahi/Qwen3-4B-Instruct-2507-GGUF
+Qwen/Qwen2.5-Coder-3B-Instruct-GGUF
+bartowski/Qwen2.5-Coder-3B-Instruct-GGUF"
+
+RECOMMENDED_SMALL="\
+bartowski/Qwen2.5-1.5B-Instruct-GGUF
+Qwen/Qwen2.5-1.5B-Instruct-GGUF
+bartowski/Llama-3.2-1B-Instruct-GGUF"
+
 say()  { printf '\033[1;32maegis\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33maegis\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31maegis: %s\033[0m\n' "$*" >&2; exit 1; }
@@ -86,23 +103,55 @@ fi
 IDS="$(printf '%s\n' "$IDS" | grep -iE 'instruct|chat|it' | head -n "$LIMIT" || true)"
 [ -n "$IDS" ] || die "no compatible GGUF models came back — try --query \"<terms>\""
 
+# Promote recommended publishers/repos to the front of the list. Anything that
+# matches RECOMMENDED_* is moved to the top and marked with a ★, then the rest
+# of the HF popularity ranking fills in.
+if [ "$RAM" -ge 6000 ]; then RECOMMENDED="$RECOMMENDED_4B"; else RECOMMENDED="$RECOMMENDED_SMALL"; fi
+PROMOTED=""; REMAINDER="$IDS"
+for rec in $RECOMMENDED; do
+  match="$(printf '%s\n' "$REMAINDER" | grep -Fx "$rec" || true)"
+  if [ -n "$match" ]; then
+    PROMOTED="${PROMOTED}${match}
+"
+    REMAINDER="$(printf '%s\n' "$REMAINDER" | grep -Fxv "$match" || true)"
+  fi
+done
+IDS="$(printf '%s%s\n' "$PROMOTED" "$REMAINDER" | sed '/^$/d' | head -n "$LIMIT")"
+RECOMMENDED_SET="$(printf '%s' "$PROMOTED" | sed '/^$/d')"
+
+is_recommended() {
+  printf '%s\n' "$RECOMMENDED_SET" | grep -Fxq "$1"
+}
+
 # --- Present the menu. -------------------------------------------------------
 i=0
 echo
-printf '  %s\n' "compatible small instruct GGUF models (top by downloads):"
+printf '  %s\n' "compatible small instruct GGUF models (★ = recommended):"
 echo "$IDS" | while IFS= read -r id; do
-  i=$((i+1)); printf '   \033[1;36m%2d\033[0m  %s\n' "$i" "$id"
+  i=$((i+1))
+  if is_recommended "$id"; then
+    printf '   \033[1;33m%2d ★\033[0m %s\n' "$i" "$id"
+  else
+    printf '   \033[1;36m%2d  \033[0m %s\n' "$i" "$id"
+  fi
 done
 echo
 
 N="$(printf '%s\n' "$IDS" | grep -c .)"
-if [ "$AUTO" -eq 1 ]; then
+# Decide interactivity. We can prompt as long as the controlling terminal is
+# readable — even when stdin is a pipe (the `curl | sh` install path), /dev/tty
+# is still open. If even /dev/tty isn't available and the caller didn't pass
+# --auto, we fall back to the top recommendation silently rather than dying:
+# the user already asked for "set up a model" in install.sh, dying mid-flow on
+# the second step is the user-hostile behaviour we're trying to remove.
+if [ "$AUTO" -eq 1 ] || [ ! -r /dev/tty ]; then
   CHOICE=1
+  [ "$AUTO" -eq 1 ] || say "non-interactive shell — auto-selecting the top recommendation."
 else
-  [ -t 0 ] || die "no TTY for the menu — re-run with --auto, or pass --query and pipe to 'sh -s -- --auto'"
-  printf 'pick a number [1-%s] (or q to quit): ' "$N"
-  read -r CHOICE </dev/tty || CHOICE=q
-  case "$CHOICE" in q|Q|"") say "no model installed (Aegis still runs on the heuristic scorer)."; exit 0 ;; esac
+  printf 'pick a number [1-%s] (default 1, q to quit): ' "$N"
+  read -r CHOICE </dev/tty || CHOICE=""
+  [ -z "$CHOICE" ] && CHOICE=1
+  case "$CHOICE" in q|Q) say "no model installed (Aegis still runs on the heuristic scorer)."; exit 0 ;; esac
   case "$CHOICE" in *[!0-9]*) die "not a number: $CHOICE" ;; esac
   { [ "$CHOICE" -ge 1 ] && [ "$CHOICE" -le "$N" ]; } || die "out of range: $CHOICE"
 fi

@@ -154,18 +154,30 @@ pkg_install() {
 }
 
 # Ensure a C/C++ toolchain + cmake (and libomp on macOS) for building llama.cpp.
+# Wrapped in run_with_progress so the user sees a spinner — not pages of
+# Homebrew chatter ("==> Pouring …", "Caveats:", "Disable this behaviour by
+# setting HOMEBREW_NO_INSTALL_CLEANUP=1", etc). On failure, the full log is
+# replayed so nothing is hidden.
 ensure_build_tools() {
   # Already have cmake and a C compiler? Nothing to do.
   if have cmake && { have cc || have gcc || have clang; }; then return 0; fi
+  # Quiet the noisy package managers. These are all advisory: they suppress
+  # hint/cleanup output but don't change what's installed.
+  export HOMEBREW_NO_ENV_HINTS=1
+  export HOMEBREW_NO_INSTALL_CLEANUP=1
+  export HOMEBREW_NO_AUTO_UPDATE=1
+  export DEBIAN_FRONTEND=noninteractive
   if have brew; then
     xcode-select -p >/dev/null 2>&1 || { say "installing Xcode command-line tools…"; xcode-select --install || true; }
-    have cmake || brew install cmake
-    brew list libomp >/dev/null 2>&1 || brew install libomp || true
-  elif have apt-get; then $SUDO apt-get update -y && $SUDO apt-get install -y cmake build-essential
-  elif have dnf;    then $SUDO dnf install -y cmake gcc-c++ make
-  elif have pacman; then $SUDO pacman -Sy --noconfirm cmake base-devel
-  elif have zypper; then $SUDO zypper install -y cmake gcc-c++ make
-  elif have apk;    then $SUDO apk add cmake build-base
+    have cmake || run_with_progress "installing cmake (homebrew)" brew install cmake || return 1
+    brew list libomp >/dev/null 2>&1 || run_with_progress "installing libomp (homebrew)" brew install libomp || true
+  elif have apt-get; then
+    run_with_progress "updating apt index" $SUDO apt-get update -y || return 1
+    run_with_progress "installing cmake + build-essential (apt)" $SUDO apt-get install -y cmake build-essential || return 1
+  elif have dnf;    then run_with_progress "installing cmake + gcc-c++ (dnf)"    $SUDO dnf install -y cmake gcc-c++ make || return 1
+  elif have pacman; then run_with_progress "installing cmake + base-devel (pacman)" $SUDO pacman -Sy --noconfirm cmake base-devel || return 1
+  elif have zypper; then run_with_progress "installing cmake + gcc-c++ (zypper)" $SUDO zypper install -y cmake gcc-c++ make || return 1
+  elif have apk;    then run_with_progress "installing cmake + build-base (apk)" $SUDO apk add cmake build-base || return 1
   else
     warn "no known package manager — install cmake + a C/C++ compiler yourself, then re-run with --with-model."
     return 1
@@ -224,7 +236,13 @@ setup_model() {
   [ "$ok" -eq 1 ] || { warn "model engine build failed; Aegis keeps working on the heuristic scorer."; return 0; }
 
   say "choosing a model from Hugging Face…"
-  pickargs=""; [ "$ASSUME_YES" -eq 1 ] && pickargs="--auto"
+  # Always pass --auto from this code path. The user already opted in to "set
+  # up a local model" one step ago; making them answer a *second* prompt mid-
+  # install is the friction we're trying to remove. They can re-run the picker
+  # later (with full menu) if they want a different model. Also: when stdin is
+  # piped, the picker can't read a number anyway — passing --auto is the only
+  # correct behaviour, not an opt-in.
+  pickargs="--auto"
   if have curl; then curl -fsSL "$PICKER_URL" | sh -s -- $pickargs
   elif have wget; then wget -qO- "$PICKER_URL" | sh -s -- $pickargs; fi
 

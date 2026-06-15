@@ -190,6 +190,149 @@ footer a { color: var(--cyan); }
   display:inline-flex; align-items:center; line-height:1; }
 .themebtn:hover { color:var(--green); }
 
+/* ---- the tour page ---- */
+/* Each scene is a numbered story beat: a small 8-bit header, a square SVG
+   animation on the left, plain-English copy on the right. The grid collapses
+   to one column on mobile, with the SVG on top. */
+.scene { padding: 50px 0; border-top: 3px dashed var(--line); }
+.scene-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 18px; }
+.scene-num {
+  font-family: "Press Start 2P", monospace; font-size: 12px;
+  color: var(--green);
+  background: var(--panel); border: 2px solid var(--line);
+  padding: 8px 10px; line-height: 1;
+}
+.scene-head h2 {
+  margin: 0; font-size: 18px; color: var(--amber);
+  text-shadow: 3px 3px 0 #3a2b06; line-height: 1.2;
+}
+.scene-grid {
+  display: grid; grid-template-columns: 1fr; gap: 24px; align-items: start;
+}
+@media (min-width: 760px) {
+  .scene-grid { grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 36px; }
+}
+.scene-svg {
+  margin: 0;
+  border: 3px solid var(--line);
+  background: var(--term-bg);
+  box-shadow: 6px 6px 0 rgba(0,0,0,.5);
+  padding: 12px;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.scene-svg svg { display: block; width: 100%; height: auto; }
+.scene-body p { margin: 0 0 14px; font-size: 21px; color: var(--ink); }
+.scene-body .lead { font-size: 23px; }
+.scene-body .muted { font-size: 18px; }
+.scene-finale { text-align: center; }
+.scene-finale .lead { font-size: 26px; margin: 0 auto 22px; max-width: 760px; }
+.scene-finale .cta {
+  display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; margin-bottom: 16px;
+}
+.scene-finale .note { color: var(--dim); font-size: 17px; }
+
+/* Respect reduced-motion: the SVG SMIL animations are decorative; freeze them
+   for anyone who's asked the OS to dial things back. */
+@media (prefers-reduced-motion: reduce) {
+  .scene-svg svg * { animation: none !important; }
+  .scene-svg svg animate, .scene-svg svg animateTransform { display: none; }
+}
+
+/* Mobile tweaks for scenes. */
+@media (max-width: 640px) {
+  .scene { padding: 32px 0; }
+  .scene-head { flex-wrap: wrap; gap: 10px; }
+  .scene-head h2 { font-size: 14px; }
+  .scene-num { font-size: 10px; padding: 6px 8px; }
+  .scene-body p { font-size: 17px; }
+  .scene-body .lead { font-size: 19px; }
+  .scene-body .muted { font-size: 15px; }
+  .scene-finale .lead { font-size: 20px; }
+}
+
+/* ---- hamburger (only visible <=640px) ---- */
+.navtoggle {
+  display: none;
+  margin-left: auto;
+  font-family: "Press Start 2P", monospace;
+  font-size: 18px;
+  line-height: 1;
+  background: var(--panel);
+  color: var(--ink);
+  border: 2px solid var(--line);
+  padding: 8px 10px;
+  cursor: pointer;
+}
+.navtoggle:hover, .navtoggle[aria-expanded="true"] { color: var(--green); }
+
+/* ---- mobile layout ---- */
+/* Phones: collapse the nav into a hamburger panel, shrink the hero, and stack
+   the flow diagram vertically so the steps read top-to-bottom with one
+   centered down-arrow between each box. */
+@media (max-width: 640px) {
+  /* Anchor every block to the viewport so a single overflowing element can't
+     create a horizontal scrollbar that clips the whole page. */
+  html, body { overflow-x: hidden; }
+
+  .wrap { padding: 0 14px; }
+
+  /* Header: brand + hamburger only; nav slides down on toggle. The fixed
+     64px height is replaced by min-height so the wrapped nav has room to
+     expand when open without clipping. */
+  .nav .wrap { gap: 10px; height: auto; min-height: 56px; flex-wrap: wrap; padding-top: 8px; padding-bottom: 8px; }
+  .brand { font-size: 13px; }
+  .navtoggle { display: inline-flex; align-items: center; }
+
+  .nav nav {
+    display: none;
+    flex-basis: 100%;
+    margin: 0 -14px;
+    padding: 8px 14px 14px;
+    background: var(--bg);
+    border-top: 2px solid var(--line);
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 14px;
+  }
+  .nav[data-nav="open"] nav { display: flex; }
+  .nav[data-nav="open"] .navtoggle { color: var(--green); }
+  .nav nav a { font-size: 11px; padding: 4px 0; }
+  .themebtn { font-size: 11px; }
+
+  /* Hero: the 56px Press Start title with double drop-shadow overflowed; this
+     fits 320-414px viewports without horizontal scroll. */
+  .hero { padding: 32px 0 18px; }
+  .hero h1 { font-size: 36px; text-shadow: 2px 2px 0 #0a3a1f, 4px 4px 0 #06250f; }
+  .hero .sub { font-size: 19px; }
+  .hero .note { font-size: 15px; }
+  .hero .cta { gap: 10px; }
+  .hero .cta .btn { padding: 12px 14px; font-size: 9px; }
+
+  /* Sections: tighter padding. */
+  section { padding: 30px 0; }
+  section h2 { font-size: 16px; }
+  .lead { font-size: 19px; }
+
+  /* Flow diagram: stack vertically with a down-arrow between each step. The
+     desktop markup interleaves <div class="arrow">▶</div> between boxes; on
+     mobile we hide the glyph (it's still in the DOM for desktop) and pin a ▼
+     pseudo-element so the relationship reads top-to-bottom. */
+  .flow { flex-direction: column; align-items: stretch; gap: 0; }
+  .flow .box { flex: 0 0 auto; min-width: 0; padding: 14px; }
+  .flow .arrow {
+    align-self: center;
+    font-size: 0;       /* hide the ▶ glyph without removing it */
+    line-height: 1;
+    padding: 6px 0;
+  }
+  .flow .arrow::before {
+    content: "▼";
+    font-size: 22px;
+    color: var(--amber);
+  }
+}
+
 /* ---- light theme (chrome flips; terminals stay dark, as terminals do) ---- */
 :root[data-theme="light"] {
   --bg:#f3efe3; --bg2:#efe9da; --panel:#fbf8ef; --ink:#1b2230; --dim:#5f6b80;
