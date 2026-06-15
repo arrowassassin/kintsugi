@@ -17,6 +17,13 @@ fn serial_lock() -> MutexGuard<'static, ()> {
         .unwrap_or_else(|e| e.into_inner())
 }
 
+/// Whether we're running under coverage instrumentation (cargo-llvm-cov), which
+/// inflates timings 2–5×. We still exercise the path for coverage, but don't
+/// enforce the wall-clock bound — that's only meaningful on an uninstrumented build.
+fn instrumented() -> bool {
+    std::env::var_os("LLVM_PROFILE_FILE").is_some()
+}
+
 #[test]
 fn rules_fast_path_is_microsecond_scale() {
     let cmd = ProposedCommand::new("bench", "/tmp", vec!["ls".into(), "-la".into()], "ls -la");
@@ -34,6 +41,10 @@ fn rules_fast_path_is_microsecond_scale() {
     }
     let per = start.elapsed() / iters;
     eprintln!("rules classify: {per:?} per call");
+    if instrumented() {
+        eprintln!("(coverage run — skipping the timing bound)");
+        return;
+    }
     assert!(
         per.as_micros() < 100,
         "rules fast-path should be well under 100µs, was {per:?}"
@@ -77,6 +88,10 @@ fn safe_command_round_trip_is_sub_millisecond() {
     handle.join().unwrap();
 
     eprintln!("safe round-trip mean: {mean:?} over {measured} calls");
+    if instrumented() {
+        eprintln!("(coverage run — skipping the sub-millisecond bound)");
+        return;
+    }
     assert!(
         mean.as_micros() < 1000,
         "safe round-trip should be sub-millisecond on a warm daemon, was {mean:?}"
