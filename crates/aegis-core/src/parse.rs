@@ -37,6 +37,10 @@ pub struct SimpleCmd {
 pub struct Analysis {
     pub commands: Vec<SimpleCmd>,
     pub substitutions: Vec<String>,
+    /// Set when the walk stopped early at [`MAX_DEPTH`] — some commands may not
+    /// have been collected, so the caller must fail toward caution (never Safe)
+    /// rather than trust an incomplete command list.
+    pub truncated: bool,
 }
 
 /// Parse `raw` into an [`Analysis`]. Returns `None` if the line can't be parsed
@@ -60,16 +64,60 @@ fn basename(arg0: &str) -> &str {
 }
 
 fn parse_program(raw: &str) -> Option<ast::Program> {
+    // `brush_parser` recurses per nesting level, and pathologically deep input
+    // (hundreds of nested `$(…)`) can overflow its stack — an *uncatchable*
+    // abort, not a panic. Refuse to parse such input; the caller stays cautious.
+    if exceeds_nesting(raw) {
+        return None;
+    }
     let tokens = brush_parser::tokenize_str(raw).ok()?;
     let opts = brush_parser::ParserOptions::default();
     brush_parser::parse_tokens(&tokens, &opts).ok()
 }
 
-/// Guard against pathological nesting of substitutions / compounds.
-const MAX_DEPTH: u8 = 8;
+/// Hard ceiling on parser-recursion-driving nesting, well under the depth that
+/// overflows `brush_parser`'s stack. Real commands never approach it.
+const MAX_NESTING: usize = 48;
+
+/// Whether `raw` nests parens / brace groups / backticks / compound keywords
+/// deeply enough to risk the parser's stack. Cheap single pass; conservative.
+fn exceeds_nesting(raw: &str) -> bool {
+    let mut depth: i32 = 0;
+    let mut max_depth: i32 = 0;
+    let mut backticks = 0usize;
+    for b in raw.bytes() {
+        match b {
+            b'(' | b'{' => {
+                depth += 1;
+                max_depth = max_depth.max(depth);
+            }
+            b')' | b'}' => depth = (depth - 1).max(0),
+            b'`' => backticks += 1,
+            _ => {}
+        }
+    }
+    // Nested compound statements (`if … then … fi`) recurse the parser too.
+    let keywords = raw
+        .split_whitespace()
+        .filter(|t| {
+            matches!(
+                *t,
+                "if" | "for" | "while" | "until" | "case" | "select" | "do" | "then"
+            )
+        })
+        .count();
+    max_depth as usize > MAX_NESTING || backticks > MAX_NESTING || keywords > MAX_NESTING
+}
+
+/// Guard against pathological nesting of substitutions / compounds while walking
+/// the parsed tree. Generous (the parser-stack ceiling is enforced separately by
+/// [`exceeds_nesting`]); reaching it sets `Analysis::truncated` so the caller
+/// fails toward caution.
+const MAX_DEPTH: u8 = 64;
 
 fn collect_program(program: &ast::Program, a: &mut Analysis, depth: u8) {
     if depth > MAX_DEPTH {
+        a.truncated = true;
         return;
     }
     for complete in &program.complete_commands {
@@ -79,6 +127,7 @@ fn collect_program(program: &ast::Program, a: &mut Analysis, depth: u8) {
 
 fn collect_compound_list(list: &ast::CompoundList, a: &mut Analysis, depth: u8) {
     if depth > MAX_DEPTH {
+        a.truncated = true;
         return;
     }
     for item in &list.0 {
@@ -106,14 +155,19 @@ fn collect_command(cmd: &ast::Command, a: &mut Analysis, depth: u8) {
     match cmd {
         ast::Command::Simple(sc) => collect_simple(sc, a, depth),
         ast::Command::Compound(compound, _redirects) => collect_compound(compound, a, depth + 1),
-        // Function definitions / extended-test expressions don't *run* a command
-        // by themselves; their bodies are reached when invoked. Ignore here.
-        _ => {}
+        // A function definition doesn't *run* its body, but the body is run when
+        // the function is later called (often on the same line: `f(){ rm -rf /; }; f`).
+        // Walk it now — over-flagging a defined-but-uncalled function is the
+        // correct, cautious bias.
+        ast::Command::Function(func) => collect_compound(&func.body.0, a, depth + 1),
+        // Extended-test expressions (`[[ … ]]`) don't run a command. Ignore.
+        ast::Command::ExtendedTest(_, _) => {}
     }
 }
 
 fn collect_compound(compound: &ast::CompoundCommand, a: &mut Analysis, depth: u8) {
     if depth > MAX_DEPTH {
+        a.truncated = true;
         return;
     }
     use ast::CompoundCommand::*;
@@ -161,6 +215,10 @@ fn collect_simple(sc: &ast::SimpleCommand, a: &mut Analysis, depth: u8) {
                     scan_words.push(w.value.clone())
                 }
                 ast::CommandPrefixOrSuffixItem::Word(w) => scan_words.push(w.value.clone()),
+                // Process substitution `<(…)` / `>(…)` runs its inner command.
+                ast::CommandPrefixOrSuffixItem::ProcessSubstitution(_, sub) => {
+                    collect_compound_list(&sub.list, a, depth + 1)
+                }
                 _ => {}
             }
         }
@@ -183,26 +241,43 @@ fn collect_simple(sc: &ast::SimpleCommand, a: &mut Analysis, depth: u8) {
         for item in &suffix.0 {
             match item {
                 ast::CommandPrefixOrSuffixItem::Word(w) => args.push(w.value.clone()),
-                // A here-doc / here-string fed to a shell carries a script body.
-                ast::CommandPrefixOrSuffixItem::IoRedirect(io) if is_shell => {
-                    let body = match io {
-                        ast::IoRedirect::HereDocument(_, hd) => Some(hd.doc.value.clone()),
-                        // A here-string keeps its surrounding quotes in the word;
-                        // the actual stdin is the unquoted content.
-                        ast::IoRedirect::HereString(_, w) => {
-                            Some(w.value.trim_matches(['"', '\'']).to_string())
-                        }
-                        _ => None,
-                    };
-                    if let Some(body) = body {
-                        if let Some(inner) = parse_program(&body) {
-                            collect_program(&inner, a, depth + 1);
+                // Process substitution `<(…)` / `>(…)` as an argument runs its
+                // inner command (e.g. `diff <(a) <(b)`, `grep x <(rm -rf /)`).
+                ast::CommandPrefixOrSuffixItem::ProcessSubstitution(_, sub) => {
+                    collect_compound_list(&sub.list, a, depth + 1)
+                }
+                ast::CommandPrefixOrSuffixItem::IoRedirect(io) => {
+                    // Process substitution as a redirect *target* also runs its
+                    // inner command (`cmd > >(rm -rf /)`).
+                    if let ast::IoRedirect::File(
+                        _,
+                        _,
+                        ast::IoFileRedirectTarget::ProcessSubstitution(_, sub),
+                    ) = io
+                    {
+                        collect_compound_list(&sub.list, a, depth + 1);
+                    }
+                    // A here-doc / here-string fed to a shell carries a script body.
+                    if is_shell {
+                        let body = match io {
+                            ast::IoRedirect::HereDocument(_, hd) => Some(hd.doc.value.clone()),
+                            // A here-string keeps its surrounding quotes in the word;
+                            // the actual stdin is the unquoted content.
+                            ast::IoRedirect::HereString(_, w) => {
+                                Some(w.value.trim_matches(['"', '\'']).to_string())
+                            }
+                            _ => None,
+                        };
+                        if let Some(body) = body {
+                            if let Some(inner) = parse_program(&body) {
+                                collect_program(&inner, a, depth + 1);
+                            }
                         }
                     }
                 }
                 _ => {}
             }
-            // File redirects are handled by the snapshot predictor, not here.
+            // Plain file redirects are handled by the snapshot predictor, not here.
         }
     }
 
@@ -331,6 +406,59 @@ mod tests {
     fn descends_into_compounds() {
         assert!(progs("if true; then rm -rf /; fi").contains(&"rm".to_string()));
         assert!(progs("( cd x && git push --force )").contains(&"git".to_string()));
+    }
+
+    #[test]
+    fn descends_into_process_substitution() {
+        // `<(cmd)` / `>(cmd)` run their inner command.
+        assert!(progs("grep x <(rm -rf /)").contains(&"rm".to_string()));
+        assert!(progs("diff <(git push --force) /dev/null").contains(&"git".to_string()));
+        // Process substitution as a redirect target.
+        assert!(progs("echo hi > >(rm -rf /)").contains(&"rm".to_string()));
+    }
+
+    #[test]
+    fn descends_into_function_bodies() {
+        // A function body is walked (it runs when the function is called).
+        assert!(progs("f(){ rm -rf /; }; f").contains(&"rm".to_string()));
+        assert!(progs("function g { git push --force; }; g").contains(&"git".to_string()));
+    }
+
+    #[test]
+    fn deep_nesting_is_refused_not_aborted() {
+        // Hundreds of nested `$(` would overflow brush-parser's stack (an
+        // uncatchable abort). We must refuse to parse it, returning None.
+        let bomb = format!("echo {}rm -rf /{}", "$(".repeat(300), ")".repeat(300));
+        assert!(analyze(&bomb).is_none(), "deep nesting must be refused");
+    }
+
+    #[test]
+    fn moderate_nesting_is_fully_walked() {
+        // Within the ceiling, the buried command is still found (no silent drop).
+        let nested = format!("echo {}rm -rf /{}", "$(".repeat(12), ")".repeat(12));
+        assert!(progs(&nested).contains(&"rm".to_string()));
+    }
+
+    #[test]
+    fn backtick_and_keyword_bombs_are_refused() {
+        // Excessive backtick nesting and compound-keyword nesting are refused
+        // before the parser can overflow its stack.
+        let backticks: String = "`".repeat(MAX_NESTING + 5);
+        assert!(analyze(&backticks).is_none());
+        let keywords = "if true; then ".repeat(MAX_NESTING + 5);
+        assert!(analyze(&keywords).is_none());
+    }
+
+    #[test]
+    fn heredoc_to_non_shell_is_not_treated_as_script() {
+        // A here-doc fed to a non-shell (e.g. `cat`) is data, not a script — its
+        // body must NOT be parsed as commands.
+        let p = progs("cat <<EOF\nrm -rf /\nEOF\n");
+        assert!(p.contains(&"cat".to_string()));
+        assert!(
+            !p.contains(&"rm".to_string()),
+            "heredoc to cat is data: {p:?}"
+        );
     }
 
     #[test]

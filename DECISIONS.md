@@ -278,3 +278,35 @@ the locked product decisions this build implements.
   PageUp/PageDown are aliases. Space/b are primary because Mac keyboards lack
   dedicated PageUp/PageDown. Footer gained a right-aligned "row N/M" indicator,
   shown only when it fits so the help text never clips on an 80-col terminal.
+- Shell analysis went AST-based (industry standard). We adopted a real bash AST
+  parser (`brush-parser`, pure-Rust/MIT) over the prior regex/substring approach,
+  which is the documented failure mode for shell scanners (quoting/expansion slip
+  through). Chose pure-Rust to keep the default build toolchain-free; rejected
+  `yash-syntax` (GPL-3.0, incompatible with a distributed MIT binary).
+- Keep BOTH parsers, worst-wins. The new AST pass composes with the old tokenizer
+  pass and takes the most-severe class. Defense-in-depth for the security spine:
+  the AST can only ADD caution, and if either pass (or the parser) fails, the
+  other still stands. Never downgrades a verdict.
+- AST fast-path is an allowlist, not a denylist. After the roundtable found a bare
+  `&` slipping past a denylist of "interesting" characters, the skip-the-AST gate
+  became an allowlist of provably-inert lines (plain word/flag/path chars only).
+  A denylist is one missing operator away from a catastrophic-as-Safe miss.
+- Parser DoS is prevented, not caught. brush-parser stack-overflows (uncatchable
+  abort, not a panic) on deeply nested `$(…)`. We refuse input past a generous
+  nesting/size/operator cap *before* parsing and classify it Ambiguous (never
+  Safe); the AST-walk depth guard likewise sets a `truncated` flag that fails
+  toward caution rather than dropping a buried command.
+- DEFERRED to a follow-up PR (these *loosen* a guardrail, so they need explicit
+  human sign-off per CLAUDE.md, and a careful no-regression test corpus):
+  - **Quote/comment-aware whole-line scans.** `catastrophic_whole_line` substring-
+    scans the raw line, so safe commands with dangerous-looking *text*
+    (`grep -rn 'DROP TABLE' src/`, `git commit -m '… dd of=/dev/sda …'`,
+    `echo 'curl … | sh'`) are false-positive Catastrophic. Recoverable per the
+    over-flag bias, but a real usability tax. Fix must scan executed AST tokens,
+    not the raw quoted line, without ever reducing detection on the genuine cases
+    (e.g. `psql -c 'DROP TABLE'`).
+  - **Secret-handling breadth.** The secret-read `READERS` allowlist misses
+    `sort`/`diff`/`tar`/`scp`-style readers; `> ~/.ssh/id_rsa` clobbers and
+    `git config core.pager '…'` RCE primitives, and decoder-to-shell
+    (`… | base64 -d | sh`) land Ambiguous/Safe rather than escalated. Deny-by-
+    default for secret paths is a larger design change for its own PR.

@@ -5,6 +5,36 @@ All notable changes to Aegis are documented here. The format loosely follows
 
 ## [Unreleased]
 
+### Classifier — AST-backed danger detection
+- **Real bash AST analysis, not substring matching.** The Tier-1 classifier now
+  runs two passes worst-wins: the existing hand-rolled tokenizer **and** a true
+  bash AST parse ([`brush-parser`](https://crates.io/crates/brush-parser),
+  pure-Rust, MIT). The AST pass flattens the line to the simple commands it would
+  run — descending into command substitutions `$(…)`/backticks, here-docs fed to
+  a shell, subshells, brace/process substitutions, `if`/`for`/`while`/`case`
+  blocks, and function bodies — so danger hidden in shell structure is caught.
+  The AST can only ever *add* caution; it never downgrades a tokenizer verdict.
+- **`aegis test "<command>"`** — a dry-run classifier. Prints the class, the rule
+  that fired, what would happen, and the exact commands Aegis parses out of the
+  line, without executing, logging, or contacting anything.
+- **Adversarial-review hardening** (5-reviewer roundtable on the new logic).
+  Fixes for confirmed catastrophic-classified-as-SAFE holes and a parser DoS:
+  - **Background operator `&`** is now a command separator (`true & rm -rf /` was
+    classified Safe). Redirect forms `&>`/`>&`/`2>&1` are not mis-split.
+  - **Process substitution** `<(…)` / `>(…)` is walked (`grep x <(rm -rf /)` was
+    Safe); so are **function bodies** invoked on the same line (`f(){ rm -rf /; }; f`).
+  - **`command`/`exec` prefixes** are peeled like `sudo`/`env` (`command rm -rf /`).
+  - **`git -C <dir>` / `git -c k=v` global flags** no longer hide the subcommand,
+    so `git -C /repo push --force` is Catastrophic, not Ambiguous.
+  - **Deeply nested `$(…)` no longer aborts the daemon.** brush-parser can stack-
+    overflow (an uncatchable abort) on hundreds of nested substitutions; input
+    past a generous nesting/size/operator cap is now refused and classified
+    Ambiguous (never Safe). The AST-walk depth guard sets a `truncated` flag that
+    also fails toward caution rather than silently dropping a buried command.
+  - The fast path that skips the AST parse is now an **allowlist** of provably
+    inert lines (plain word/flag/path characters), not a denylist of "interesting"
+    characters — closing the class of "one missing operator → Safe miss" bugs.
+
 ### Interception
 - **Native hooks for every major agent CLI**, not just Claude Code. `aegis init`
   now detects and wires Qwen Code (`~/.qwen/settings.json`, `PreToolUse`), Gemini
