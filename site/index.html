@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Aegis — a safety layer for AI coding agents</title>
+<meta name="description" content="Aegis intercepts the commands an AI coding agent is about to run, warns you before they execute, makes destructive actions reversible, and keeps a tamper-evident log. Local-first, agent-agnostic, deterministic." />
+<meta property="og:title" content="Aegis — a safety layer for AI coding agents" />
+<meta property="og:description" content="Catches the dangerous command before it runs. Local-first, agent-agnostic, deterministic." />
+<meta property="og:type" content="website" />
+<meta property="og:image" content="https://arrowassassin.github.io/aegis/og.svg" />
+<meta name="twitter:card" content="summary_large_image" />
+<link rel="icon" href="data:image/svg+xml,&lt;svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'&gt;&lt;rect width='16' height='16' fill='%230b0e16'/&gt;&lt;text x='8' y='13' font-size='13' text-anchor='middle' fill='%235af78e'&gt;▦&lt;/text&gt;&lt;/svg&gt;" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap">
+    <a class="brand" href="index.html">&#9638; AEGIS<span class="blink">_</span></a>
+    <nav>
+      <a class="active" href="index.html">HOME</a>
+      <a href="features.html">FEATURES</a>
+      <a href="install.html">INSTALL</a>
+      <a href="https://github.com/arrowassassin/aegis">GITHUB</a>
+      <button id="theme" class="themebtn" aria-label="toggle light or dark theme">☀ light</button>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <section class="hero" style="border-top:none">
+    <h1>AEGIS</h1>
+    <p class="sub">A local-first safety layer for AI coding agents. It catches the
+      dangerous command <b>before</b> it runs.</p>
+    <div class="cta">
+      <a class="btn" href="install.html">GET STARTED</a>
+      <a class="btn alt" href="features.html">SEE FEATURES</a>
+    </div>
+    <p class="note">Rust &middot; agent-agnostic &middot; nothing leaves your machine</p>
+
+    <figure style="margin:26px auto 0; max-width:900px">
+      <img src="cast.svg" alt="Aegis cast: an agent's destructive command is held before it runs, denied, and lands on the tamper-evident timeline; then the live TUI"
+           style="width:100%; height:auto; border-radius:10px" loading="lazy" />
+      <figcaption class="note" style="margin-top:10px">↑ real captured Aegis frames — hold card → denied timeline → live TUI (looping)</figcaption>
+    </figure>
+
+    <div class="term" style="text-align:left; max-width:760px; margin:26px auto 0">
+      <div class="bar"><i class="dot r"></i><i class="dot y"></i><i class="dot g"></i>
+        <span class="ttl">agent proposes: rm -rf src</span></div>
+<pre>
+<span class="t-dim">────────────────────────────────────────────────────────────</span>
+<span class="t-red">⚠ Aegis hold — This command is catastrophic and cannot be undone.</span>
+<span class="t-dim">  recursively deletes files and directories. This is hard or impossible to undo.</span>
+
+    <span class="t-b">rm -rf src</span>
+
+  <span class="t-amb">[a] allow once   [d] deny   [r] always allow here</span>
+<span class="t-dim">────────────────────────────────────────────────────────────</span>
+</pre>
+    </div>
+    <p class="note" style="margin-top:14px">↑ a real frame from the running tool</p>
+  </section>
+
+  <section id="what">
+    <h2><span class="n">&gt;</span> what is it</h2>
+    <p class="lead">AI coding agents now run real commands on real machines —
+      <span class="muted">rm&nbsp;-rf, git&nbsp;push&nbsp;--force, terraform&nbsp;destroy, drop&nbsp;table</span> —
+      faster than you can read a confirmation. Aegis sits on that one chokepoint: the
+      command line. It warns in plain English before execution, holds the dangerous
+      ones for a one-key decision, makes destructive actions reversible, and keeps a
+      tamper-evident record of everything <em>every</em> agent did.</p>
+
+    <div class="spine">
+      <b>Security spine.</b> Rules block; the model only explains. The decision to
+      hold or deny a catastrophic command is made by deterministic rules — never by
+      an LLM, so it can't be argued past by prompt injection. The raw command is
+      always shown verbatim. The log is append-only and hash-chained.
+    </div>
+    <p class="muted">Agent-agnostic from day one: Claude Code, Cursor CLI, Codex CLI,
+      Qwen Code, Gemini CLI, any custom/MCP agent — <em>and any raw shell</em> — via a
+      native hook, an MCP server, or a $PATH shim. Protection lives at the
+      process/PATH layer, not inside any one tool.</p>
+  </section>
+
+  <section id="flow">
+    <h2><span class="n">&gt;</span> how it works</h2>
+    <div class="flow">
+      <div class="box"><h4>AGENT</h4><p>proposes a command</p></div>
+      <div class="arrow">▶</div>
+      <div class="box"><h4>INTERCEPT</h4><p>hook · MCP · $PATH shim → one event</p></div>
+      <div class="arrow">▶</div>
+      <div class="box warn"><h4>DECIDE</h4><p>Tier-1 rules; Tier-2 model scores the middle</p></div>
+      <div class="arrow">▶</div>
+      <div class="box"><h4>SNAPSHOT + LOG</h4><p>reversible + hash-chained</p></div>
+    </div>
+    <p class="muted">SAFE auto-allows on a model-free fast path (~microseconds).
+      CATASTROPHIC is a hard floor. AMBIGUOUS is held for you — or scored against a
+      threshold when you're away.</p>
+  </section>
+
+  <section id="cast">
+    <h2><span class="n">&gt;</span> watch the flow</h2>
+    <p class="lead">Agent proposes <span class="muted">rm -rf src</span> → Aegis holds
+      it → you deny → it's on the timeline. (Animated; pure SVG, no JS.)</p>
+    <img class="cast" src="flow.svg" alt="Aegis flow: propose, hold, deny, timeline"
+         width="760" height="300" loading="lazy" />
+  </section>
+
+  <section id="tui">
+    <h2><span class="n">&gt;</span> the live TUI</h2>
+    <p class="lead">A real <span class="muted">ratatui</span> app over the live event
+      log — bordered panels, a detail pane, severity colors, and a risk gauge.
+      Navigate, filter, open detail, approve/deny a held action, undo — all without
+      leaving the terminal.</p>
+    <div class="term wide">
+      <div class="bar"><i class="dot r"></i><i class="dot y"></i><i class="dot g"></i><span class="ttl">aegis tui</span></div>
+<pre>
+▦ Aegis  timeline                                                                                             6 events
+╭ timeline ────────────────────────────────────────────────────────╮╭ detail ────────────────────────────────────────╮
+│  time     agent        outcome  command                          ││held · catastrophic                             │
+│  02:42:32 claude-code  allowed  git status                       ││                                                │
+│  02:42:32 claude-code  allowed  cargo test                       ││command  git push --force origin main           │
+│  02:42:32 qwen         held     [ambiguous] make deploy          ││agent    shim                                   │
+│› 02:42:32 shim         held     [catastrophic] git push --force o││when     02:42:32                               │
+│  02:42:32 shim         denied   [catastrophic] rm -rf build      ││reason   rule                                   │
+│  02:42:32 claude-code  allowed  npm run lint                     ││summary  Force-pushes, overwriting remote       │
+│                                                                  ││history.                                        │
+│                                                                  ││                                                │
+│                                                                  ││                                                │
+│                                                                  ││█████████████████████████████████████████████▋  │
+│                                                                  ││██████████████████risk 95/100 ███████████████▋  │
+╰──────────────────────────────────────────────────────────────────╯╰────────────────────────────────────────────────╯
+j/k move · enter detail · a/d approve/deny · u undo · / filter · q quit
+</pre>
+    </div>
+    <p class="note">Calm by default; the one danger accent appears only when it must.
+      Honors <span class="muted">NO_COLOR</span>; reflows from 80×24 up.</p>
+  </section>
+
+  <section id="highlights">
+    <h2><span class="n">&gt;</span> why it's different</h2>
+    <div class="cards">
+      <div class="card"><h3>Deterministic gate</h3>
+        <p>Rules block, not an LLM. <span class="k">Zero</span> catastrophic-as-safe,
+          enforced by a golden corpus + property tests.</p></div>
+      <div class="card"><h3>Reversible</h3>
+        <p>Snapshots before destructive ops (reflink CoW). <span class="k">aegis undo</span>
+          brings files back — last action or whole session.</p></div>
+      <div class="card"><h3>One cross-agent log</h3>
+        <p>Every command from every agent on one <span class="k">hash-chained</span>,
+          tamper-evident timeline you can scrub in the TUI.</p></div>
+    </div>
+    <p class="muted" style="margin-top:22px">See all six features, each with a real
+      captured frame → <a href="features.html">features</a>.</p>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <p><span class="brand" style="font-size:11px">&#9638; AEGIS</span> &nbsp; honest
+      guarantee: <em>nothing is unrecoverable</em> — not "nothing runs un-warned".</p>
+    <p>MIT licensed · <a href="https://github.com/arrowassassin/aegis">github.com/arrowassassin/aegis</a>
+      · every terminal frame on this site is real captured output.</p>
+  </div>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

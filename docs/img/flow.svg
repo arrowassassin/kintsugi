@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="300" viewBox="0 0 760 300"
+     font-family="ui-monospace,DejaVu Sans Mono,Consolas,monospace" font-size="17">
+  <style>
+    /* Four steps cycle every 8s; each is visible for ~2s. Autoplays, loops. */
+    .f { opacity: 0; animation: show 8s infinite; }
+    .f2 { animation-delay: 2s; } .f3 { animation-delay: 4s; } .f4 { animation-delay: 6s; }
+    @keyframes show { 0% {opacity:0} 1% {opacity:1} 24% {opacity:1} 25% {opacity:0} 100% {opacity:0} }
+    .cur { animation: blink 1s steps(1) infinite; }
+    @keyframes blink { 50% { opacity: 0; } }
+    text { fill: #cdd6e6; }
+    .dim{fill:#8b95ad} .red{fill:#ff5d5d} .amb{fill:#ffd866} .grn{fill:#5af78e} .b{fill:#fff;font-weight:bold}
+  </style>
+
+  <rect x="1" y="1" width="758" height="298" rx="9" fill="#070a11" stroke="#283557" stroke-width="3"/>
+  <rect x="1" y="1" width="758" height="34" rx="9" fill="#141c30"/>
+  <rect x="1" y="20" width="758" height="15" fill="#141c30"/>
+  <rect x="18" y="12" width="11" height="11" fill="#ff5d5d"/>
+  <rect x="36" y="12" width="11" height="11" fill="#ffd866"/>
+  <rect x="54" y="12" width="11" height="11" fill="#5af78e"/>
+  <text x="78" y="22" font-size="11" class="dim">aegis — live</text>
+
+  <!-- step 1: agent proposes -->
+  <g class="f f1">
+    <text x="20" y="80" class="dim">$ <tspan fill="#cdd6e6">rm -rf src</tspan>  <tspan class="dim">(proposed by claude-code)</tspan></text>
+    <text x="20" y="110" class="dim">aegis is checking…<tspan class="cur"> ▮</tspan></text>
+  </g>
+
+  <!-- step 2: held -->
+  <g class="f f2">
+    <text x="20" y="70" class="red">⚠ Aegis hold — catastrophic, cannot be undone.</text>
+    <text x="20" y="120" class="b">    rm -rf src</text>
+    <text x="20" y="160" class="amb">  [a] allow once   [d] deny   [r] always allow here</text>
+  </g>
+
+  <!-- step 3: denied -->
+  <g class="f f3">
+    <text x="20" y="90" class="red">✗ denied — the deletion never ran.</text>
+    <text x="20" y="124" class="grn">✓ src/ is safe.</text>
+  </g>
+
+  <!-- step 4: timeline -->
+  <g class="f f4">
+    <text x="20" y="64" class="dim">time      agent         outcome  command</text>
+    <text x="20" y="92">02:31:27  shim          <tspan class="amb">held</tspan>     <tspan class="red">[catastrophic]</tspan> rm -rf src</text>
+    <text x="20" y="120">02:31:27  shim          <tspan class="red">denied   [catastrophic]</tspan> rm -rf src</text>
+    <text x="20" y="160" class="dim">append-only · hash-chained · aegis undo brings files back</text>
+  </g>
+</svg>

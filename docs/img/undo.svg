@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="650" height="140" viewBox="0 0 650 140" font-family="ui-monospace,DejaVu Sans Mono,Consolas,monospace">
+<rect x="1" y="1" width="648" height="138" rx="8" fill="#070a11" stroke="#283557" stroke-width="3"/>
+<rect x="1" y="1" width="648" height="34" rx="8" fill="#141c30"/>
+<rect x="1" y="20" width="648" height="15" fill="#141c30"/>
+<rect x="18" y="12" width="11" height="11" fill="#ff5d5d"/>
+<rect x="36" y="12" width="11" height="11" fill="#ffd866"/>
+<rect x="54" y="12" width="11" height="11" fill="#5af78e"/>
+<text x="74" y="22" font-size="11" fill="#8b95ad">aegis undo</text>
+<text x="18" y="48" font-size="15" xml:space="preserve">
+<tspan fill="#5af78e">✓&#160;undid&#160;`rm&#160;-rf&#160;src`&#160;(1&#160;path(s)&#160;restored)</tspan>
+</text>
+<text x="18" y="68" font-size="15" xml:space="preserve">
+</text>
+<text x="18" y="88" font-size="15" xml:space="preserve">
+<tspan fill="#cdd6e6">Restored&#160;1&#160;snapshot(s).&#160;Note:&#160;undo&#160;covers&#160;files&#160;only&#160;—&#160;not&#160;network</tspan>
+</text>
+<text x="18" y="108" font-size="15" xml:space="preserve">
+<tspan fill="#cdd6e6">calls,&#160;external&#160;APIs,&#160;or&#160;already-pushed&#160;commits.</tspan>
+</text>
+</svg>

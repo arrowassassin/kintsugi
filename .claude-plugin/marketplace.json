@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-marketplace.json",
+  "name": "aegis",
+  "owner": {
+    "name": "arrowassassin",
+    "email": "arrowassassin1604@gmail.com"
+  },
+  "description": "Aegis — a local-first safety layer for AI coding agents.",
+  "plugins": [
+    {
+      "name": "aegis",
+      "displayName": "Aegis Safety Layer",
+      "source": "./plugin/aegis",
+      "description": "Intercept commands before they run, hold the dangerous ones for one-key approval, make destructive actions reversible, and keep a tamper-evident audit log. Requires the Aegis binaries (`cargo install aegis` or Homebrew).",
+      "version": "0.1.0",
+      "author": { "name": "arrowassassin" },
+      "homepage": "https://github.com/arrowassassin/aegis",
+      "license": "MIT",
+      "keywords": ["safety", "security", "agents", "interception", "audit", "undo"],
+      "defaultEnabled": false
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "aegis-exec": {
+      "command": "aegis-mcp",
+      "args": []
+    }
+  }
+}

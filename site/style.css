@@ -1,0 +1,201 @@
+/* Aegis — 8-bit product site. Calm, dark, one danger accent; pixel chrome. */
+:root {
+  --bg: #0b0e16;
+  --bg2: #0e1320;
+  --panel: #121a2b;
+  --line: #283557;
+  --ink: #e8ecf5;
+  --dim: #8b95ad;
+  --green: #5af78e;
+  --amber: #ffd866;
+  --cyan: #6bd6ff;
+  --magenta: #ff6ac1;
+  --red: #ff5d5d;
+  --accent: var(--green);
+  --term-bg: #070a11;
+}
+
+* { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(1200px 600px at 50% -10%, #16203a 0%, transparent 60%),
+    var(--bg);
+  color: var(--ink);
+  font-family: "VT323", ui-monospace, "DejaVu Sans Mono", monospace;
+  font-size: 21px;
+  line-height: 1.5;
+  letter-spacing: .3px;
+  -webkit-font-smoothing: none;
+}
+
+/* CRT scanlines + faint flicker, kept subtle so text stays readable. */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom, rgba(0,0,0,0) 0, rgba(0,0,0,0) 2px, rgba(0,0,0,.18) 3px, rgba(0,0,0,0) 4px);
+  mix-blend-mode: multiply;
+  opacity: .5;
+  z-index: 9;
+}
+@media (prefers-reduced-motion: no-preference) {
+  body::after { animation: flicker 6s infinite steps(60); }
+}
+@keyframes flicker { 0%,97%{opacity:.5} 98%{opacity:.38} 100%{opacity:.5} }
+
+h1, h2, h3, .pix, nav a, .btn, .tag, .kbd {
+  font-family: "Press Start 2P", "VT323", monospace;
+}
+
+a { color: var(--cyan); text-decoration: none; }
+a:hover { color: var(--green); }
+
+.wrap { max-width: 1000px; margin: 0 auto; padding: 0 20px; }
+
+/* ---- top nav ---- */
+header.nav {
+  position: sticky; top: 0; z-index: 10;
+  background: rgba(11,14,22,.9);
+  border-bottom: 3px solid var(--line);
+  backdrop-filter: blur(4px);
+}
+.nav .wrap { display: flex; align-items: center; gap: 18px; height: 64px; }
+.brand { font-family: "Press Start 2P"; font-size: 16px; color: var(--green);
+  text-shadow: 2px 2px 0 #0a3a1f; }
+.brand .blink { color: var(--amber); }
+.nav nav { margin-left: auto; display: flex; gap: 18px; flex-wrap: wrap; }
+.nav nav a { font-size: 9px; color: var(--dim); }
+.nav nav a:hover, .nav nav a.active { color: var(--green); }
+
+/* landing highlight cards */
+.cards { display:grid; grid-template-columns:1fr; gap:16px; margin-top:18px; }
+@media (min-width:760px){ .cards{grid-template-columns:1fr 1fr 1fr} }
+.card { border:3px solid var(--line); background:var(--panel); padding:16px; }
+.card h3 { font-family:"Press Start 2P"; font-size:10px; color:var(--cyan); margin:0 0 10px; }
+.card p { margin:0; font-size:19px; color:var(--dim); }
+.card .k { color:var(--green); }
+
+/* ---- buttons / chrome ---- */
+.btn {
+  display: inline-block; font-size: 10px; color: #07150c;
+  background: var(--green); border: none; padding: 14px 18px;
+  box-shadow: 4px 4px 0 #0a3a1f; cursor: pointer;
+  transition: transform .05s ease, box-shadow .05s ease;
+}
+.btn:hover { transform: translate(-1px,-1px); box-shadow: 6px 6px 0 #0a3a1f; color:#07150c; }
+.btn:active { transform: translate(2px,2px); box-shadow: 2px 2px 0 #0a3a1f; }
+.btn.alt { background: var(--panel); color: var(--ink); box-shadow: 4px 4px 0 var(--line); }
+.btn.alt:hover { color: var(--green); }
+
+.tag { display:inline-block; font-size:8px; color:var(--amber); border:2px solid var(--line);
+  padding:6px 8px; margin:2px; }
+
+/* ---- hero ---- */
+.hero { padding: 70px 0 30px; text-align: center; }
+.hero h1 {
+  font-size: 56px; margin: 0 0 6px; color: var(--green); line-height: 1.1;
+  text-shadow: 4px 4px 0 #0a3a1f, 8px 8px 0 #06250f;
+}
+.hero .sub { font-size: 26px; color: var(--ink); margin: 0 auto 8px; max-width: 760px; }
+.hero .sub b { color: var(--amber); }
+.hero .cta { margin: 22px 0 6px; display:flex; gap:14px; justify-content:center; flex-wrap:wrap; }
+.hero .note { color: var(--dim); font-size: 18px; }
+
+/* ---- sections ---- */
+section { padding: 46px 0; border-top: 3px dashed var(--line); }
+section h2 { font-size: 20px; color: var(--amber); text-shadow: 3px 3px 0 #3a2b06; }
+section h2 .n { color: var(--green); }
+.lead { font-size: 23px; color: var(--ink); max-width: 800px; }
+.muted { color: var(--dim); }
+
+/* ---- terminal window cards ---- */
+.term {
+  border: 3px solid var(--line);
+  background: var(--term-bg);
+  box-shadow: 6px 6px 0 rgba(0,0,0,.5);
+  margin: 18px 0;
+  overflow: hidden;
+}
+.term .bar {
+  display: flex; align-items: center; gap: 8px;
+  background: #141c30; border-bottom: 3px solid var(--line);
+  padding: 8px 12px;
+}
+.term .dot { width: 12px; height: 12px; display: inline-block; }
+.dot.r{background:var(--red)} .dot.y{background:var(--amber)} .dot.g{background:var(--green)}
+.term .ttl { margin-left: 8px; font-family:"Press Start 2P"; font-size: 8px; color: var(--dim); }
+.term pre {
+  margin: 0; padding: 16px; overflow-x: auto;
+  font-family: ui-monospace, "DejaVu Sans Mono", "Cascadia Mono", monospace;
+  font-size: 14px; line-height: 1.45; color: #cdd6e6; letter-spacing: 0;
+}
+/* The full-screen TUI capture is ~118 cols; shrink so it fits without scroll. */
+.term.wide pre { font-size: 11px; line-height: 1.3; }
+.t-line { color: #6b7691; }
+/* terminal accent classes */
+.t-dim{color:var(--dim)} .t-grn{color:var(--green)} .t-amb{color:var(--amber)}
+.t-red{color:var(--red)} .t-cy{color:var(--cyan)} .t-b{color:#fff;font-weight:bold}
+.t-sel{ background:#1d2742; color:#fff; }
+
+/* ---- feature grid ---- */
+.grid { display: grid; grid-template-columns: 1fr; gap: 24px; }
+.feat h3 { font-size: 13px; color: var(--cyan); margin: 0 0 4px; }
+.feat p { margin: 6px 0 0; font-size: 21px; }
+
+/* ---- flow diagram ---- */
+.flow { display:flex; flex-wrap:wrap; align-items:stretch; gap:10px; margin:18px 0; }
+.flow .box { flex:1 1 150px; border:3px solid var(--line); background:var(--panel);
+  padding:12px; min-width:150px; }
+.flow .box h4 { font-family:"Press Start 2P"; font-size:9px; margin:0 0 8px; color:var(--green); }
+.flow .box.warn h4 { color: var(--red); }
+.flow .box p { margin:0; font-size:18px; color:var(--dim); }
+.flow .arrow { align-self:center; color:var(--amber); font-size:24px; }
+
+/* ---- install ---- */
+.cmd { position: relative; }
+.cmd pre { background: var(--term-bg); border:3px solid var(--line); padding:14px 56px 14px 16px;
+  margin:10px 0; overflow-x:auto; font-family: ui-monospace,"DejaVu Sans Mono",monospace;
+  font-size:15px; color: var(--green); }
+.cmd .copy { position:absolute; top:14px; right:10px; font-family:"Press Start 2P"; font-size:8px;
+  background:var(--panel); color:var(--ink); border:2px solid var(--line); padding:7px 8px; cursor:pointer; }
+.cmd .copy:hover { color: var(--green); }
+.cmd .copy.ok { color: var(--green); border-color: var(--green); }
+
+ul.checks { list-style:none; padding:0; }
+ul.checks li { padding:4px 0 4px 28px; position:relative; font-size:21px; }
+ul.checks li::before { content:"▸"; color:var(--green); position:absolute; left:6px; }
+
+.cols { display:grid; grid-template-columns:1fr; gap:24px; }
+@media (min-width: 760px){ .cols.two{grid-template-columns:1fr 1fr} }
+
+footer { border-top:3px solid var(--line); padding:30px 0 60px; color:var(--dim); font-size:18px; }
+footer a { color: var(--cyan); }
+.spine { border:3px solid var(--line); border-left:8px solid var(--red); background:var(--panel);
+  padding:14px 18px; margin:18px 0; }
+.spine b { color: var(--red); }
+
+.cast { display:block; margin:18px auto; max-width:760px; width:100%;
+  border:3px solid var(--line); box-shadow:6px 6px 0 rgba(0,0,0,.5); }
+
+/* theme toggle */
+.themebtn { font-family:"Press Start 2P"; font-size:10px; background:var(--panel);
+  color:var(--ink); border:2px solid var(--line); padding:7px 9px; cursor:pointer; }
+.themebtn:hover { color:var(--green); }
+
+/* ---- light theme (chrome flips; terminals stay dark, as terminals do) ---- */
+:root[data-theme="light"] {
+  --bg:#f3efe3; --bg2:#efe9da; --panel:#fbf8ef; --ink:#1b2230; --dim:#5f6b80;
+  --line:#c9c0a6; --green:#1f8a4c; --amber:#a9760a; --cyan:#1f6f8b; --red:#c0392b;
+}
+:root[data-theme="light"] body {
+  background: radial-gradient(1200px 600px at 50% -10%, #fff8e6 0%, transparent 60%), var(--bg);
+}
+:root[data-theme="light"] .hero h1 { text-shadow: 3px 3px 0 #bfe9cf, 6px 6px 0 #e6f6ec; }
+:root[data-theme="light"] body::after { opacity: .12; }
+:root[data-theme="light"] .btn { box-shadow:4px 4px 0 #b7d8c2; }

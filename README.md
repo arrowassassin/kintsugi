@@ -1,2 +1,162 @@
-# aegis
-Local-first safety layer for AI coding agents. Warns before destructive commands run, makes them reversible, records what every agent did.
+# Aegis
+
+**Website:** https://arrowassassin.github.io/aegis/ (8-bit product site with live
+feature frames — deploys from [`site/`](site/) once GitHub Pages is enabled with
+source "GitHub Actions").
+
+A local-first safety layer for AI coding agents. Aegis intercepts the commands an
+agent is about to run, warns you in plain English **before** they execute, makes
+destructive actions reversible, and keeps a tamper-evident record of everything
+every agent did on your machine. No kernel code, no OS-vendor approvals, no code
+leaves your machine.
+
+![Aegis cast: a destructive command is held before it runs, denied, and lands on the tamper-evident timeline; then the live TUI](docs/img/cast.svg)
+
+*Real captured Aegis frames, looping: hold card → denied timeline → live TUI.
+(If the animation doesn't play in your viewer, the individual frames are below.)*
+
+![Aegis holds a catastrophic command before it runs](docs/img/holdcard.svg)
+
+> **Security spine:** rules block, the model only explains. The decision to
+> hold/deny a catastrophic command is made by deterministic rules, never by an
+> LLM. The raw command is always shown verbatim. The event log is append-only and
+> hash-chained. See [`CLAUDE.md`](CLAUDE.md) for the full, non-negotiable rules.
+
+### See it
+
+The live TUI — bordered timeline + detail panels, a risk gauge (all real output):
+
+![Aegis TUI](docs/img/tui.svg)
+
+The cross-agent timeline and the approval queue:
+
+![aegis log](docs/img/log.svg)
+![aegis queue](docs/img/queue.svg)
+
+## Status
+
+All build phases are implemented (see
+[`aegis-phase0-1-tasklist.md`](aegis-phase0-1-tasklist.md) and
+[`aegis-phase2-5-designdoc.md`](aegis-phase2-5-designdoc.md)):
+
+- **Phase 0 — Recorder:** agent-agnostic interception (`$PATH` shim + Claude Code
+  hook + `aegis-exec` MCP server) recording every command to a tamper-evident,
+  hash-chained SQLite log.
+- **Phase 1 — Gate:** a deterministic rule engine that holds dangerous commands
+  for one-key approval, with per-repo decision memory and `.aegis.toml` policy.
+- **Phase 2 — Explain + score:** a warm Tier-2 scorer fills a plain-English
+  summary and a risk score for the ambiguous band, driving graduated unattended
+  mode (heuristic by default; real CPU GGUF inference behind `--features llama`).
+- **Phase 3 — Undo:** snapshots before destructive ops (reflink CoW + copy
+  fallback) and `aegis undo` / `aegis undo --session`.
+- **Phase 4 — Recorder UI:** an FS-watcher backstop and a live `ratatui` timeline
+  (`aegis tui`).
+- **Phase 5 — Launch:** the panic kill-switch (`aegis panic` / `aegis resume`),
+  `aegis init` polish, and a cross-platform release workflow.
+
+## Crates
+
+| crate | role |
+|-------|------|
+| `aegis-core` | shared types, rule engine, policy, decision memory, hash-chained event log |
+| `aegis-daemon` | resident process: local IPC server + decision loop |
+| `aegis-intercept` | the `$PATH` shim, Claude Code hook bridge, and `aegis-exec` MCP server |
+| `aegis-cli` | the `aegis` binary: `init`, `status`, `log` |
+| `aegis-model` | Tier-2 model wrapper (stub until Phase 2) |
+| `aegis-tui` | ratatui timeline (Phase 4) |
+
+## Install (no clone needed)
+
+One line — downloads the prebuilt binaries (checksum-verified), or builds from
+source if there's no prebuilt build for your platform:
+
+```sh
+curl -fsSL https://arrowassassin.github.io/aegis/install.sh | sh
+```
+
+Or straight from source with Cargo (no clone):
+
+```sh
+cargo install --git https://github.com/arrowassassin/aegis aegis-cli aegis-daemon aegis-intercept
+```
+
+Then:
+
+```sh
+aegis init        # detect agents, wire interception, start the daemon
+aegis status      # daemon / socket / log / kill-switch health
+aegis tui         # live, interactive timeline (j/k, enter, a/d, u, /, q)
+```
+
+Aegis runs with **no model** (the offline heuristic scorer is always on). To also
+get a plain-English summary + risk score, pick a small local GGUF — the picker
+lists RAM-appropriate options from the Hugging Face API and prints the one env var
+to set (or fold it into install with `| sh -s -- --with-model`):
+
+```sh
+curl -fsSL https://arrowassassin.github.io/aegis/pick-model.sh | sh
+# already have a GGUF? skip the picker:  export AEGIS_MODEL_FILE=/path/to/model.gguf
+```
+
+Other commands: `aegis log`, `aegis undo [--session]`, `aegis queue` /
+`approve <id>` / `deny <id>`, `aegis watch <path>`, `aegis panic` / `resume`.
+The Tier-2 model, snapshots/undo, the TUI, the FS backstop, and the kill-switch
+are documented in [`docs/`](docs/) (`model.md`, `policy.md`, `mcp.md`, `queue.md`,
+`demo.md`).
+
+## Works with any agent (and any shell)
+
+Aegis is agent-agnostic. Protection lives at the process/PATH layer, not inside
+any one tool, so anything that runs commands on your machine is covered:
+
+| agent | how Aegis intercepts it |
+|-------|--------------------------|
+| **Claude Code** | native `PreToolUse` hook (tightest UX) + `aegis-exec` MCP |
+| **Cursor CLI**, **Codex CLI**, **Qwen Code**, **Gemini CLI** | the `aegis-exec` MCP server (stdio) — add it to the agent's MCP config |
+| any other MCP client | the same `aegis-exec` MCP server |
+| **any tool or raw shell** (Aider, Continue, a `bash` script, a Makefile, you) | the `$PATH` shim — `aegis init` prints the `PATH` line to prepend |
+
+`aegis init` detects installed agents (`~/.claude`, `~/.codex`, `~/.cursor`,
+`~/.qwen`, `~/.gemini`), wires the Claude Code hook, prints the MCP server command
+for the rest, and prints the shim `PATH` line that guards every other shell-out.
+The only caveat (consistent with the security spine): the shim is a `$PATH`
+mechanism, not a kernel hook — a process that calls a binary by absolute path
+bypasses it, which is exactly why the FS-watcher backstop exists so "nothing is
+unrecoverable." See [`docs/mcp.md`](docs/mcp.md) and
+[`docs/policy.md`](docs/policy.md).
+
+### Claude Code plugin
+
+This repo doubles as a Claude Code plugin marketplace. Install the binaries (see
+above), then enable the plugin (which wires the hook + MCP server):
+
+```sh
+/plugin marketplace add arrowassassin/aegis
+/plugin install aegis@aegis
+```
+
+The plugin is a thin wiring layer (`plugin/aegis/`); install the native binaries
+with the one-liner above (they're not bundled). See
+[`plugin/aegis/README.md`](plugin/aegis/README.md).
+
+## Demo
+
+See [`docs/demo.md`](docs/demo.md). The 30-second flow — an agent's `rm -rf` is
+held *before* it runs, you deny it, and it lands on the tamper-evident timeline:
+
+```sh
+bash scripts/demo.sh            # interactive (press a/d/r at the hold card)
+DEMO_KEY=d bash scripts/demo.sh # non-interactive
+```
+
+## Building & testing
+
+```sh
+cargo test            # unit + integration tests
+cargo clippy --all-targets -- -D warnings
+cargo fmt --check
+```
+
+## License
+
+MIT — see [`LICENSE`](LICENSE).

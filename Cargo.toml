@@ -1,0 +1,63 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/aegis-core",
+    "crates/aegis-daemon",
+    "crates/aegis-intercept",
+    "crates/aegis-cli",
+    "crates/aegis-model",
+    "crates/aegis-tui",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["arrowassassin"]
+repository = "https://github.com/arrowassassin/aegis"
+rust-version = "1.75"
+
+[workspace.dependencies]
+# Internal crates
+aegis-core = { path = "crates/aegis-core" }
+aegis-daemon = { path = "crates/aegis-daemon" }
+aegis-intercept = { path = "crates/aegis-intercept" }
+aegis-model = { path = "crates/aegis-model" }
+aegis-tui = { path = "crates/aegis-tui" }
+
+# Serialization / data
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+toml = "1.1.2"
+
+# Errors
+anyhow = "1.0.102"
+thiserror = "2.0.18"
+
+# Identity / time / hashing
+uuid = { version = "1.23.3", features = ["v4", "serde"] }
+time = { version = "0.3.49", features = ["serde", "serde-well-known", "formatting", "parsing", "macros"] }
+sha2 = "0.11.0"
+hex = "0.4.3"
+
+# Storage
+rusqlite = { version = "0.39.0", features = ["bundled"] }
+
+# IPC (cross-platform local sockets / named pipes)
+interprocess = "2.4.2"
+
+# CLI
+clap = { version = "4.6.1", features = ["derive"] }
+
+# Config dirs
+directories = "6.0.0"
+
+# Dev / tests
+tempfile = "3.27.0"
+
+[profile.release]
+opt-level = "s"      # optimize for size; these binaries are I/O-bound
+lto = "fat"          # cross-crate inlining + dead-code elimination
+codegen-units = 1    # better optimization / smaller output
+strip = "symbols"    # drop symbol tables from shipped binaries
+panic = "abort"      # no unwind tables; panic hooks still run (TUI teardown safe)
