@@ -4,7 +4,7 @@
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use aegis_core::{Decision, ProposedCommand};
-use aegis_daemon::{Daemon, KILL_SWITCH_FILE};
+use aegis_daemon::{Daemon, Resolution, KILL_SWITCH_FILE};
 
 fn serial_lock() -> MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -41,4 +41,33 @@ fn kill_switch_denies_everything_then_clears() {
     std::fs::remove_file(tmp.path().join(KILL_SWITCH_FILE)).unwrap();
     assert!(!daemon.kill_switch_engaged());
     assert_eq!(daemon.decide(&safe).decision, Decision::Allow);
+}
+
+#[test]
+fn kill_switch_blocks_direct_resolve_allow() {
+    // Regression: resolve() (the shim hold card / raw Request::Resolve path) must
+    // honor the kill-switch for Allow, just like resolve_pending().
+    let _g = serial_lock();
+    let tmp = tempfile::tempdir().unwrap();
+    std::env::set_var("AEGIS_CONFIG", tmp.path().join("none.toml"));
+    let daemon = Daemon::open(tmp.path().join("e.db")).unwrap();
+    let cmd = ProposedCommand::new("shim", tmp.path(), vec!["rm".into()], "rm -rf build");
+
+    std::fs::write(tmp.path().join(KILL_SWITCH_FILE), b"engaged").unwrap();
+    let allow = Resolution {
+        command: cmd.clone(),
+        decision: Decision::Allow,
+        remember: false,
+    };
+    assert!(
+        daemon.resolve(&allow).is_err(),
+        "resolve(Allow) must be refused while the kill-switch is engaged"
+    );
+    // Deny still resolves (it doesn't run anything).
+    let deny = Resolution {
+        command: cmd,
+        decision: Decision::Deny,
+        remember: false,
+    };
+    assert!(daemon.resolve(&deny).is_ok());
 }

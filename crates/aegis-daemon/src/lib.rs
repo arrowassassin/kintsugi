@@ -153,15 +153,16 @@ impl Daemon {
                 verdict.risk = Some(out.risk);
                 verdict.tier = 2;
                 if mode == Mode::Unattended {
-                    let threshold = policy.risk_threshold();
-                    verdict.decision = if out.risk >= threshold {
-                        Decision::Deny
-                    } else {
-                        Decision::Allow
-                    };
+                    // Spine rule #2 (monotonic model influence): the model may only
+                    // ADD caution. The unattended baseline for an ambiguous command
+                    // is Deny (queued for a human); the model records risk for that
+                    // review but NEVER downgrades Deny -> Allow. Auto-proceeding an
+                    // ambiguous command unattended is only possible via an explicit
+                    // human allowlist (.aegis.toml / decision memory) below — a human
+                    // decision, not the model's.
                     verdict.reason = format!(
-                        "model:risk={} vs threshold={} ({})",
-                        out.risk, threshold, m.rule
+                        "model:risk={} ({}) — unattended holds ambiguous for review",
+                        out.risk, m.rule
                     );
                 }
             }
@@ -271,6 +272,12 @@ impl Daemon {
     /// Handle a human's resolution of a held command: record the final decision
     /// and, if requested, remember it for this exact command in this repo.
     pub fn resolve(&self, resolution: &ipc::Resolution) -> Result<()> {
+        // Kill-switch hard floor: while engaged, no Allow resolves — not via the
+        // queue (resolve_pending) and not via this direct path (shim hold card /
+        // raw Request::Resolve). Mirrors the guard in resolve_pending().
+        if resolution.decision == Decision::Allow && self.kill_switch_engaged() {
+            anyhow::bail!("kill-switch engaged; clear it with `aegis resume` before allowing");
+        }
         let cmd = &resolution.command;
         // Re-classify so the recorded class is accurate even though a human chose.
         let m = aegis_core::classify(cmd);

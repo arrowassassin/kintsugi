@@ -61,29 +61,26 @@ fn ambiguous_gets_summary_and_risk_in_attended() {
 }
 
 #[test]
-fn unattended_graduated_threshold_flips_decision() {
+fn unattended_holds_ambiguous_and_model_never_downgrades() {
     let _g = serial_lock();
     let tmp = tempfile::tempdir().unwrap();
 
-    // Default threshold is 50. risk below → allow; at/above → deny.
-    let low = daemon(tmp.path(), Mode::Unattended, 30);
-    assert_eq!(
-        low.decide(&propose(tmp.path(), "make x")).decision,
-        Decision::Allow
-    );
-
-    let high = daemon(tmp.path(), Mode::Unattended, 80);
-    assert_eq!(
-        high.decide(&propose(tmp.path(), "make x")).decision,
-        Decision::Deny
-    );
-
-    // Exactly at the threshold denies (at/above).
-    let edge = daemon(tmp.path(), Mode::Unattended, 50);
-    assert_eq!(
-        edge.decide(&propose(tmp.path(), "make x")).decision,
-        Decision::Deny
-    );
+    // Spine rule #2: the model may only ADD caution. Unattended ambiguous is
+    // denied (queued for review) regardless of how LOW the model scores it — the
+    // model can never flip Deny -> Allow.
+    for risk in [0u8, 30, 49, 80, 100] {
+        let d = daemon(tmp.path(), Mode::Unattended, risk);
+        let v = d.decide(&propose(tmp.path(), "make x"));
+        assert_eq!(
+            v.decision,
+            Decision::Deny,
+            "unattended ambiguous must deny at risk {risk} (model never auto-allows)"
+        );
+        // It still records the model's risk/summary for the human reviewing the queue.
+        assert_eq!(v.risk, Some(risk));
+        assert_eq!(v.tier, 2);
+        assert!(v.summary.is_some());
+    }
 }
 
 #[test]
@@ -122,23 +119,34 @@ fn safe_stays_on_the_model_free_fast_path() {
 }
 
 #[test]
-fn policy_threshold_overrides_default() {
+fn explicit_human_allowlist_is_the_only_unattended_auto_proceed() {
     let _g = serial_lock();
     let tmp = tempfile::tempdir().unwrap();
     std::env::set_var("AEGIS_CONFIG", tmp.path().join("none.toml"));
     let repo = tmp.path().join("repo");
     std::fs::create_dir_all(&repo).unwrap();
-    // A strict threshold of 10 denies a moderate-risk ambiguous command.
+    // A human-authored allow rule (not the model) lets a specific ambiguous
+    // command proceed unattended — even at max model risk. This is the safe
+    // escape valve that replaces the (removed) graduated auto-allow.
     std::fs::write(
         repo.join(".aegis.toml"),
-        "mode = \"unattended\"\nthreshold = 10\n",
+        "mode = \"unattended\"\n\n[rules]\nallow = [\"make deploy\"]\n",
     )
     .unwrap();
 
     let d = Daemon::open(tmp.path().join("e.db"))
         .unwrap()
-        .with_scorer(Box::new(FixedScorer(20)));
-    assert_eq!(d.decide(&propose(&repo, "make x")).decision, Decision::Deny);
+        .with_scorer(Box::new(FixedScorer(100)));
+    // Allowlisted ambiguous command proceeds (human decision).
+    assert_eq!(
+        d.decide(&propose(&repo, "make deploy")).decision,
+        Decision::Allow
+    );
+    // A different ambiguous command is still denied (model can't auto-allow).
+    assert_eq!(
+        d.decide(&propose(&repo, "make publish")).decision,
+        Decision::Deny
+    );
 
     std::env::remove_var("AEGIS_CONFIG");
 }
