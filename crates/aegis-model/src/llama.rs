@@ -26,7 +26,7 @@ use crate::heuristic::HeuristicScorer;
 use crate::manage;
 use crate::{ModelOutput, Scorer};
 
-const MAX_TOKENS: i32 = 160;
+const MAX_TOKENS: i32 = 256;
 const CTX_TOKENS: u32 = 2048;
 
 /// A warm llama.cpp model behind a mutex (one context, reused per call).
@@ -170,9 +170,19 @@ fn directories_next() -> Option<PathBuf> {
 }
 
 fn build_prompt(raw: &str, class: Class) -> String {
+    // Ask for a beginner-friendly explanation: a plain first sentence, then up to
+    // three short "• " pointers spelling out what the command actually does and
+    // why it matters — for someone who can't read the shell. The pointers live
+    // inside the single `summary` string (newline-separated) so the storage
+    // schema and the risk score are unchanged.
     format!(
-        "You are a security assistant. A shell command was classified as {class}. \
-         Reply with ONLY a compact JSON object: {{\"summary\": \"<one sentence>\", \"risk\": <0-100>}}. \
+        "You are a security assistant explaining a shell command to someone who is \
+         NOT comfortable reading shell. The command was classified as {class}. \
+         Write a plain-English explanation, then 2-3 short bullet pointers (each \
+         starting with \"• \") naming what it does, what it touches, and the risk. \
+         Avoid jargon; if you must use a flag or path, say what it means. \
+         Reply with ONLY a compact JSON object of the form \
+         {{\"summary\": \"<sentence>\\n• <point>\\n• <point>\", \"risk\": <0-100>}}. \
          Command: {raw}\nJSON: "
     )
 }

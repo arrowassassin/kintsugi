@@ -43,6 +43,44 @@ fn seed() -> EventLog {
 }
 
 #[test]
+fn limit_and_offset_paginate_newest_first() {
+    let log = seed(); // 4 events: git status, rm -rf build, npm test, git push --force
+                      // Page 1 (limit 2, offset 0) = the two newest, returned oldest-first.
+    let page1 = log
+        .query(&Filter {
+            limit: Some(2),
+            offset: Some(0),
+            ..Filter::default()
+        })
+        .unwrap();
+    assert_eq!(page1.len(), 2);
+    assert_eq!(page1[0].command, "npm test");
+    assert_eq!(page1[1].command, "git push --force");
+
+    // Page 2 (limit 2, offset 2) = the next two older.
+    let page2 = log
+        .query(&Filter {
+            limit: Some(2),
+            offset: Some(2),
+            ..Filter::default()
+        })
+        .unwrap();
+    assert_eq!(page2.len(), 2);
+    assert_eq!(page2[0].command, "git status");
+    assert_eq!(page2[1].command, "rm -rf build");
+
+    // Past the end → empty.
+    let page3 = log
+        .query(&Filter {
+            limit: Some(2),
+            offset: Some(4),
+            ..Filter::default()
+        })
+        .unwrap();
+    assert!(page3.is_empty());
+}
+
+#[test]
 fn filters_by_agent_session_class_and_grep() {
     let log = seed();
 

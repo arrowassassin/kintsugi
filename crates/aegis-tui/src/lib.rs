@@ -88,7 +88,9 @@ fn reload(app: &mut App, db_path: &Path) {
         return;
     }
     if let Ok(log) = EventLog::open(db_path) {
-        if let Ok(events) = log.tail(TAIL) {
+        if let Ok(mut events) = log.tail(TAIL) {
+            // `tail` is chronological (oldest-first); show newest at the top.
+            events.reverse();
             app.set_events(events);
         }
     }

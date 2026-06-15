@@ -186,8 +186,52 @@ fn log_respects_number_flag() {
         .output()
         .unwrap();
     let text = String::from_utf8_lossy(&out.stdout);
-    // Only the most recent (rm -rf data) should show, not the earlier ls.
+    // Page 1 (newest first) shows only the most recent (rm -rf data).
     assert!(text.contains("rm -rf data"));
+    // Footer reflects the total and links to the older page.
+    assert!(text.contains("of 2"), "footer should show total:\n{text}");
+    assert!(
+        text.contains("--page 2"),
+        "footer should link older page:\n{text}"
+    );
+}
+
+#[test]
+fn log_pagination_shows_older_page() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = tmp.path().join("events.db");
+    seed_log(&db); // 2 events: ls (older), rm -rf data (newer)
+    let out = aegis()
+        .args(["log", "-n", "1", "--page", "2"])
+        .env("AEGIS_DB", &db)
+        .env("NO_COLOR", "1")
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    // Page 2 is the older event (ls), not the newest.
+    assert!(
+        text.contains("ls"),
+        "page 2 should show the older ls:\n{text}"
+    );
+    assert!(
+        !text.contains("rm -rf data"),
+        "newest is on page 1, not 2:\n{text}"
+    );
+    assert!(
+        text.contains("--page 1"),
+        "should link back to the newer page"
+    );
+
+    // Paging past the end is graceful, not an empty-state lie.
+    let past = aegis()
+        .args(["log", "-n", "1", "--page", "9"])
+        .env("AEGIS_DB", &db)
+        .env("NO_COLOR", "1")
+        .output()
+        .unwrap();
+    assert!(past.status.success());
+    assert!(String::from_utf8_lossy(&past.stdout).contains("no events on page 9"));
 }
 
 #[test]
