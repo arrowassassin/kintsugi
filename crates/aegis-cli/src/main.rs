@@ -683,14 +683,41 @@ fn cmd_update(check_only: bool, yes: bool) -> Result<()> {
         println!("      {one_liner}");
         return Ok(());
     }
-    if !yes && !confirm("Download and install the new binaries now?")? {
+    // If the running daemon has the in-process llama engine, the update must
+    // rebuild it for the new version (and keep the configured model) rather than
+    // drop back to the prebuilt heuristic-only build.
+    let had_llama = daemon_has_llama();
+    let prompt = if had_llama {
+        "Download the update and rebuild the local model engine now?"
+    } else {
+        "Download and install the new binaries now?"
+    };
+    if !yes && !confirm(prompt)? {
         println!("  • skipped. To update later:  aegis update   (or: {one_liner})");
         return Ok(());
     }
 
-    run_installer().context("install the update")?;
+    run_installer(&tag, had_llama).context("install the update")?;
     println!("  ✓ updated to {latest}. Restart the daemon to run it:  aegis stop && aegis init");
     Ok(())
+}
+
+/// Whether the installed `aegis-daemon` (sibling of this binary) has the llama
+/// engine compiled in — probed without starting it.
+fn daemon_has_llama() -> bool {
+    let Some(daemon) = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("aegis-daemon")))
+    else {
+        return false;
+    };
+    std::process::Command::new(daemon)
+        .arg("--has-llama")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 /// Fetch the `tag_name` of the latest GitHub release via curl/wget.
@@ -719,15 +746,25 @@ fn http_get(url: &str) -> Result<Vec<u8>> {
     anyhow::bail!("could not reach GitHub — need curl or wget and network access")
 }
 
-/// Download the installer and run it in `--bin-only` mode, targeting the dir the
-/// running `aegis` binary lives in so the update lands in the same place.
-fn run_installer() -> Result<()> {
+/// Download the installer and run it, targeting the dir the running `aegis`
+/// binary lives in so the update lands in the same place. Pins to `tag` so the
+/// binaries (and, when rebuilding, the engine) all match the resolved release.
+/// With `had_llama`, rebuilds the local engine and keeps the model instead of
+/// installing the prebuilt heuristic-only binaries.
+fn run_installer(tag: &str, had_llama: bool) -> Result<()> {
     let script = http_get(INSTALL_URL).context("download the installer")?;
     let tmp = std::env::temp_dir().join(format!("aegis-update-{}.sh", std::process::id()));
     std::fs::write(&tmp, &script).with_context(|| format!("write {}", tmp.display()))?;
 
     let mut cmd = std::process::Command::new("sh");
-    cmd.arg(&tmp).arg("--bin-only");
+    cmd.arg(&tmp).arg("--version").arg(tag);
+    if had_llama {
+        // Install the new binaries, then rebuild the engine for this version and
+        // keep the configured model; don't re-wire agents (--no-init).
+        cmd.arg("--no-init").arg("--with-model");
+    } else {
+        cmd.arg("--bin-only");
+    }
     // Target the dir the running binary lives in, so the update lands in place.
     let exe = std::env::current_exe().ok();
     if let Some(parent) = exe.as_deref().and_then(|p| p.parent()) {

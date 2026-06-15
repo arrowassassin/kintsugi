@@ -254,3 +254,27 @@ the locked product decisions this build implements.
   vMAJOR.MINOR.PATCH parse; unparseable tags fall back to "differs" so a real
   release is never hidden. Confirmed with the human before building (guardrail
   touch): scope = check + self-install, egress = manual-only.
+- Installer ordering + idempotency: the stepper now sets up the model BEFORE
+  running `aegis init`, so the daemon starts once already pointed at the model
+  (was: init started a heuristic daemon, then the model step rebuilt + restarted
+  it — a double start and a misleading transient "heuristic fallback" line). Made
+  re-runs idempotent: install.sh skips the binary download when `aegis --version`
+  in BIN_DIR already equals the target tag (this also stops the prebuilt tarball
+  from clobbering a locally-built llama daemon); skips the llama.cpp compile when
+  `aegis-daemon --has-llama` prints a version equal to the target (version-aware,
+  so an app upgrade rebuilds the engine rather than keeping a stale one); and
+  pick-model.sh skips the GGUF download when the file already exists (delete to
+  re-fetch). Added a dependency-free `aegis-daemon --has-llama` probe that prints
+  the build version + exits 0 when the engine is compiled in, else exits 1.
+- aegis update preserves llama: `aegis update` probes `aegis-daemon --has-llama`
+  and, when the engine is present, runs install.sh with `--version <tag> --no-init
+  --with-model` (rebuilds the engine for the new version, keeps the configured
+  model) instead of `--bin-only` (which would install the prebuilt heuristic-only
+  daemon). The tag is pinned so binaries and engine match. setup_model now keeps an
+  already-configured AEGIS_MODEL_FILE (skips the picker/download) so the rebuild
+  doesn't re-pick a model. Closes the earlier gap where updating dropped llama.
+- TUI paging: Space/b page the timeline by one screenful (the last-rendered
+  data-row count, plumbed from the event loop via App.page_rows); f and
+  PageUp/PageDown are aliases. Space/b are primary because Mac keyboards lack
+  dedicated PageUp/PageDown. Footer gained a right-aligned "row N/M" indicator,
+  shown only when it fits so the help text never clips on an 80-col terminal.

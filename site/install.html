@@ -142,7 +142,8 @@ deny  = ["git push * --force", "kubectl * --context=prod"]</pre>
 <pre>
 <span class="t-grn">aegis init</span>           detect agents, wire interception, start daemon
 <span class="t-grn">aegis stop</span>           stop the background daemon (inverse of init)
-<span class="t-grn">aegis status</span>         daemon / socket / log / chain / kill-switch
+<span class="t-grn">aegis status</span>         daemon / socket / log / chain / scorer / kill-switch
+<span class="t-grn">aegis update</span>         check GitHub for a newer release &amp; install in place
 <span class="t-grn">aegis log</span> [-n N]     recent command timeline
 <span class="t-grn">aegis tui</span>            live, interactive timeline (filter: agent: session: since:)
 <span class="t-grn">aegis queue</span>          commands held for approval

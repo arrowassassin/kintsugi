@@ -43,23 +43,33 @@ All notable changes to Aegis are documented here. The format loosely follows
 ### CLI & install
 - **`aegis update`** — check GitHub for a newer release and install it in place.
   Compares the running version to the latest release tag and, with your consent,
-  re-runs the checksum-verifying installer in `--bin-only` mode (no re-wiring, no
-  model prompts) targeting the binary's own directory. `--check` reports only;
-  `--yes` skips the prompt. Manual and explicit: no automatic or background
-  checks, and no command/code/telemetry is ever sent — the one deliberate
-  exception to "never phone home", documented in DECISIONS.md.
+  re-runs the checksum-verifying installer (pinned to that tag) targeting the
+  binary's own directory. If your daemon has the local model engine, the update
+  **rebuilds the engine for the new version and keeps your configured model**
+  instead of dropping back to the prebuilt heuristic-only build; otherwise it just
+  swaps the binaries. `--check` reports only; `--yes` skips the prompt. Manual and
+  explicit: no automatic or background checks, and no command/code/telemetry is
+  ever sent — the one deliberate exception to "never phone home", per DECISIONS.md.
 - **Active scorer is now visible.** `aegis status`, `aegis init`, and the bare
   `aegis` banner report which scorer the daemon is using — the loaded local model
   (`<model> (local model)`) or the offline `heuristic fallback (… set
   AEGIS_MODEL_FILE)`. Previously a model-less daemon degraded silently, so a
   mis-set `AEGIS_MODEL_FILE` only showed up as thin, templated hold summaries.
   Backed by a new `Status` IPC request/response.
-- **Installer loads the model immediately.** When the guided installer sets up a
-  local model it now restarts the just-started daemon so it picks up
-  `AEGIS_MODEL_FILE` (the daemon inherits env at spawn time, and was started
-  before the var was written). It also no longer auto-downloads: the model picker
-  shows its full menu — ★ recommended models alongside the popularity-ranked
-  ones — and lets you choose (only `--yes` installs auto-pick the top match).
+- **Installer loads the model immediately, and sets up once.** The guided
+  installer now sets up the model *before* running `aegis init`, so the daemon
+  starts a single time already pointed at `AEGIS_MODEL_FILE` (no double-start, no
+  transient "heuristic fallback" message). It also no longer auto-downloads: the
+  model picker shows its full menu — ★ recommended models alongside the
+  popularity-ranked ones — and lets you choose (only `--yes` installs auto-pick).
+- **Idempotent re-runs.** Re-running `install.sh` (or `aegis update`) no longer
+  redoes work that's already done: it skips the binary download when the target
+  version is already installed (which also preserves a locally-built llama daemon
+  the prebuilt tarball would otherwise overwrite), skips the multi-minute
+  llama.cpp compile when the installed daemon already has the engine *at the same
+  version* (probed via `aegis-daemon --has-llama`, so an app upgrade still
+  rebuilds), and the model picker skips the GGUF download when the file already
+  exists.
 - **`aegis stop`** — stop the background daemon (the inverse of `aegis init`). The
   daemon writes its own PID file on startup; `stop` reads it and terminates it
   cleanly, idempotent when nothing's running.
@@ -112,6 +122,9 @@ All notable changes to Aegis are documented here. The format loosely follows
   `30m`/`2h`/`3d`/`day`/`week`/`month`) — combinable with free text (AND). A
   short `session` column appears on wide terminals (full id stays in the detail
   pane), so no horizontal scroll is needed.
+- **TUI paging**: jump a screenful with `Space`/`b` (Mac-friendly pager keys, no
+  PageUp/PageDown needed; `f` and the PgUp/PgDn keys also work). A right-aligned
+  `row N/M` indicator shows your position when the terminal is wide enough.
 
 ### Docs/site
 - **Autoplaying cast** (`docs/img/cast.svg`, mirrored to `site/cast.svg`): one

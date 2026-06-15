@@ -4,3 +4,7 @@ Cargo.lock.orig
 *.profraw
 /coverage
 .DS_Store
+
+# Playwright MCP screenshot output
+.playwright-mcp/
+tour-nav-light.png

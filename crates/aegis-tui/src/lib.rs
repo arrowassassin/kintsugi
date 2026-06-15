@@ -46,6 +46,9 @@ fn event_loop(
     snapshot_dir: &Path,
 ) -> Result<()> {
     loop {
+        // Page step = timeline data-rows on screen: total height minus the 1-row
+        // header, 2-row footer, and the table's 2 borders + 1 header row.
+        app.page_rows = (terminal.size()?.height as usize).saturating_sub(6).max(1);
         terminal.draw(|f| ui::render(f, app))?;
 
         // Poll so the loop stays responsive and refreshes live data on idle ticks.

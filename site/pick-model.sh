@@ -172,11 +172,15 @@ FILE="$(printf '%s\n' "$GGUF" | grep -iE 'q4_k_m' | head -n1)"
 [ -n "$FILE" ] || FILE="$(printf '%s\n' "$GGUF" | head -n1)"
 [ -n "$FILE" ] || die "no single-file GGUF found in $REPO (it may be split into shards)"
 
-# --- Download + checksum. ----------------------------------------------------
+# --- Download (skip if we already have it) + checksum. -----------------------
 mkdir -p "$DIR"
 DEST="$DIR/$(basename "$FILE")"
-say "downloading $FILE → $DEST"
-fetch_to "$HF/$REPO/resolve/main/$FILE?download=true" "$DEST" || die "download failed"
+if [ -s "$DEST" ]; then
+  say "already downloaded: $DEST — skipping (delete it to re-fetch)."
+else
+  say "downloading $FILE → $DEST"
+  fetch_to "$HF/$REPO/resolve/main/$FILE?download=true" "$DEST" || die "download failed"
+fi
 SUM="$(sha256 "$DEST")"
 [ -n "$SUM" ] && say "sha256  $SUM"
 
