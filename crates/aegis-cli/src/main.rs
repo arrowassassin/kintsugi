@@ -39,6 +39,18 @@ enum Command {
     Status,
     /// Stop the background daemon (the inverse of `aegis init`).
     Stop,
+    /// Check GitHub for a newer release and install it in place. A manual,
+    /// user-invoked check that sends no data — only fetches the latest release
+    /// tag and (with consent) the verified installer. There are no automatic or
+    /// background update checks.
+    Update {
+        /// Only report whether a newer release exists; do not install anything.
+        #[arg(long)]
+        check: bool,
+        /// Install without the confirmation prompt.
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
     /// Show the recent command timeline from the event log (newest first).
     Log {
         /// Page size — how many events per page.
@@ -224,6 +236,7 @@ fn main() -> Result<()> {
         }
         Some(Command::Status) => cmd_status(),
         Some(Command::Stop) => cmd_stop(),
+        Some(Command::Update { check, yes }) => cmd_update(check, yes),
         Some(Command::Log {
             number,
             page,
@@ -475,6 +488,14 @@ fn cmd_init(no_daemon: bool) -> Result<()> {
         println!("  ✓ daemon started on {}", ipc::socket_path().display());
     }
 
+    // Report the active scorer so a model-less daemon (the most common surprise
+    // after setting up a model) is visible right here, not silently degraded.
+    if !no_daemon {
+        if let Some(label) = active_scorer_label() {
+            println!("  ✓ scoring with: {label}");
+        }
+    }
+
     println!();
     println!("Done. Try: aegis status");
     Ok(())
@@ -595,6 +616,9 @@ fn cmd_banner() -> Result<()> {
         println!("    run `aegis resume` to clear it.");
     } else if Client::is_daemon_running() {
         println!("  ✓ running and guarding your machine.");
+        if let Some(label) = active_scorer_label() {
+            println!("    model: {label}");
+        }
         println!("    `aegis tui` (live timeline) · `aegis status` · `aegis stop`");
     } else {
         println!("  • not running yet.");
@@ -630,6 +654,128 @@ fn cmd_stop() -> Result<()> {
     Ok(())
 }
 
+/// The GitHub repo + installer URL. The installer is the single source of
+/// truth for download/checksum/source-fallback logic — `update` just re-runs it.
+const UPDATE_REPO: &str = "arrowassassin/aegis";
+const INSTALL_URL: &str =
+    "https://github.com/arrowassassin/aegis/releases/latest/download/install.sh";
+
+/// `aegis update`: check GitHub for a newer release and (with consent) install it.
+///
+/// Egress here is the one explicit, user-invoked exception to the "never phone
+/// home" guardrail: it is never automatic, sends no command/code/telemetry, and
+/// only fetches the latest release tag (and, on install, the verified installer).
+fn cmd_update(check_only: bool, yes: bool) -> Result<()> {
+    let current = env!("CARGO_PKG_VERSION");
+    println!("aegis {current} — checking GitHub for a newer release…");
+
+    let tag = latest_release_tag().context("check for the latest release")?;
+    let latest = tag.trim_start_matches('v');
+    if !version_is_newer(&tag, current) {
+        println!("  ✓ up to date (latest release is {tag}).");
+        return Ok(());
+    }
+    println!("  ↑ update available: {current} → {latest}");
+
+    let one_liner = format!("curl -fsSL {INSTALL_URL} | sh -s -- --bin-only");
+    if check_only {
+        println!("    install it with:");
+        println!("      {one_liner}");
+        return Ok(());
+    }
+    if !yes && !confirm("Download and install the new binaries now?")? {
+        println!("  • skipped. To update later:  aegis update   (or: {one_liner})");
+        return Ok(());
+    }
+
+    run_installer().context("install the update")?;
+    println!("  ✓ updated to {latest}. Restart the daemon to run it:  aegis stop && aegis init");
+    Ok(())
+}
+
+/// Fetch the `tag_name` of the latest GitHub release via curl/wget.
+fn latest_release_tag() -> Result<String> {
+    let url = format!("https://api.github.com/repos/{UPDATE_REPO}/releases/latest");
+    let body = http_get(&url)?;
+    let json: serde_json::Value =
+        serde_json::from_slice(&body).context("parse the GitHub release response")?;
+    json.get("tag_name")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .context("no tag_name in the GitHub response (no published release yet?)")
+}
+
+/// HTTP GET via curl (then wget). No headers beyond the tool's defaults, no body
+/// — so no user data leaves the machine. Returns the response bytes.
+fn http_get(url: &str) -> Result<Vec<u8>> {
+    let attempts: [(&str, &[&str]); 2] = [("curl", &["-fsSL", url]), ("wget", &["-qO-", url])];
+    for (bin, args) in attempts {
+        match std::process::Command::new(bin).args(args).output() {
+            Ok(out) if out.status.success() => return Ok(out.stdout),
+            // Tool ran but the request failed (or the tool is missing): try the next.
+            Ok(_) | Err(_) => continue,
+        }
+    }
+    anyhow::bail!("could not reach GitHub — need curl or wget and network access")
+}
+
+/// Download the installer and run it in `--bin-only` mode, targeting the dir the
+/// running `aegis` binary lives in so the update lands in the same place.
+fn run_installer() -> Result<()> {
+    let script = http_get(INSTALL_URL).context("download the installer")?;
+    let tmp = std::env::temp_dir().join(format!("aegis-update-{}.sh", std::process::id()));
+    std::fs::write(&tmp, &script).with_context(|| format!("write {}", tmp.display()))?;
+
+    let mut cmd = std::process::Command::new("sh");
+    cmd.arg(&tmp).arg("--bin-only");
+    // Target the dir the running binary lives in, so the update lands in place.
+    let exe = std::env::current_exe().ok();
+    if let Some(parent) = exe.as_deref().and_then(|p| p.parent()) {
+        cmd.arg("--bin-dir").arg(parent);
+    }
+    let status = cmd.status().context("run the installer");
+    let _ = std::fs::remove_file(&tmp);
+    let status = status?;
+    if !status.success() {
+        anyhow::bail!("installer exited unsuccessfully ({status})");
+    }
+    Ok(())
+}
+
+/// A y/N confirmation read from the terminal. Non-interactive ⇒ `false` (never
+/// modify binaries without an explicit answer).
+fn confirm(prompt: &str) -> Result<bool> {
+    use std::io::Write;
+    if !std::io::stdin().is_terminal() {
+        return Ok(false);
+    }
+    print!("{prompt} [y/N] ");
+    std::io::stdout().flush().ok();
+    let mut answer = String::new();
+    std::io::stdin().read_line(&mut answer)?;
+    Ok(matches!(answer.trim(), "y" | "Y" | "yes" | "Yes"))
+}
+
+/// Parse a `vMAJOR.MINOR.PATCH`-ish version into a comparable tuple. Tolerant of
+/// a leading `v` and pre-release/build suffixes (compared on the numeric core).
+fn parse_version(s: &str) -> Option<(u64, u64, u64)> {
+    let core = s.trim().trim_start_matches('v');
+    let mut parts = core.split(['.', '-', '+']);
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next().unwrap_or("0").parse().ok()?;
+    let patch = parts.next().unwrap_or("0").parse().ok()?;
+    Some((major, minor, patch))
+}
+
+/// True when `latest` is a strictly newer release than `current`. If either is
+/// unparseable, fall back to "they differ" rather than silently claiming current.
+fn version_is_newer(latest: &str, current: &str) -> bool {
+    match (parse_version(latest), parse_version(current)) {
+        (Some(l), Some(c)) => l > c,
+        _ => latest.trim_start_matches('v') != current.trim_start_matches('v'),
+    }
+}
+
 /// Best-effort terminate a PID across platforms.
 #[cfg(unix)]
 fn kill_pid(pid: &str) {
@@ -661,11 +807,37 @@ fn start_daemon() -> Result<()> {
     Ok(())
 }
 
+/// Map a daemon scorer backend id to a one-line, human-readable description.
+/// `llama:<model>` means the local model loaded; `heuristic` is the always-on
+/// offline fallback (and a hint at why, so a missing `AEGIS_MODEL_FILE` is
+/// diagnosable without reading the daemon's swallowed stderr).
+fn describe_scorer(name: &str) -> String {
+    if let Some(model) = name.strip_prefix("llama:") {
+        format!("{model} (local model)")
+    } else if name == "heuristic" {
+        "heuristic fallback (no local model — set AEGIS_MODEL_FILE)".to_string()
+    } else {
+        name.to_string()
+    }
+}
+
+/// Human-friendly description of the daemon's active scorer, asked over IPC.
+/// `None` when the daemon isn't running or doesn't answer.
+fn active_scorer_label() -> Option<String> {
+    Client::status_scorer().ok().map(|n| describe_scorer(&n))
+}
+
 fn cmd_status() -> Result<()> {
     println!("aegis {}", env!("CARGO_PKG_VERSION"));
     let running = Client::is_daemon_running();
     println!("  daemon:  {}", if running { "running" } else { "stopped" });
     println!("  socket:  {}", ipc::socket_path().display());
+    if running {
+        match Client::status_scorer() {
+            Ok(name) => println!("  model:   {}", describe_scorer(&name)),
+            Err(_) => println!("  model:   (daemon not answering)"),
+        }
+    }
 
     // The panic kill-switch is the loudest state — surface it prominently.
     if aegis_daemon::kill_switch_path().exists() {
@@ -814,6 +986,40 @@ fn resolve_event_id(log: &EventLog, prefix: &str) -> Result<String> {
 #[cfg(test)]
 mod filter_tests {
     use super::*;
+
+    #[test]
+    fn version_compare_handles_tags_and_suffixes() {
+        // Newer wins, with or without the leading `v`.
+        assert!(version_is_newer("v0.2.0", "0.1.0"));
+        assert!(version_is_newer("0.1.1", "0.1.0"));
+        assert!(version_is_newer("v1.0.0", "0.9.9"));
+        // Same or older does not trigger an update.
+        assert!(!version_is_newer("v0.1.0", "0.1.0"));
+        assert!(!version_is_newer("0.1.0", "0.2.0"));
+        // Pre-release/build suffixes compare on the numeric core.
+        assert_eq!(parse_version("v0.1.0-rc1"), Some((0, 1, 0)));
+        assert_eq!(parse_version("0.1"), Some((0, 1, 0)));
+        // Unparseable tag: fall back to "differs" so we don't hide a real release.
+        assert!(version_is_newer("nightly", "0.1.0"));
+        assert!(!version_is_newer("v0.1.0", "0.1.0"));
+    }
+
+    #[test]
+    fn describe_scorer_distinguishes_model_from_fallback() {
+        // The local model loaded: show the model name, marked as such.
+        let m = describe_scorer("llama:Qwen3-4B-Instruct-2507-Q4_K_M");
+        assert!(m.contains("Qwen3-4B-Instruct-2507-Q4_K_M"));
+        assert!(m.contains("local model"));
+        assert!(!m.starts_with("llama:"), "the raw backend prefix is hidden");
+
+        // The offline fallback: name it and hint at the fix.
+        let h = describe_scorer("heuristic");
+        assert!(h.contains("heuristic"));
+        assert!(h.contains("AEGIS_MODEL_FILE"));
+
+        // An unknown backend id is passed through verbatim, not dropped.
+        assert_eq!(describe_scorer("future-backend"), "future-backend");
+    }
 
     #[test]
     fn parse_instant_relative_and_rfc3339() {

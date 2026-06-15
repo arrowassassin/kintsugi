@@ -41,6 +41,25 @@ All notable changes to Aegis are documented here. The format loosely follows
   a single clear sentence.)
 
 ### CLI & install
+- **`aegis update`** — check GitHub for a newer release and install it in place.
+  Compares the running version to the latest release tag and, with your consent,
+  re-runs the checksum-verifying installer in `--bin-only` mode (no re-wiring, no
+  model prompts) targeting the binary's own directory. `--check` reports only;
+  `--yes` skips the prompt. Manual and explicit: no automatic or background
+  checks, and no command/code/telemetry is ever sent — the one deliberate
+  exception to "never phone home", documented in DECISIONS.md.
+- **Active scorer is now visible.** `aegis status`, `aegis init`, and the bare
+  `aegis` banner report which scorer the daemon is using — the loaded local model
+  (`<model> (local model)`) or the offline `heuristic fallback (… set
+  AEGIS_MODEL_FILE)`. Previously a model-less daemon degraded silently, so a
+  mis-set `AEGIS_MODEL_FILE` only showed up as thin, templated hold summaries.
+  Backed by a new `Status` IPC request/response.
+- **Installer loads the model immediately.** When the guided installer sets up a
+  local model it now restarts the just-started daemon so it picks up
+  `AEGIS_MODEL_FILE` (the daemon inherits env at spawn time, and was started
+  before the var was written). It also no longer auto-downloads: the model picker
+  shows its full menu — ★ recommended models alongside the popularity-ranked
+  ones — and lets you choose (only `--yes` installs auto-pick the top match).
 - **`aegis stop`** — stop the background daemon (the inverse of `aegis init`). The
   daemon writes its own PID file on startup; `stop` reads it and terminates it
   cleanly, idempotent when nothing's running.

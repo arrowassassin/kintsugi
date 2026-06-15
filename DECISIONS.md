@@ -231,3 +231,26 @@ the locked product decisions this build implements.
   pointers folded into the existing `summary` string (no schema change; MAX_TOKENS
   160→256); the TUI detail splits the summary on newlines so pointers render as
   their own lines. Heuristic summaries stay one line.
+- Scorer observability + installer model load: the daemon's active scorer is now
+  reportable over IPC (new Status request → Status{scorer}) and surfaced in `aegis
+  status`, `aegis init`, and the bare `aegis` banner — heuristic fallback vs the
+  loaded `<model> (local model)`. Motivated by a real diagnosis miss: a daemon
+  spawned before AEGIS_MODEL_FILE existed degraded to heuristic silently (the
+  "falling back…" stderr line is sent to /dev/null by `aegis init`), visible only
+  as thin templated hold summaries. install.sh now restarts the daemon after
+  setting up a model (so it inherits AEGIS_MODEL_FILE at spawn) but only when this
+  run started it (DAEMON_STARTED gate — respects --no-init), and the model picker
+  no longer auto-selects: it shows the full ★-recommended + ranked menu over
+  /dev/tty and lets the user choose (--yes still auto-picks the top match).
+- aegis update: added a manual, user-invoked self-update (`aegis update`, with
+  `--check`/`--yes`). It GETs the GitHub releases API for the latest tag and, on
+  consent, downloads + runs install.sh in a new `--bin-only` mode (binaries only,
+  no stepper) targeting current_exe()'s dir. Deliberately the SINGLE explicit
+  exception to spine #5 "never phone home": egress only on the explicit command,
+  no automatic/background checks, no body/headers beyond curl/wget defaults, no
+  user code/commands/telemetry sent. We reuse install.sh (one source of truth for
+  download/checksum/source-fallback) and shell out to curl/wget rather than add an
+  HTTP crate to aegis-cli (dependency hygiene). Version compare is a tolerant
+  vMAJOR.MINOR.PATCH parse; unparseable tags fall back to "differs" so a real
+  release is never hidden. Confirmed with the human before building (guardrail
+  touch): scope = check + self-install, egress = manual-only.

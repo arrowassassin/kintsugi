@@ -98,7 +98,8 @@ score for ambiguous commands; the installer can set it up, or do it later (see
 Day-to-day: `aegis status`, `aegis tui` (live timeline), `aegis stop` (stop the
 daemon — the inverse of `init`). Also: `aegis log`, `aegis undo [--session]`,
 `aegis queue` / `approve <id>` / `deny <id>`, `aegis watch <path>`,
-`aegis panic` / `resume`.
+`aegis panic` / `resume`, `aegis update` (manual check + self-install from the
+latest GitHub release; `--check` to only report).
 The Tier-2 model, snapshots/undo, the TUI, the FS backstop, and the kill-switch
 are documented in [`docs/`](docs/) (`model.md`, `policy.md`, `mcp.md`, `queue.md`,
 `demo.md`).
