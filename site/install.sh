@@ -81,10 +81,48 @@ sha256() { # sha256 of FILE → hex
   else echo ""; fi
 }
 
+# Run a long command with a live spinner + elapsed time; on failure, print the
+# full (verbose) output so nothing is hidden. Quiet while it works, loud if it breaks.
+run_with_progress() {
+  label="$1"; shift
+  log="$(mktemp 2>/dev/null || echo /tmp/aegis-build.log)"
+  "$@" >"$log" 2>&1 &
+  pid=$!
+  start="$(date +%s 2>/dev/null || echo 0)"
+  if [ -w /dev/tty ]; then
+    spin='|/-\'
+    n=0
+    while kill -0 "$pid" 2>/dev/null; do
+      n=$(( (n + 1) % 4 ))
+      c="$(printf '%s' "$spin" | cut -c$((n + 1)))"
+      el=$(( $(date +%s 2>/dev/null || echo "$start") - start ))
+      last="$(tail -n1 "$log" 2>/dev/null | tr -d '\r' | cut -c1-52)"
+      printf '\r\033[K  \033[1;32m%s\033[0m %s  %ss  \033[2m%s\033[0m' "$c" "$label" "$el" "$last" > /dev/tty 2>/dev/null || true
+      sleep 0.5
+    done
+    printf '\r\033[K' > /dev/tty 2>/dev/null || true
+  fi
+  rc=0; wait "$pid" || rc=$?
+  el=$(( $(date +%s 2>/dev/null || echo "$start") - start ))
+  if [ "$rc" -eq 0 ]; then
+    say "$label — done (${el}s)"
+  else
+    warn "$label — FAILED after ${el}s. Full build output follows:"
+    cat "$log" >&2
+  fi
+  rm -f "$log" 2>/dev/null || true
+  return "$rc"
+}
+
 install_from_source() {
   have cargo || die "no prebuilt build for your platform and cargo is not installed.\n  Install Rust (https://rustup.rs) then re-run, or: cargo install --git https://github.com/$REPO aegis-cli aegis-daemon aegis-intercept"
-  say "building from source with cargo (this can take a few minutes)…"
-  cargo install --git "https://github.com/$REPO" aegis-cli aegis-daemon aegis-intercept ${VERSION:+--tag "$VERSION"}
+  if [ -n "$VERSION" ]; then
+    run_with_progress "building Aegis from source (a few minutes)" \
+      cargo install --git "https://github.com/$REPO" aegis-cli aegis-daemon aegis-intercept --tag "$VERSION" || die "source build failed (see output above)"
+  else
+    run_with_progress "building Aegis from source (a few minutes)" \
+      cargo install --git "https://github.com/$REPO" aegis-cli aegis-daemon aegis-intercept || die "source build failed (see output above)"
+  fi
   say "installed to $HOME/.cargo/bin"
   stepper "$HOME/.cargo/bin"
 }
@@ -173,12 +211,17 @@ setup_model() {
   ensure_build_tools || { warn "toolchain not ready; skipping the model (Aegis still works heuristically)."; return 0; }
   ensure_cargo       || { warn "cargo unavailable; skipping the model build."; return 0; }
 
-  say "building the daemon with the llama engine…"
-  if ! cargo install --git "https://github.com/$REPO" aegis-daemon \
-        --features "aegis-model/llama" --root "$(dirname "$dir")" --force ${VERSION:+--tag "$VERSION"}; then
-    warn "model engine build failed; Aegis keeps working on the heuristic scorer."
-    return 0
+  ok=1
+  if [ -n "$VERSION" ]; then
+    run_with_progress "compiling the llama.cpp engine (a few minutes)" \
+      cargo install --git "https://github.com/$REPO" aegis-daemon \
+        --features "aegis-model/llama" --root "$(dirname "$dir")" --force --tag "$VERSION" || ok=0
+  else
+    run_with_progress "compiling the llama.cpp engine (a few minutes)" \
+      cargo install --git "https://github.com/$REPO" aegis-daemon \
+        --features "aegis-model/llama" --root "$(dirname "$dir")" --force || ok=0
   fi
+  [ "$ok" -eq 1 ] || { warn "model engine build failed; Aegis keeps working on the heuristic scorer."; return 0; }
 
   say "choosing a model from Hugging Face…"
   pickargs=""; [ "$ASSUME_YES" -eq 1 ] && pickargs="--auto"

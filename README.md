@@ -1,10 +1,16 @@
 # Aegis
 
-A local-first safety layer for AI coding agents. Aegis intercepts the commands an
-agent is about to run, warns you in plain English **before** they execute, makes
-destructive actions reversible, and keeps a tamper-evident record of everything
-every agent did on your machine. No kernel code, no cloud, no code leaves your
-machine.
+### Let AI coding agents move fast — without letting them wreck your machine.
+
+AI agents now run real shell commands on your computer: `rm -rf`, `git push
+--force`, `DROP TABLE`, writes straight to disk. Almost always that's fine. The one
+time it isn't — a hallucinated path, a prompt-injected instruction, a confident
+wrong guess — there's no undo, and you find out after.
+
+**Aegis is the seatbelt.** It sits between the agent and your system, catches the
+dangerous command **before** it runs, explains it in one plain sentence, makes
+destructive actions **reversible**, and keeps a tamper-evident record of everything
+every agent did. Local-first: no cloud, no account, nothing leaves your machine.
 
 **Website:** https://arrowassassin.github.io/aegis/ · **Docs:** [`docs/`](docs/)
 
@@ -17,6 +23,26 @@ frames in [`docs/img/`](docs/img/) if the animation doesn't play.)*
 > deterministic **rules, never an LLM**. The raw command is always shown verbatim;
 > the model only explains. The event log is append-only and hash-chained, and
 > nothing leaves your machine. See [`CLAUDE.md`](CLAUDE.md) for the full rules.
+
+## Why Aegis
+
+- **It stops the mistake before it happens** — not a post-mortem. A deterministic
+  rule engine (not an LLM rolling the dice) decides what's catastrophic, so the
+  block is predictable and can't be "talked out of" by a clever prompt.
+- **Works with every agent — and your shell.** Claude Code, Cursor, Codex, Qwen,
+  Gemini, or a raw `bash` script: one safety layer at the process level, not a
+  fragile per-tool plugin. `aegis init` wires them all in one command.
+- **Reversible by default.** Aegis snapshots files before a destructive op, so
+  `aegis undo` brings them back. The honest promise is *nothing unrecoverable* —
+  a filesystem backstop catches even changes that slipped past interception.
+- **Private and auditable.** No cloud, no telemetry, no account. Every command
+  every agent ran lands on an append-only, **hash-chained** log you own — tamper
+  with a past entry and verification breaks.
+- **Calm until it must shout.** Safe commands fly through in well under a
+  millisecond; Aegis only interrupts for the ones that can actually hurt you.
+
+Runs on macOS, Linux, and Windows. Install is one command; it works immediately
+with no model and no setup beyond `aegis init`.
 
 ## Status
 

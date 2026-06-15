@@ -35,35 +35,20 @@
 
   <section class="hero" style="border-top:none">
     <h1>AEGIS</h1>
-    <p class="sub">A local-first safety layer for AI coding agents. It catches the
-      dangerous command <b>before</b> it runs.</p>
+    <p class="sub">Let AI coding agents move fast — <b>without letting them wreck
+      your machine.</b> Aegis catches the dangerous command <b>before</b> it runs,
+      makes it reversible, and logs everything. Local-first.</p>
     <div class="cta">
       <a class="btn" href="install.html">GET STARTED</a>
       <a class="btn alt" href="features.html">SEE FEATURES</a>
     </div>
-    <p class="note">Rust &middot; agent-agnostic &middot; nothing leaves your machine</p>
+    <p class="note">macOS · Linux · Windows &middot; works with every agent &middot; nothing leaves your machine</p>
 
     <figure style="margin:26px auto 0; max-width:900px">
-      <img src="cast.svg" alt="Aegis cast: an agent's destructive command is held before it runs, denied, and lands on the tamper-evident timeline; then the live TUI"
+      <img src="cast.svg" alt="Aegis: an agent's destructive command is held before it runs, denied, and lands on the tamper-evident timeline; then the live TUI"
            style="width:100%; height:auto; border-radius:10px" loading="lazy" />
-      <figcaption class="note" style="margin-top:10px">↑ real captured Aegis frames — hold card → denied timeline → live TUI (looping)</figcaption>
+      <figcaption class="note" style="margin-top:10px">↑ real Aegis output — hold card → denied timeline → live TUI (looping)</figcaption>
     </figure>
-
-    <div class="term" style="text-align:left; max-width:760px; margin:26px auto 0">
-      <div class="bar"><i class="dot r"></i><i class="dot y"></i><i class="dot g"></i>
-        <span class="ttl">agent proposes: rm -rf src</span></div>
-<pre>
-<span class="t-dim">────────────────────────────────────────────────────────────</span>
-<span class="t-red">⚠ Aegis hold — This command is catastrophic and cannot be undone.</span>
-<span class="t-dim">  recursively deletes files and directories. This is hard or impossible to undo.</span>
-
-    <span class="t-b">rm -rf src</span>
-
-  <span class="t-amb">[a] allow once   [d] deny   [r] always allow here</span>
-<span class="t-dim">────────────────────────────────────────────────────────────</span>
-</pre>
-    </div>
-    <p class="note" style="margin-top:14px">↑ a real frame from the running tool</p>
   </section>
 
   <section id="what">
