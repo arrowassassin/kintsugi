@@ -202,6 +202,11 @@ auto-detects the agent and wires interception. "Undo the last thing" is one obvi
   binaries, open-source release, HN / r/rust / r/devtools, demo GIF.
 - Later (P2+): Tauri DVR UI; deeper per-agent adapters; optional team policy sync + audit vault
   (kept open; no paywall planned).
+- Beyond v1, the team/enterprise direction (central policy, off-box tamper-evident audit, SIEM
+  export, SSO/RBAC, compliance) is sketched as a **separate, forward-looking track** in
+  [`aegis-enterprise-roadmap.md`](aegis-enterprise-roadmap.md) — additive and opt-in, with the
+  OSS core staying free and local and the security spine preserved (central policy may only *add*
+  caution). It does not change anything locked here.
 
 ## 11. Risks & mitigations
 
