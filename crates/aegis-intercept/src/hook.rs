@@ -87,15 +87,19 @@ pub fn handle(input: &str) -> HookOutcome {
     handle_with(Dialect::Claude, input)
 }
 
-/// Augment a catastrophic deny with the path to approve it. The command is in
-/// Aegis's queue (keyed by its id); approval must go through a guarded path that
-/// snapshots first — never the agent's own allow button.
-fn held_for_approval(reason: &str, id: &str) -> String {
-    let short = id.get(..8).unwrap_or(id);
+/// Augment a catastrophic deny with honest guidance.
+///
+/// A hook is one-shot: by the time you see this, the agent already got the deny
+/// and moved on, so there is no waiting process to run the command on approval
+/// (unlike the MCP/shim in-band paths). Approving the queue entry would record
+/// the decision but not execute it. So don't promise "approve to run" — tell the
+/// human the truth: it's blocked, and to run it themselves through a guarded
+/// path that snapshots first (the `$PATH` shim) so `aegis undo` can roll it back.
+fn held_for_approval(reason: &str, _id: &str) -> String {
     format!(
-        "{reason} Aegis is holding it for your approval — run `aegis tui` (select \
-         the row, press a) or `aegis approve {short}`. It snapshots first so it \
-         stays reversible; it will not run through the agent."
+        "{reason} Aegis blocked it and the agent will not run it (an in-agent \
+         allow would skip the snapshot). If you want it, run it yourself through \
+         the Aegis shim — it snapshots first, so `aegis undo` can roll it back."
     )
 }
 
@@ -171,15 +175,12 @@ mod tests {
     }
 
     #[test]
-    fn held_for_approval_names_the_guarded_paths_and_short_id() {
+    fn held_for_approval_is_honest_about_no_agent_run() {
         let msg = held_for_approval("recursively deletes files.", "abcd1234-5678-90ab-cdef");
         assert!(msg.contains("recursively deletes files."));
-        assert!(msg.contains("aegis tui"));
-        assert!(
-            msg.contains("aegis approve abcd1234"),
-            "should use the 8-char id prefix"
-        );
-        assert!(msg.contains("snapshots"));
+        assert!(msg.contains("will not run"), "must say the agent won't run it");
+        assert!(msg.contains("shim"), "should point at the guarded shim path");
+        assert!(msg.contains("undo"), "should mention reversibility");
     }
 
     #[test]

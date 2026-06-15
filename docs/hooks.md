@@ -51,10 +51,15 @@ own one-click "allow" run it would bypass Aegis's snapshot and void the
 reversibility guarantee. Catastrophic commands must go through a guarded path
 (the shim/CLI/TUI) that snapshots first.
 
-To make that path discoverable, the deny reason for a held-catastrophic command
-tells the human where the approval lives — it's queued in Aegis (keyed by the
-command id), so the agent relays "approve in `aegis tui` (press `a`) or `aegis
-approve <id>`" instead of seeing a bare denial and silently working around it.
+A hook is **one-shot**: by the time you see the deny, the agent already has it
+and has moved on. Unlike the MCP and `$PATH` shim paths — where the original
+call waits in-band and *does* run the command when you approve it from
+`aegis tui` / `aegis approve <id>` — there is no waiting process behind a hook,
+so approving a hook-originated catastrophic in the queue would record the
+decision but **not execute it**. The deny reason is therefore honest about it:
+the agent won't run the command, and if you want it, run it yourself through the
+Aegis shim (which snapshots first, so `aegis undo` can roll it back). See
+[`docs/queue.md`](queue.md) for which interception paths run-on-approve.
 
 ## Fail behavior
 
