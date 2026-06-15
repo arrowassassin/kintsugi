@@ -34,6 +34,24 @@ All notable changes to Aegis are documented here. The format loosely follows
   - The fast path that skips the AST parse is now an **allowlist** of provably
     inert lines (plain word/flag/path characters), not a denylist of "interesting"
     characters — closing the class of "one missing operator → Safe miss" bugs.
+- **Fewer false positives, broader real coverage** (same roundtable):
+  - **Dangerous-looking *text* no longer hard-blocks.** The whole-line SQL /
+    curl-pipe / fork-bomb scans are suppressed when every program the line runs is
+    an inert text handler (grep/rg/echo/printf/cat/git/diff/…), so
+    `grep -rn 'DROP TABLE' src/`, `git commit -m '… TRUNCATE TABLE …'`, and
+    `echo 'curl … | sh'` are no longer Catastrophic — while `psql -c 'DROP TABLE'`
+    and `curl … | sh` still are (suppression is one-sided: any unknown/executing
+    program keeps the verdict).
+  - **Block-device writes are detected structurally** — a redirect *target* that
+    is a block device (`echo x > /dev/sda`) or `dd of=…` — fixing the
+    `cat of=/dev/sda.txt` / commit-message false positives.
+  - **Broader secret handling:** a command aimed at a secret path is never
+    auto-Safe; more content readers (`sort`/`diff`/`wc`/`tar`/`base64`/…) are
+    `secret:read`; a truncating redirect onto a secret is `secret:clobber`; and
+    `git config` that *sets* an execution primitive (`core.pager`,
+    `core.sshCommand`, `alias.*`, …) is `git:config-exec`.
+  - **Decoder-to-shell** joins download-to-shell: `… | base64 -d | sh` (base32 /
+    xxd / uudecode / openssl too), not just `curl|sh`.
 
 ### Interception
 - **Native hooks for every major agent CLI**, not just Claude Code. `aegis init`
