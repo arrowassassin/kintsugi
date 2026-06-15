@@ -7,11 +7,17 @@
 # SHA256SUMS) and installs them to a bin dir. If no prebuilt build matches (or
 # you pass --from-source), it builds from source with `cargo install --git`.
 #
+# After installing, it runs a short interactive setup (a "stepper") that offers
+# to wire your agents and, optionally, set up a local model. Everything optional
+# can be skipped; the default install needs no model and no toolchain.
+#
 # Options (after `| sh -s --`):
 #   --from-source       build with cargo instead of downloading
 #   --bin-dir <DIR>     install location (default: $HOME/.local/bin)
 #   --version <TAG>     install a specific release tag (default: latest)
-#   --with-model        after install, run the model picker (optional GGUF)
+#   --with-model        non-interactively set up a local model (toolchain + GGUF)
+#   --init / --no-init  wire agents + start the daemon (default: ask)
+#   --yes               assume "yes" to prompts (non-interactive)
 set -eu
 
 REPO="arrowassassin/aegis"
@@ -20,7 +26,14 @@ BIN_DIR="${AEGIS_BIN_DIR:-$HOME/.local/bin}"
 VERSION=""
 FROM_SOURCE=0
 WITH_MODEL=0
+DO_INIT="ask"          # ask | yes | no
+ASSUME_YES=0
 PICKER_URL="https://github.com/arrowassassin/aegis/releases/latest/download/pick-model.sh"
+# Use sudo for system package installs when not already root.
+SUDO=""
+if [ "$(id -u 2>/dev/null || echo 1)" != "0" ] && command -v sudo >/dev/null 2>&1; then
+  SUDO="sudo"
+fi
 
 say()  { printf '\033[1;32maegis\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33maegis\033[0m %s\n' "$*" >&2; }
@@ -31,9 +44,12 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --from-source) FROM_SOURCE=1 ;;
     --with-model) WITH_MODEL=1 ;;
+    --init) DO_INIT="yes" ;;
+    --no-init) DO_INIT="no" ;;
+    --yes|-y) ASSUME_YES=1 ;;
     --bin-dir) BIN_DIR="${2:?--bin-dir needs a path}"; shift ;;
     --version) VERSION="${2:?--version needs a tag}"; shift ;;
-    -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
     *) die "unknown option: $1" ;;
   esac
   shift
@@ -69,34 +85,141 @@ install_from_source() {
   have cargo || die "no prebuilt build for your platform and cargo is not installed.\n  Install Rust (https://rustup.rs) then re-run, or: cargo install --git https://github.com/$REPO aegis-cli aegis-daemon aegis-intercept"
   say "building from source with cargo (this can take a few minutes)…"
   cargo install --git "https://github.com/$REPO" aegis-cli aegis-daemon aegis-intercept ${VERSION:+--tag "$VERSION"}
-  say "installed to $(dirname "$(command -v aegis || echo "$HOME/.cargo/bin/aegis")")"
-  post_install_notes "$HOME/.cargo/bin"
+  say "installed to $HOME/.cargo/bin"
+  stepper "$HOME/.cargo/bin"
 }
 
-post_install_notes() {
+# Yes/no prompt. Reads /dev/tty so it works under `curl | sh` (piped stdin).
+# Non-interactive (no tty): falls back to the default, or "yes" with --yes.
+ask() {
+  prompt="$1"; default="${2:-N}"
+  [ "$ASSUME_YES" -eq 1 ] && return 0
+  if [ -r /dev/tty ]; then
+    case "$default" in [Yy]*) hint="[Y/n]" ;; *) hint="[y/N]" ;; esac
+    printf '%s %s ' "$prompt" "$hint" > /dev/tty
+    read -r ans < /dev/tty || ans=""
+    [ -z "$ans" ] && ans="$default"
+    case "$ans" in [Yy]*) return 0 ;; *) return 1 ;; esac
+  fi
+  case "$default" in [Yy]*) return 0 ;; *) return 1 ;; esac
+}
+
+# Install OS packages via whatever package manager is present.
+pkg_install() {
+  if have brew;     then brew install "$@"
+  elif have apt-get;then $SUDO apt-get update -y && $SUDO apt-get install -y "$@"
+  elif have dnf;    then $SUDO dnf install -y "$@"
+  elif have pacman; then $SUDO pacman -Sy --noconfirm "$@"
+  elif have zypper; then $SUDO zypper install -y "$@"
+  elif have apk;    then $SUDO apk add "$@"
+  else return 1; fi
+}
+
+# Ensure a C/C++ toolchain + cmake (and libomp on macOS) for building llama.cpp.
+ensure_build_tools() {
+  # Already have cmake and a C compiler? Nothing to do.
+  if have cmake && { have cc || have gcc || have clang; }; then return 0; fi
+  if have brew; then
+    xcode-select -p >/dev/null 2>&1 || { say "installing Xcode command-line tools…"; xcode-select --install || true; }
+    have cmake || brew install cmake
+    brew list libomp >/dev/null 2>&1 || brew install libomp || true
+  elif have apt-get; then $SUDO apt-get update -y && $SUDO apt-get install -y cmake build-essential
+  elif have dnf;    then $SUDO dnf install -y cmake gcc-c++ make
+  elif have pacman; then $SUDO pacman -Sy --noconfirm cmake base-devel
+  elif have zypper; then $SUDO zypper install -y cmake gcc-c++ make
+  elif have apk;    then $SUDO apk add cmake build-base
+  else
+    warn "no known package manager — install cmake + a C/C++ compiler yourself, then re-run with --with-model."
+    return 1
+  fi
+}
+
+# Ensure cargo is available (offer rustup if not).
+ensure_cargo() {
+  have cargo && return 0
+  warn "Rust (cargo) is needed to build the model engine."
+  if ask "Install Rust now via rustup?" "Y"; then
+    if have curl; then curl -fsSL https://sh.rustup.rs | sh -s -- -y
+    elif have wget; then wget -qO- https://sh.rustup.rs | sh -s -- -y; fi
+    # shellcheck disable=SC1090
+    . "$HOME/.cargo/env" 2>/dev/null || export PATH="$HOME/.cargo/bin:$PATH"
+  fi
+  have cargo
+}
+
+# Append `export NAME="VALUE"` to the user's shell profile (once), best-effort.
+persist_env() {
+  name="$1"; val="$2"; line="export $name=\"$val\""
+  case "${SHELL:-}" in
+    */zsh)  prof="$HOME/.zshrc" ;;
+    */bash) prof="$HOME/.bashrc" ;;
+    *)      prof="$HOME/.profile" ;;
+  esac
+  if grep -qs "$name=" "$prof" 2>/dev/null; then
+    say "already in $prof: $line"
+  elif printf '\n# added by the aegis installer\n%s\n' "$line" >> "$prof" 2>/dev/null; then
+    say "added to $prof: $line"
+  else
+    warn "add this to your shell profile:  $line"
+  fi
+}
+
+# Optional step: build the llama.cpp engine and download a model from Hugging Face.
+setup_model() {
   dir="$1"
   echo
-  say "done. next steps:"
-  case ":$PATH:" in
-    *":$dir:"*) : ;;
-    *) printf '  add to your shell profile:  export PATH="%s:$PATH"\n' "$dir" ;;
-  esac
-  echo "  aegis init      # detect agents, wire interception, start the daemon"
-  echo "  aegis status    # confirm it's running"
-  echo
-  echo "  optional — explain/score with a local model (Aegis works without one):"
-  echo "    curl -fsSL $PICKER_URL | sh"
-  maybe_pick_model
+  say "setting up a local model — the in-process llama.cpp engine + a Hugging Face GGUF."
+  say "this compiles llama.cpp once (a few minutes) and needs a C/C++ toolchain."
+  ensure_build_tools || { warn "toolchain not ready; skipping the model (Aegis still works heuristically)."; return 0; }
+  ensure_cargo       || { warn "cargo unavailable; skipping the model build."; return 0; }
+
+  say "building the daemon with the llama engine…"
+  if ! cargo install --git "https://github.com/$REPO" aegis-daemon \
+        --features "aegis-model/llama" --root "$(dirname "$dir")" --force ${VERSION:+--tag "$VERSION"}; then
+    warn "model engine build failed; Aegis keeps working on the heuristic scorer."
+    return 0
+  fi
+
+  say "choosing a model from Hugging Face…"
+  pickargs=""; [ "$ASSUME_YES" -eq 1 ] && pickargs="--auto"
+  if have curl; then curl -fsSL "$PICKER_URL" | sh -s -- $pickargs
+  elif have wget; then wget -qO- "$PICKER_URL" | sh -s -- $pickargs; fi
+
+  mdir="${AEGIS_MODEL_DIR:-${AEGIS_DATA_DIR:-$HOME/.local/share/aegis}/models}"
+  model="$(ls -t "$mdir"/*.gguf 2>/dev/null | head -n1 || true)"
+  if [ -n "$model" ]; then
+    persist_env "AEGIS_MODEL_FILE" "$model"
+    say "model ready. Restart the daemon to load it:  aegis stop && aegis init"
+  else
+    warn "no model file found; run the picker again later, then set AEGIS_MODEL_FILE."
+  fi
 }
 
-# Run the model picker now if --with-model was passed.
-maybe_pick_model() {
-  [ "$WITH_MODEL" -eq 1 ] || return 0
+# The post-install stepper: PATH note, then optional wiring + optional model.
+stepper() {
+  dir="$1"
   echo
-  say "running the model picker (--with-model)…"
-  if have curl; then curl -fsSL "$PICKER_URL" | sh
-  elif have wget; then wget -qO- "$PICKER_URL" | sh
-  else warn "need curl or wget for --with-model; skipping."; fi
+  case ":$PATH:" in
+    *":$dir:"*) : ;;
+    *) say "add to your shell profile:  export PATH=\"$dir:\$PATH\"" ;;
+  esac
+
+  # Step 1 — wire agents and start the daemon.
+  if [ "$DO_INIT" = "yes" ] || { [ "$DO_INIT" = "ask" ] && ask "Wire your agents and start the daemon now? (aegis init)" "Y"; }; then
+    "$dir/aegis" init || warn "aegis init failed; run it manually later."
+  else
+    echo "  later:  aegis init      # detect agents, wire interception, start the daemon"
+  fi
+
+  # Step 2 — optional local model.
+  if [ "$WITH_MODEL" -eq 1 ] || ask "Set up a local model now? (optional; builds an engine + downloads a Qwen GGUF)" "N"; then
+    setup_model "$dir"
+  else
+    echo "  later (optional):  curl -fsSL $PICKER_URL | sh   # download a model, then set AEGIS_MODEL_FILE"
+  fi
+
+  echo
+  say "done. Aegis is guarding your machine. Try:  aegis status   ·   aegis tui"
 }
 
 main() {
@@ -149,7 +272,7 @@ main() {
     install -m 0755 "$src" "$BIN_DIR/$b" 2>/dev/null || { cp "$src" "$BIN_DIR/$b"; chmod 0755 "$BIN_DIR/$b"; }
   done
   say "installed ${BINS} to $BIN_DIR"
-  post_install_notes "$BIN_DIR"
+  stepper "$BIN_DIR"
 }
 
 main
