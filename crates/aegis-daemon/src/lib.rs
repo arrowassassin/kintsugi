@@ -479,10 +479,17 @@ pub fn repo_key(cwd: &std::path::Path) -> String {
 pub fn run() -> Result<()> {
     let daemon = Daemon::open_default()?;
     let server = Server::bind()?;
+    // Record our PID so `aegis stop` can find and stop us (any launch path).
+    let _ = std::fs::write(pid_file_path(), std::process::id().to_string());
     eprintln!(
         "aegis-daemon {} listening on {}",
         VERSION,
         Server::endpoint().display()
     );
     server.serve(|req| daemon.handle_request(req))
+}
+
+/// Path to the daemon's PID file (next to the event log).
+pub fn pid_file_path() -> PathBuf {
+    default_db_path().with_file_name("aegis.pid")
 }

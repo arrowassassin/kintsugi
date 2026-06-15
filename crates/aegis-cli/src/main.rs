@@ -37,6 +37,8 @@ enum Command {
     },
     /// Show daemon, socket, log, and interception status.
     Status,
+    /// Stop the background daemon (the inverse of `aegis init`).
+    Stop,
     /// Show the recent command timeline from the event log.
     Log {
         /// How many recent events to show.
@@ -211,6 +213,7 @@ fn main() -> Result<()> {
             }
         }
         Some(Command::Status) => cmd_status(),
+        Some(Command::Stop) => cmd_stop(),
         Some(Command::Log {
             number,
             show_redacted,
@@ -491,18 +494,52 @@ fn wire_claude_hook(home: Option<&std::path::Path>) -> Result<()> {
     Ok(())
 }
 
+fn cmd_stop() -> Result<()> {
+    let running = Client::is_daemon_running();
+    let pid_path = aegis_daemon::pid_file_path();
+    let pid = std::fs::read_to_string(&pid_path)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    match pid {
+        Some(pid) => {
+            kill_pid(&pid);
+            let _ = std::fs::remove_file(&pid_path);
+            println!("aegis: stopped the daemon (pid {pid}).");
+        }
+        None if running => {
+            println!(
+                "aegis: the daemon is running but its PID file is missing.\n  \
+                 Stop it manually (e.g. `pkill aegis-daemon`)."
+            );
+        }
+        None => println!("aegis: the daemon is not running."),
+    }
+    Ok(())
+}
+
+/// Best-effort terminate a PID across platforms.
+#[cfg(unix)]
+fn kill_pid(pid: &str) {
+    let _ = std::process::Command::new("kill").arg(pid).status();
+}
+#[cfg(not(unix))]
+fn kill_pid(pid: &str) {
+    let _ = std::process::Command::new("taskkill")
+        .args(["/PID", pid, "/F"])
+        .status();
+}
+
 fn start_daemon() -> Result<()> {
     let daemon_bin = init::sibling_bin("aegis-daemon");
-    let child = std::process::Command::new(&daemon_bin)
+    std::process::Command::new(&daemon_bin)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
         .with_context(|| format!("start daemon {}", daemon_bin.display()))?;
-    // Record the PID next to the log so `aegis` (and tests) can target *this*
-    // daemon for cleanup instead of a broad `pkill`.
-    let pid_path = default_db_path().with_file_name("aegis.pid");
-    let _ = std::fs::write(&pid_path, child.id().to_string());
+    // The daemon writes its own PID file (used by `aegis stop`) once it binds.
     // Wait (generously, for loaded CI) for it to bind before returning.
     for _ in 0..150 {
         if Client::is_daemon_running() {
