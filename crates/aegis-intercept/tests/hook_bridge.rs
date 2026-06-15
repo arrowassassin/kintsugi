@@ -140,12 +140,12 @@ fn non_shell_tool_does_not_reach_the_daemon() {
 }
 
 #[test]
-fn daemon_down_fails_open_by_default() {
+fn daemon_down_fails_open_for_non_catastrophic() {
     let _guard = serial_lock();
     std::env::set_var("AEGIS_SOCKET", "/nonexistent/aegis.sock");
     std::env::remove_var("AEGIS_FAIL_CLOSED");
-    let payload = r#"{"tool_name":"Bash","tool_input":{"command":"rm -rf /"}}"#;
-    // Fail-open: allow silently rather than block Claude Code when daemon is down.
+    let payload = r#"{"tool_name":"Bash","tool_input":{"command":"npm test"}}"#;
+    // Fail-open: a non-catastrophic command runs rather than block Claude Code.
     assert_eq!(
         handle(payload),
         HookOutcome {
@@ -153,6 +153,19 @@ fn daemon_down_fails_open_by_default() {
             exit_code: 0
         }
     );
+}
+
+#[test]
+fn daemon_down_still_blocks_catastrophic_fail_closed() {
+    let _guard = serial_lock();
+    std::env::set_var("AEGIS_SOCKET", "/nonexistent/aegis.sock");
+    std::env::remove_var("AEGIS_FAIL_CLOSED");
+    // Even fail-open by default, a catastrophic command is blocked when the
+    // daemon is down — local Tier-1 classification enforces the hard floor.
+    let payload = r#"{"tool_name":"Bash","tool_input":{"command":"rm -rf /"}}"#;
+    let outcome = handle(payload);
+    let body: serde_json::Value = serde_json::from_str(outcome.stdout.as_deref().unwrap()).unwrap();
+    assert_eq!(body["hookSpecificOutput"]["permissionDecision"], "deny");
 }
 
 #[test]

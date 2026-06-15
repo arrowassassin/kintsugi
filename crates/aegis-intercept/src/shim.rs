@@ -81,7 +81,15 @@ fn consult_daemon(proposed: &ProposedCommand) -> DaemonOutcome {
     match Client::send(proposed) {
         Ok(verdict) => enforce(proposed, &verdict),
         Err(e) => {
-            if fail_closed() {
+            // Daemon down: locally run the Tier-1 classifier so the catastrophic
+            // hard floor still blocks (fail-closed for catastrophic) even though we
+            // can't record the event. Non-catastrophic honors the fail-open default.
+            if aegis_core::classify(proposed).class == aegis_core::Class::Catastrophic {
+                eprintln!(
+                    "aegis: daemon unreachable; blocking catastrophic command (fail-closed): {e}"
+                );
+                DaemonOutcome::Refuse(EXIT_BLOCKED)
+            } else if fail_closed() {
                 eprintln!("aegis: daemon unreachable; blocking (fail-closed): {e}");
                 DaemonOutcome::Refuse(EXIT_BLOCKED)
             } else {

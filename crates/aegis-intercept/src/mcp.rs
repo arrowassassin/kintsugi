@@ -156,6 +156,17 @@ fn exec_through_aegis(agent: &str, cwd: PathBuf, session: &str, command: &str) -
         Ok(verdict) if verdict.decision == Decision::Hold => wait_for_approval(&id),
         Ok(verdict) => verdict.decision,
         Err(e) => {
+            // Daemon down: locally classify so a catastrophic command is still
+            // refused (fail-closed for the hard floor), even though it can't be
+            // recorded. Non-catastrophic honors the fail-open default.
+            if aegis_core::classify(&proposed).class == aegis_core::Class::Catastrophic {
+                return ToolOutcome {
+                    text: format!(
+                        "Aegis daemon unreachable; catastrophic command refused (fail-closed): {e}"
+                    ),
+                    is_error: true,
+                };
+            }
             if fail_closed() {
                 return ToolOutcome {
                     text: format!("Aegis daemon unreachable; refusing to run (fail-closed): {e}"),

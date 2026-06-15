@@ -94,7 +94,15 @@ pub fn handle(input: &str) -> HookOutcome {
     match Client::send(&proposed) {
         Ok(verdict) => map_verdict(&verdict),
         Err(e) => {
-            if fail_closed() {
+            // Daemon down: locally classify so a catastrophic command is still
+            // denied (fail-closed for the hard floor); non-catastrophic honors
+            // the fail-open default.
+            if aegis_core::classify(&proposed).class == Class::Catastrophic {
+                eprintln!(
+                    "aegis-hook: daemon unreachable; denying catastrophic (fail-closed): {e}"
+                );
+                deny_output("Aegis daemon unreachable; catastrophic command blocked (fail-closed)")
+            } else if fail_closed() {
                 eprintln!("aegis-hook: daemon unreachable; denying (fail-closed): {e}");
                 deny_output("Aegis daemon unreachable (fail-closed)")
             } else {
