@@ -92,12 +92,16 @@ SHA-256**; an unpinned spec is refused rather than loading an unverified blob.
 
 - **Safe** → never scored (fast path).
 - **Ambiguous** → `summary` + `risk` filled (`tier = 2`).
-  - *Attended:* still held; the model just explains and shows a risk meter.
-  - *Unattended (graduated):* `risk < threshold` → allow + record; `>=` → deny +
-    queue. Threshold defaults to 50; set per repo in `.aegis.toml`:
-    ```toml
-    mode = "unattended"
-    threshold = 35
-    ```
+  - *Attended:* held; the model explains and shows a risk meter.
+  - *Unattended:* **denied and queued** for review — the model records its risk
+    for the human looking at the queue but **never** flips the rules' Deny to
+    Allow. This is the monotonic-influence guarantee (spine rule #2): the model
+    may only *add* caution, never remove it.
 - **Catastrophic** → summarized for the hold card, but the decision is unchanged
   (held in attended, denied in unattended) **regardless of the score**.
+
+> **Auto-proceeding unattended** is done with explicit, human-authored rules, not
+> the model: pre-allow known-safe commands in `.aegis.toml` (`[rules] allow = […]`)
+> or with `[r]` decision memory. Those are *your* decisions; the model can't make
+> them for you. (Earlier builds had a `risk < threshold → allow` "graduated"
+> path; it was removed because it let the model downgrade a rules Deny.)

@@ -5,6 +5,24 @@ All notable changes to Aegis are documented here. The format loosely follows
 
 ## [Unreleased]
 
+### Security (multi-model review fixes)
+- **Monotonic model influence restored (spine #2):** the Tier-2 model no longer
+  downgrades a rules Deny→Allow for the unattended ambiguous band. Unattended
+  ambiguous now denies/queues; auto-proceed is only via human allowlist
+  (`.aegis.toml`/memory). The `risk < threshold → allow` graduated path is gone.
+- **Shell-wrapper evasion closed:** `bash -c "rm -rf /"`, `find -exec`, `xargs`,
+  and prefix launchers (`sudo`/`env`/`timeout`/`nohup`/`setsid`/`stdbuf`) are now
+  recursively/transparently classified, so wrapped destructive payloads are
+  Catastrophic instead of Ambiguous. `bash/sh/zsh/find/xargs` added to the shim.
+- **Kill-switch bypass closed:** `resolve()` (shim hold card / raw `Resolve` IPC)
+  now refuses Allow while the kill-switch is engaged, matching `resolve_pending()`.
+- **Fail-closed for catastrophic:** when the daemon is unreachable, the shim/hook/
+  MCP locally classify and block catastrophic commands even without
+  `AEGIS_FAIL_CLOSED` (non-catastrophic still fails open).
+- **Private IPC + data-at-rest:** the socket is `0600` in a `0700` dir (off the
+  world-writable temp dir); the data dir is `0700` and `events.db` (+WAL/SHM)
+  `0600`, protecting verbatim-logged commands that may contain secrets.
+
 ### Log: sessions, search/filter, redaction & purge
 - **Per-CLI / per-session grouping**: events now carry an originating session id
   (Claude Code hook `session_id`; one session per MCP server process, overridable

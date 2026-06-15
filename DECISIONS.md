@@ -184,3 +184,18 @@ the locked product decisions this build implements.
   requires a filter and --yes). TUI: free-text `/` filter now also matches
   session; risk gauge bounded to an auto-width single-row meter; detail shows
   session + a redacted headline; redacted rows drop from the live timeline.
+- Multi-model security review (Grok Composer + 2 Auto reviewers) — fixes:
+  (1) Monotonic model influence restored: removed the unattended graduated
+  auto-allow so the Tier-2 model can never downgrade a rules Deny->Allow for the
+  ambiguous band (spine rule #2); unattended ambiguous denies/queues, and only a
+  human allowlist (.aegis.toml/memory) auto-proceeds. (2) Shell-wrapper evasion:
+  rules now recursively classify -c payloads (bash/sh/zsh/dash/ash/ksh), find
+  -exec/-execdir, and xargs, and effective_argv peels transparent prefixes
+  (sudo/env/nohup/setsid/stdbuf/timeout); bash/sh/zsh/find/xargs added to
+  SHIM_COMMANDS. (3) Kill-switch: resolve() now guards Allow like
+  resolve_pending(). (4) Fail-closed for catastrophic when the daemon is down
+  (shim/hook/mcp classify locally). (5) IPC/data hardening: socket 0600 in a 0700
+  dir (off world-writable temp), data dir 0700, events.db+WAL/SHM 0600. We did
+  NOT scrub secrets from the verbatim command (spine #3 mandates verbatim) —
+  protected at rest instead. AEGIS_SOCKET kept as a documented trusted override
+  (single-user threat model). Notify mode left as documented design debt.
