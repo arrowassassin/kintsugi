@@ -68,17 +68,24 @@ def main():
 
     y = TOP + 4
     for line in lines:
-        # Place EVERY glyph at an explicit x = PADX + col*CHARW. This pins a true
-        # monospace grid: box-drawing glyphs (│ ─ ╭) can't drift the columns even
-        # if the render font advances them differently from letters.
+        # Pin every glyph to an explicit x = PADX + col*CHARW so box-drawing
+        # chars (│ ─ ╭) can't drift the columns, regardless of how the fallback
+        # monospace font advances them. Critically, emit the whole <text> on a
+        # single line — with xml:space="preserve", newlines between </tspan> and
+        # the next <tspan> become real characters that consume positions from
+        # the x list, shifting every later tspan right (this is exactly what
+        # Chrome was doing while Firefox/Safari collapsed it).
         xs = grid_x(len(line))
-        p.append(f'<text x="{xs}" y="{y}" font-size="{FS}" xml:space="preserve">')
-        for txt, col in colorize(line, rules):
-            if not txt:
-                continue
-            esc = html.escape(txt).replace(" ", "&#160;")
-            p.append(f'<tspan fill="{col}">{esc}</tspan>')
-        p.append("</text>")
+        tspans = "".join(
+            f'<tspan fill="{col}">{html.escape(txt).replace(" ", "&#160;")}</tspan>'
+            for txt, col in colorize(line, rules)
+            if txt
+        )
+        # Note: no xml:space="preserve". Visible spaces are already &#160; (nbsp),
+        # so we don't need preserve mode — and dropping it means newlines around
+        # tspans inside this <text> are default-collapsed and can't consume x
+        # slots from the grid list.
+        p.append(f'<text x="{xs}" y="{y}" font-size="{FS}">{tspans}</text>')
         y += LINEH
     p.append("</svg>")
     open(out, "w", encoding="utf-8").write("\n".join(p))

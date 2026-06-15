@@ -42,11 +42,23 @@ def is_frame(svg: str) -> bool:
 
 
 def inject_grid(svg: str) -> str:
-    """Give every body line an explicit per-glyph x list so columns can't drift."""
+    """Pin every body line to an explicit per-glyph x list, drop xml:space=
+    "preserve" (visible spaces are already &#160;), and strip whitespace
+    around/between tspans inside each <text>. Under preserve mode, Chrome
+    treats every newline between <text>/<tspan>/</tspan>/</text> as a real
+    character that eats a slot from the x list, which shifted every later
+    colored span right — that's the drift we kept seeing in the browser even
+    after pinning the grid."""
+
+    inter_tspan = re.compile(r"</tspan>\s+<tspan")
 
     def repl(m: "re.Match[str]") -> str:
-        tag = re.sub(r'\s+(?:textLength|lengthAdjust)="[^"]*"', "", m.group(1))
-        inner = m.group(2)
+        tag = re.sub(r'\s+(?:textLength|lengthAdjust|xml:space)="[^"]*"', "", m.group(1))
+        # Strip the leading/trailing whitespace between <text> and its first
+        # tspan and between the last tspan and </text>, plus any whitespace
+        # between adjacent tspans. Each of these is a real character under
+        # xml:space="preserve" that consumes a slot from the x grid.
+        inner = inter_tspan.sub("</tspan><tspan", m.group(2)).strip()
         tag = re.sub(r'\bx="[^"]*"', f'x="{grid_x(glyphs(inner))}"', tag, count=1)
         return f"{tag}>{inner}</text>"
 
