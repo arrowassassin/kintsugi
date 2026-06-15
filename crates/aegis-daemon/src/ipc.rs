@@ -32,6 +32,16 @@ pub enum Request {
     /// it." The backstop sends these so the daemon's single writer keeps the hash
     /// chain intact.
     Observe(Observation),
+    /// "List the commands currently held for approval."
+    ListPending,
+    /// "What is the status of this queued command?" (`pending`/`approved`/`denied`).
+    // Struct variants (not newtype-of-String): serde's internally-tagged enums
+    // cannot represent a tagged newtype wrapping a primitive.
+    PendingStatus { id: String },
+    /// "A human approved this queued command id."
+    Approve { id: String },
+    /// "A human denied this queued command id."
+    Deny { id: String },
 }
 
 /// A filesystem change observed by the backstop watcher.
@@ -62,8 +72,14 @@ pub struct Resolution {
 pub enum Response {
     /// Verdict for a `Propose`.
     Verdict(Verdict),
-    /// Acknowledgement of a `Resolve`.
+    /// Acknowledgement of a `Resolve`/`Approve`/`Deny`/`Observe`.
     Ack,
+    /// The approval queue (reply to `ListPending`). A struct variant because
+    /// serde's internally-tagged enums cannot wrap a bare sequence.
+    PendingList { items: Vec<aegis_core::PendingItem> },
+    /// The status of a queued command (reply to `PendingStatus`): `pending` |
+    /// `approved` | `denied` | `gone` (not in the queue).
+    Pending { status: String },
     /// Something went wrong handling the request.
     Error { message: String },
 }
@@ -128,6 +144,15 @@ fn read_message<R: BufRead, T: serde::de::DeserializeOwned>(r: &mut R) -> Result
     serde_json::from_str(line.trim_end()).context("deserialize IPC message")
 }
 
+/// Expect an `Ack`, mapping anything else to an error.
+fn expect_ack(resp: Response) -> Result<()> {
+    match resp {
+        Response::Ack => Ok(()),
+        Response::Error { message } => anyhow::bail!("daemon error: {message}"),
+        _ => anyhow::bail!("unexpected response (wanted Ack)"),
+    }
+}
+
 /// Send a request and read the response on a fresh connection.
 fn round_trip(req: &Request) -> Result<Response> {
     let name = make_name()?;
@@ -146,26 +171,46 @@ impl Client {
         match round_trip(&Request::Propose(cmd.clone()))? {
             Response::Verdict(v) => Ok(v),
             Response::Error { message } => anyhow::bail!("daemon error: {message}"),
-            Response::Ack => anyhow::bail!("unexpected Ack in response to Propose"),
+            _ => anyhow::bail!("unexpected response to Propose"),
         }
     }
 
     /// Record a human's resolution of a held command.
     pub fn resolve(resolution: &Resolution) -> Result<()> {
-        match round_trip(&Request::Resolve(resolution.clone()))? {
-            Response::Ack => Ok(()),
-            Response::Error { message } => anyhow::bail!("daemon error: {message}"),
-            Response::Verdict(_) => anyhow::bail!("unexpected Verdict in response to Resolve"),
-        }
+        expect_ack(round_trip(&Request::Resolve(resolution.clone()))?)
     }
 
     /// Record an observed filesystem change (backstop).
     pub fn observe(observation: &Observation) -> Result<()> {
-        match round_trip(&Request::Observe(observation.clone()))? {
-            Response::Ack => Ok(()),
+        expect_ack(round_trip(&Request::Observe(observation.clone()))?)
+    }
+
+    /// List the commands currently held for approval.
+    pub fn list_pending() -> Result<Vec<aegis_core::PendingItem>> {
+        match round_trip(&Request::ListPending)? {
+            Response::PendingList { items } => Ok(items),
             Response::Error { message } => anyhow::bail!("daemon error: {message}"),
-            Response::Verdict(_) => anyhow::bail!("unexpected Verdict in response to Observe"),
+            _ => anyhow::bail!("unexpected response to ListPending"),
         }
+    }
+
+    /// The status of a queued command: `pending` | `approved` | `denied` | `gone`.
+    pub fn pending_status(id: &str) -> Result<String> {
+        match round_trip(&Request::PendingStatus { id: id.to_string() })? {
+            Response::Pending { status } => Ok(status),
+            Response::Error { message } => anyhow::bail!("daemon error: {message}"),
+            _ => anyhow::bail!("unexpected response to PendingStatus"),
+        }
+    }
+
+    /// Approve a queued command (records the human decision; may snapshot).
+    pub fn approve(id: &str) -> Result<()> {
+        expect_ack(round_trip(&Request::Approve { id: id.to_string() })?)
+    }
+
+    /// Deny a queued command.
+    pub fn deny(id: &str) -> Result<()> {
+        expect_ack(round_trip(&Request::Deny { id: id.to_string() })?)
     }
 
     /// Whether a daemon appears to be listening.

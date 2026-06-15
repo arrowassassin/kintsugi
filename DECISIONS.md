@@ -103,3 +103,11 @@ the locked product decisions this build implements.
   panic/resume are logged. Release workflow publishes SHA256SUMS; code signing is
   left as a documented human step (needs secrets) per the autonomy guardrails.
   init --print-path enables shell-rc wiring via eval.
+- Queue: held commands are enqueued by the daemon and resolved via CLI
+  (queue/approve/deny), TUI (a/d), or the agents bounded in-band wait
+  (AEGIS_APPROVAL_TIMEOUT). The originating caller executes on approval (shim/MCP),
+  so the daemon never runs commands itself; approve still logs human:allow and
+  snapshots first. Two serde traps fixed: internally-tagged enums cannot wrap a
+  bare String or Vec, so PendingStatus/Approve/Deny and PendingList became struct
+  variants (caught by an over-the-socket integration test). A human may approve
+  any class (override); the model never approves catastrophic; panic overrides all.

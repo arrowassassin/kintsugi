@@ -195,7 +195,8 @@ impl Daemon {
         verdict
     }
 
-    /// Handle one proposal: decide, snapshot if destructive+allowed, record, return.
+    /// Handle one proposal: decide, snapshot if destructive+allowed, record, and —
+    /// if held — enqueue it for approval. Returns the verdict.
     pub fn handle(&self, cmd: ProposedCommand) -> Verdict {
         let verdict = self.decide(&cmd);
         let snapshot_id = self.maybe_snapshot(&cmd, &verdict);
@@ -203,7 +204,40 @@ impl Daemon {
             // Recording is best-effort at the IPC boundary; never crash the daemon.
             eprintln!("aegis-daemon: failed to record event: {e}");
         }
+        if verdict.decision == Decision::Hold {
+            if let Err(e) = self
+                .log
+                .enqueue_pending(&cmd, verdict.class, &verdict.reason)
+            {
+                eprintln!("aegis-daemon: failed to enqueue pending: {e}");
+            }
+        }
         verdict
+    }
+
+    /// Approve or deny a queued command by id: record the human decision (and, on
+    /// allow, snapshot), then mark the queue entry resolved. The originating
+    /// caller (MCP poll / shim) executes; this never runs the command itself.
+    ///
+    /// A human may approve any class here — including catastrophic — which is the
+    /// deliberate human override (the *model* never can). Returns whether the id
+    /// was found in the queue.
+    pub fn resolve_pending(&self, id: &str, decision: Decision) -> Result<bool> {
+        let Some(cmd) = self.log.pending_command(id)? else {
+            return Ok(false);
+        };
+        self.resolve(&ipc::Resolution {
+            command: cmd,
+            decision,
+            remember: false,
+        })?;
+        let status = if decision == Decision::Allow {
+            "approved"
+        } else {
+            "denied"
+        };
+        self.log.set_pending_status(id, status)?;
+        Ok(true)
     }
 
     /// Snapshot the paths a command will touch, when it is allowed and not Safe.
@@ -251,6 +285,17 @@ impl Daemon {
             let hash = aegis_core::command_hash(&cmd.raw);
             self.log.remember(&repo, &hash, resolution.decision)?;
         }
+
+        // If this command was queued (e.g. a shim hold the human just answered),
+        // mark the queue entry resolved so it leaves `aegis queue`.
+        if resolution.decision != Decision::Hold {
+            let status = if resolution.decision == Decision::Allow {
+                "approved"
+            } else {
+                "denied"
+            };
+            let _ = self.log.set_pending_status(&cmd.id.to_string(), status);
+        }
         Ok(())
     }
 
@@ -294,6 +339,34 @@ impl Daemon {
                 Err(e) => ipc::Response::Error {
                     message: e.to_string(),
                 },
+            },
+            ipc::Request::ListPending => match self.log.list_pending() {
+                Ok(items) => ipc::Response::PendingList { items },
+                Err(e) => ipc::Response::Error {
+                    message: e.to_string(),
+                },
+            },
+            ipc::Request::PendingStatus { id } => match self.log.pending_status(&id) {
+                Ok(status) => ipc::Response::Pending {
+                    status: status.unwrap_or_else(|| "gone".to_string()),
+                },
+                Err(e) => ipc::Response::Error {
+                    message: e.to_string(),
+                },
+            },
+            ipc::Request::Approve { id } => self.resolve_pending_response(&id, Decision::Allow),
+            ipc::Request::Deny { id } => self.resolve_pending_response(&id, Decision::Deny),
+        }
+    }
+
+    fn resolve_pending_response(&self, id: &str, decision: Decision) -> ipc::Response {
+        match self.resolve_pending(id, decision) {
+            Ok(true) => ipc::Response::Ack,
+            Ok(false) => ipc::Response::Error {
+                message: format!("no pending command with id {id}"),
+            },
+            Err(e) => ipc::Response::Error {
+                message: e.to_string(),
             },
         }
     }

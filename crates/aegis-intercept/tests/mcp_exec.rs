@@ -164,6 +164,66 @@ fn aegis_exec_blocks_catastrophic_without_running() {
 }
 
 #[test]
+fn held_command_runs_after_human_approves_in_band() {
+    // The whole point of the queue: agent calls → held → a human approves from
+    // elsewhere → the same MCP call proceeds and runs the command.
+    let _guard = serial_lock();
+    let tmp = tempfile::tempdir().unwrap();
+    std::env::set_var("AEGIS_SOCKET", tmp.path().join("aegis.sock"));
+    std::env::set_var("AEGIS_DB", tmp.path().join("events.db"));
+    std::env::set_var("AEGIS_CONFIG", tmp.path().join("none.toml"));
+    std::env::set_var("AEGIS_APPROVAL_TIMEOUT", "10"); // enable in-band wait
+
+    let work = tmp.path().join("work");
+    std::fs::create_dir_all(&work).unwrap();
+    let victim = work.join("tmpfile");
+    std::fs::write(&victim, b"bye").unwrap();
+    let work_s = work.to_string_lossy().to_string();
+
+    // Daemon serving in the background (infinite; the process ends with the test).
+    let server = Server::bind().unwrap();
+    let db = tmp.path().join("events.db");
+    thread::spawn(move || {
+        let daemon = Daemon::open(&db).unwrap();
+        server.serve(|req| daemon.handle_request(req)).unwrap();
+    });
+
+    // Approver: once something is pending, approve it (retry until it sticks —
+    // the daemon is single-threaded so a concurrent connect may transiently fail).
+    thread::spawn(|| loop {
+        if let Ok(items) = aegis_daemon::Client::list_pending() {
+            if let Some(it) = items.first() {
+                if aegis_daemon::Client::approve(&it.command.id.to_string()).is_ok() {
+                    break;
+                }
+            }
+        }
+        thread::sleep(std::time::Duration::from_millis(50));
+    });
+
+    // `rm tmpfile` is ambiguous → held → waits → approved → runs.
+    let req = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 21,
+        "method": "tools/call",
+        "params": { "name": "aegis-exec", "arguments": { "command": "rm tmpfile", "cwd": work_s } }
+    })
+    .to_string();
+
+    let resp: Value = serde_json::from_str(&handle_message(&req).unwrap()).unwrap();
+    assert_eq!(
+        resp["result"]["isError"], false,
+        "approved command should run"
+    );
+    assert!(
+        !victim.exists(),
+        "the file should be deleted after approval"
+    );
+
+    std::env::remove_var("AEGIS_APPROVAL_TIMEOUT");
+}
+
+#[test]
 fn unknown_tool_name_is_an_error() {
     let req =
         r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"nope","arguments":{}}}"#;

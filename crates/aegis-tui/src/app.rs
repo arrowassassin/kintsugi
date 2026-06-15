@@ -21,11 +21,15 @@ pub enum Mode {
 }
 
 /// A side-effecting action the event loop must perform (kept out of pure state).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     None,
     Quit,
     Undo,
+    /// Approve the held command with this id.
+    Approve(String),
+    /// Deny the held command with this id.
+    Deny(String),
 }
 
 /// The whole UI state.
@@ -143,9 +147,26 @@ impl App {
                 self.mode = Mode::Filter;
             }
             KeyCode::Char('u') => return Action::Undo,
+            KeyCode::Char('a') => return self.resolve_selected(true),
+            KeyCode::Char('d') => return self.resolve_selected(false),
             _ => {}
         }
         Action::None
+    }
+
+    /// Approve/deny the selected row, but only if it is actually a held command.
+    fn resolve_selected(&self, approve: bool) -> Action {
+        match self.selected_event() {
+            Some(ev) if ev.decision == aegis_core::Decision::Hold => {
+                let id = ev.id.to_string();
+                if approve {
+                    Action::Approve(id)
+                } else {
+                    Action::Deny(id)
+                }
+            }
+            _ => Action::None,
+        }
     }
 
     fn on_key_filter(&mut self, key: KeyCode) -> Action {
@@ -234,6 +255,23 @@ mod tests {
         assert_eq!(app.on_key(KeyCode::Char('u')), Action::Undo);
         assert_eq!(app.on_key(KeyCode::Char('q')), Action::Quit);
         assert_eq!(app.on_key(KeyCode::Esc), Action::Quit);
+    }
+
+    #[test]
+    fn approve_deny_only_on_held_rows() {
+        let mut app = sample_app();
+        // Row 0 is the allowed `ls` → a/d do nothing.
+        app.selected = 0;
+        assert_eq!(app.on_key(KeyCode::Char('a')), Action::None);
+        assert_eq!(app.on_key(KeyCode::Char('d')), Action::None);
+        // Row 1 is the held `rm -rf /` → a/d resolve it.
+        app.selected = 1;
+        let held_id = app.selected_event().unwrap().id.to_string();
+        assert_eq!(
+            app.on_key(KeyCode::Char('a')),
+            Action::Approve(held_id.clone())
+        );
+        assert_eq!(app.on_key(KeyCode::Char('d')), Action::Deny(held_id));
     }
 
     #[test]

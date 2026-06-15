@@ -130,6 +130,21 @@ All notable changes to Aegis are documented here. The format loosely follows
     that publish `SHA256SUMS`; artifact signing is left as a documented human
     checkpoint (never touches secrets autonomously).
 
+- **Approval queue** — held commands are now resolvable so an agent can proceed.
+  The daemon enqueues every Hold; `aegis queue` lists them; `aegis approve <id>` /
+  `aegis deny <id>` (and the TUI's `a`/`d` on a held row) resolve them, recording
+  the human decision (and snapshotting on approve). The `aegis-exec` MCP tool can
+  **wait in-band** for approval (`AEGIS_APPROVAL_TIMEOUT=<secs>`) and then run the
+  command and return its output, so a queued command "goes through" once a human
+  approves. A human may approve any class (deliberate override); the model never
+  approves catastrophic; the kill-switch overrides the whole queue. Documented in
+  `docs/queue.md`.
+
+### Fixed
+- IPC enum variants that wrapped a `String`/`Vec` failed over the wire (serde
+  internally-tagged enums can't represent tagged newtypes around primitives or
+  sequences). Converted them to struct variants; added over-the-socket tests.
+
 ### Changed
 - Pinned all dependencies to latest stable. `rusqlite` held at 0.39 because 0.40
   pulls `libsqlite3-sys` 0.38 which needs the unstable `cfg_select!` feature.

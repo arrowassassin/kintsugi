@@ -53,6 +53,7 @@ cargo build
 ./target/debug/aegis tui       # live, interactive timeline (j/k, /, enter, u, q)
 ./target/debug/aegis undo      # restore the last destructive action
 ./target/debug/aegis watch .   # FS-watcher backstop for un-intercepted changes
+./target/debug/aegis queue     # commands held for approval (approve <id> / deny <id>)
 ./target/debug/aegis panic     # kill-switch: halt all agent actions (resume to clear)
 ```
 

@@ -139,7 +139,11 @@ fn exec_through_aegis(agent: &str, cwd: PathBuf, command: &str) -> ToolOutcome {
     let argv = shell::split(command);
     let proposed = ProposedCommand::new(agent, cwd.clone(), argv, command.to_string());
 
+    let id = proposed.id.to_string();
     let decision = match Client::send(&proposed) {
+        // A held command waits (bounded) for a human to approve/deny so the agent
+        // can proceed in the same call. See `approval_timeout`.
+        Ok(verdict) if verdict.decision == Decision::Hold => wait_for_approval(&id),
         Ok(verdict) => verdict.decision,
         Err(e) => {
             if fail_closed() {
@@ -154,19 +158,52 @@ fn exec_through_aegis(agent: &str, cwd: PathBuf, command: &str) -> ToolOutcome {
         }
     };
 
+    let short = &id[..id.len().min(8)];
     match decision {
         Decision::Allow => run_command(&cwd, command),
         Decision::Deny => ToolOutcome {
-            text: format!("Aegis blocked this command (catastrophic): {command}"),
+            text: format!("Aegis blocked this command: {command}"),
             is_error: true,
         },
         Decision::Hold => ToolOutcome {
             text: format!(
-                "Aegis is holding this command for human approval and will not run it \
-                 unattended: {command}"
+                "Aegis is holding this command for human approval (id {short}). It was not run. \
+                 A human can approve it with `aegis approve {short}` (then re-run), or you can \
+                 proceed with a different approach."
             ),
             is_error: true,
         },
+    }
+}
+
+/// How long the MCP tool waits for a human to resolve a held command, in seconds.
+/// `0` (default) means do not wait — return "pending" immediately. Set
+/// `AEGIS_APPROVAL_TIMEOUT` to enable in-band wait-for-approval.
+fn approval_timeout() -> std::time::Duration {
+    let secs = std::env::var("AEGIS_APPROVAL_TIMEOUT")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(0);
+    std::time::Duration::from_secs(secs)
+}
+
+/// Poll the daemon until a held command is approved/denied, the deadline passes,
+/// or it leaves the queue. Returns the resulting decision (`Hold` = still pending).
+fn wait_for_approval(id: &str) -> Decision {
+    let deadline = std::time::Instant::now() + approval_timeout();
+    loop {
+        // Only an explicit approve/deny is decisive; "pending", "gone", and
+        // transient connection errors (the daemon is single-threaded) all retry
+        // until the deadline.
+        match Client::pending_status(id) {
+            Ok(s) if s == "approved" => return Decision::Allow,
+            Ok(s) if s == "denied" => return Decision::Deny,
+            _ => {}
+        }
+        if std::time::Instant::now() >= deadline {
+            return Decision::Hold;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
     }
 }
 

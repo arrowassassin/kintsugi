@@ -54,6 +54,8 @@ fn event_loop(
                 Event::Key(key) if key.kind == KeyEventKind::Press => match app.on_key(key.code) {
                     Action::Quit => break,
                     Action::Undo => undo(app, db_path, snapshot_dir),
+                    Action::Approve(id) => resolve(app, &id, true),
+                    Action::Deny(id) => resolve(app, &id, false),
                     Action::None => {}
                 },
                 Event::Resize(_, _) => { /* redrawn next iteration */ }
@@ -64,6 +66,20 @@ fn event_loop(
         }
     }
     Ok(())
+}
+
+/// Approve or deny a held command via the daemon, surfacing the result.
+fn resolve(app: &mut App, id: &str, approve: bool) {
+    let res = if approve {
+        aegis_daemon::Client::approve(id)
+    } else {
+        aegis_daemon::Client::deny(id)
+    };
+    app.status = Some(match res {
+        Ok(()) if approve => "approved — the requesting agent may proceed".to_string(),
+        Ok(()) => "denied".to_string(),
+        Err(e) => format!("could not resolve (is the daemon running?): {e}"),
+    });
 }
 
 /// Load the most recent events into the app (live refresh).

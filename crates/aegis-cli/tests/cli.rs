@@ -84,6 +84,32 @@ fn undo_restores_a_snapshotted_file() {
 }
 
 #[test]
+fn queue_without_daemon_is_graceful() {
+    let tmp = tempfile::tempdir().unwrap();
+    let out = aegis()
+        .arg("queue")
+        .env("AEGIS_SOCKET", tmp.path().join("none.sock"))
+        .env("AEGIS_DB", tmp.path().join("e.db"))
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stdout).contains("isn't running"));
+}
+
+#[test]
+fn approve_unknown_prefix_errors() {
+    let tmp = tempfile::tempdir().unwrap();
+    // No daemon → the command should fail cleanly (non-zero), not panic.
+    let out = aegis()
+        .args(["approve", "abc"])
+        .env("AEGIS_SOCKET", tmp.path().join("none.sock"))
+        .env("AEGIS_DB", tmp.path().join("e.db"))
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+}
+
+#[test]
 fn panic_engages_and_resume_clears_kill_switch() {
     let tmp = tempfile::tempdir().unwrap();
     let db = tmp.path().join("events.db");

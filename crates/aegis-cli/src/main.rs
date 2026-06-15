@@ -57,6 +57,18 @@ enum Command {
     },
     /// Open the live timeline TUI.
     Tui,
+    /// List commands held for approval.
+    Queue,
+    /// Approve a held command by id (or unique id prefix).
+    Approve {
+        /// The queue id (or a unique prefix).
+        id: String,
+    },
+    /// Deny a held command by id (or unique id prefix).
+    Deny {
+        /// The queue id (or a unique prefix).
+        id: String,
+    },
     /// PANIC: engage the kill-switch — halt all current and queued agent actions.
     Panic,
     /// Clear the kill-switch and resume normal operation.
@@ -88,9 +100,67 @@ fn main() -> Result<()> {
         Some(Command::Undo { session }) => cmd_undo(session),
         Some(Command::Watch { paths }) => aegis_daemon::watch::run(&paths),
         Some(Command::Tui) => aegis_tui::run(&default_db_path(), &snapshot_dir()),
+        Some(Command::Queue) => cmd_queue(),
+        Some(Command::Approve { id }) => cmd_resolve_pending(&id, true),
+        Some(Command::Deny { id }) => cmd_resolve_pending(&id, false),
         Some(Command::Panic) => cmd_panic(),
         Some(Command::Resume) => cmd_resume(),
     }
+}
+
+fn cmd_queue() -> Result<()> {
+    if !Client::is_daemon_running() {
+        println!("The daemon isn't running. Start it with `aegis init`.");
+        return Ok(());
+    }
+    let items = Client::list_pending().context("list pending")?;
+    if items.is_empty() {
+        println!("The approval queue is empty.");
+        return Ok(());
+    }
+    println!("{:<10}  {:<13}  command", "id", "class");
+    for it in &items {
+        let id = it.command.id.to_string();
+        println!(
+            "{:<10}  {:<13}  {}",
+            &id[..id.len().min(8)],
+            it.class.as_str(),
+            it.command.raw
+        );
+    }
+    println!();
+    println!("Approve with `aegis approve <id>` or deny with `aegis deny <id>`.");
+    Ok(())
+}
+
+fn cmd_resolve_pending(id: &str, approve: bool) -> Result<()> {
+    if !Client::is_daemon_running() {
+        anyhow::bail!("the daemon isn't running; start it with `aegis init`");
+    }
+    // Resolve a prefix to a full id via the queue, for convenience.
+    let items = Client::list_pending().context("list pending")?;
+    let matches: Vec<String> = items
+        .iter()
+        .map(|i| i.command.id.to_string())
+        .filter(|full| full.starts_with(id))
+        .collect();
+    let full = match matches.as_slice() {
+        [one] => one.clone(),
+        [] => anyhow::bail!("no pending command matches id `{id}`"),
+        _ => anyhow::bail!("id `{id}` is ambiguous; use more characters"),
+    };
+
+    if approve {
+        Client::approve(&full).context("approve")?;
+        println!(
+            "✓ approved {} — the requesting agent may now proceed.",
+            &full[..8]
+        );
+    } else {
+        Client::deny(&full).context("deny")?;
+        println!("✗ denied {}.", &full[..8]);
+    }
+    Ok(())
 }
 
 fn cmd_panic() -> Result<()> {

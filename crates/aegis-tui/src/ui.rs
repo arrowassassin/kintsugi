@@ -218,7 +218,7 @@ fn render_detail(f: &mut Frame, app: &App, area: Rect) {
 fn render_footer(f: &mut Frame, app: &App, area: Rect) {
     let rows = Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).split(area);
 
-    let help = "j/k move · enter detail · / filter · u undo · q quit";
+    let help = "j/k move · enter detail · a/d approve/deny · u undo · / filter · q quit";
     f.render_widget(Paragraph::new(Span::styled(help, dim(app))), rows[0]);
 
     let second = match app.mode {

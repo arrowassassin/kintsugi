@@ -68,6 +68,20 @@ pub struct LoggedEvent {
     pub hash: String,
 }
 
+/// One entry in the approval queue (a held command awaiting a human decision).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PendingItem {
+    /// The held command (its `id` is the queue id).
+    pub command: ProposedCommand,
+    /// Rule-engine classification.
+    pub class: Class,
+    /// Why it was held.
+    pub reason: String,
+    /// When it was enqueued.
+    #[serde(with = "time::serde::rfc3339")]
+    pub ts: OffsetDateTime,
+}
+
 /// The result of verifying the hash chain.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChainStatus {
@@ -154,9 +168,120 @@ impl EventLog {
                 manifest   TEXT NOT NULL,
                 reverted   INTEGER NOT NULL DEFAULT 0
             );
+
+            -- The approval queue: held commands awaiting a human decision.
+            -- Mutable state; status is 'pending' | 'approved' | 'denied'.
+            CREATE TABLE IF NOT EXISTS pending (
+                id          TEXT PRIMARY KEY,
+                ts          TEXT NOT NULL,
+                command     TEXT NOT NULL,
+                class       TEXT NOT NULL,
+                reason      TEXT NOT NULL,
+                status      TEXT NOT NULL DEFAULT 'pending',
+                updated_at  TEXT NOT NULL
+            );
             "#,
         )?;
         Ok(Self { conn })
+    }
+
+    /// Add a held command to the approval queue (idempotent on its id).
+    pub fn enqueue_pending(
+        &self,
+        cmd: &ProposedCommand,
+        class: Class,
+        reason: &str,
+    ) -> Result<(), LogError> {
+        let now = OffsetDateTime::now_utc().format(&Rfc3339)?;
+        let cmd_json = serde_json::to_string(cmd)
+            .map_err(|e| LogError::Corrupt(format!("pending command serialize: {e}")))?;
+        self.conn.execute(
+            "INSERT INTO pending (id, ts, command, class, reason, status, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'pending', ?2)
+             ON CONFLICT(id) DO NOTHING",
+            rusqlite::params![cmd.id.to_string(), now, cmd_json, class.as_str(), reason],
+        )?;
+        Ok(())
+    }
+
+    /// The current status of a queued command, if it is in the queue.
+    pub fn pending_status(&self, id: &str) -> Result<Option<String>, LogError> {
+        Ok(self
+            .conn
+            .query_row("SELECT status FROM pending WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })
+            .optional()?)
+    }
+
+    /// Set a queued command's status (`approved` | `denied`).
+    pub fn set_pending_status(&self, id: &str, status: &str) -> Result<(), LogError> {
+        let now = OffsetDateTime::now_utc().format(&Rfc3339)?;
+        self.conn.execute(
+            "UPDATE pending SET status = ?2, updated_at = ?3 WHERE id = ?1",
+            rusqlite::params![id, status, now],
+        )?;
+        Ok(())
+    }
+
+    /// The stored command for a queued id (for resolve/re-run).
+    pub fn pending_command(&self, id: &str) -> Result<Option<ProposedCommand>, LogError> {
+        let json: Option<String> = self
+            .conn
+            .query_row("SELECT command FROM pending WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })
+            .optional()?;
+        match json {
+            Some(j) => Ok(Some(serde_json::from_str(&j).map_err(|e| {
+                LogError::Corrupt(format!("pending command parse: {e}"))
+            })?)),
+            None => Ok(None),
+        }
+    }
+
+    /// List the still-pending queued commands, oldest first.
+    pub fn list_pending(&self) -> Result<Vec<PendingItem>, LogError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT command, class, reason, ts FROM pending WHERE status = 'pending' ORDER BY ts ASC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for r in rows {
+            let (cmd_json, class_s, reason, ts_s) = r?;
+            let command: ProposedCommand = serde_json::from_str(&cmd_json)
+                .map_err(|e| LogError::Corrupt(format!("pending parse: {e}")))?;
+            out.push(PendingItem {
+                command,
+                class: parse_class(&class_s)?,
+                reason,
+                ts: OffsetDateTime::parse(&ts_s, &Rfc3339)?,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Resolve a queue id from a unique prefix (CLI convenience).
+    pub fn resolve_pending_prefix(&self, prefix: &str) -> Result<Option<String>, LogError> {
+        let like = format!("{prefix}%");
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id FROM pending WHERE status = 'pending' AND id LIKE ?1")?;
+        let ids: Vec<String> = stmt
+            .query_map([like], |r| r.get::<_, String>(0))?
+            .collect::<Result<_, _>>()?;
+        Ok(if ids.len() == 1 {
+            ids.into_iter().next()
+        } else {
+            None
+        })
     }
 
     /// Record a snapshot taken before a destructive command.
