@@ -95,6 +95,9 @@ pub struct Filter {
     pub include_redacted: bool,
     /// Cap the number of rows returned (newest kept).
     pub limit: Option<usize>,
+    /// Skip this many of the newest matching rows before applying `limit` —
+    /// the page offset for `aegis log --page N`.
+    pub offset: Option<usize>,
 }
 
 impl Filter {
@@ -643,11 +646,15 @@ impl EventLog {
         })
     }
 
-    /// Return events matching `filter`, oldest first (capped by `filter.limit`).
+    /// Return events matching `filter`, oldest first (capped by `filter.limit`,
+    /// skipping `filter.offset` of the newest matches first for pagination).
     pub fn query(&self, filter: &Filter) -> Result<Vec<LoggedEvent>, LogError> {
         let (where_body, params) = filter.where_clause();
         let limit = filter.limit.map(|n| n as i64).unwrap_or(-1);
-        // Newest `limit` by seq, then reversed to chronological order.
+        let offset = filter.offset.map(|n| n as i64).unwrap_or(0);
+        // Take the page window of newest-by-seq rows (skip `offset`, take
+        // `limit`), then re-sort ascending so the page reads chronologically.
+        // SQLite accepts `LIMIT -1 OFFSET n` to mean "all, skipping n".
         let sql = format!(
             r#"
             SELECT seq, id, ts, agent, cwd, command, argv, class, decision, reason, tier,
@@ -656,13 +663,14 @@ impl EventLog {
                 SELECT events.*, (r.event_id IS NOT NULL) AS redacted
                 FROM events LEFT JOIN redactions r ON r.event_id = events.id
                 WHERE {where_body}
-                ORDER BY events.seq DESC LIMIT ?
+                ORDER BY events.seq DESC LIMIT ? OFFSET ?
             ) ORDER BY seq ASC
             "#
         );
         let mut stmt = self.conn.prepare(&sql)?;
         let mut bound: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
         bound.push(&limit);
+        bound.push(&offset);
         let rows = stmt.query_map(bound.as_slice(), Self::row_to_event)?;
         let mut out = Vec::new();
         for r in rows {

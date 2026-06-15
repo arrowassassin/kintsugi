@@ -39,11 +39,14 @@ enum Command {
     Status,
     /// Stop the background daemon (the inverse of `aegis init`).
     Stop,
-    /// Show the recent command timeline from the event log.
+    /// Show the recent command timeline from the event log (newest first).
     Log {
-        /// How many recent events to show.
+        /// Page size — how many events per page.
         #[arg(short = 'n', long, default_value_t = 20)]
         number: usize,
+        /// Which page to show (1 = newest). Older events are on higher pages.
+        #[arg(short = 'p', long, default_value_t = 1)]
+        page: usize,
         /// Also show redacted entries (as ⟨redacted⟩ placeholders).
         #[arg(long)]
         show_redacted: bool,
@@ -145,6 +148,17 @@ impl FilterArgs {
         include_redacted: bool,
         limit: Option<usize>,
     ) -> Result<aegis_core::Filter> {
+        self.to_filter_paged(include_redacted, limit, None)
+    }
+
+    /// Like [`to_filter`], with a page offset (skip the newest `offset` matches
+    /// first) for `aegis log --page N`.
+    fn to_filter_paged(
+        &self,
+        include_redacted: bool,
+        limit: Option<usize>,
+        offset: Option<usize>,
+    ) -> Result<aegis_core::Filter> {
         let class = match self.class.as_deref() {
             None => None,
             Some("safe") => Some(aegis_core::Class::Safe),
@@ -161,6 +175,7 @@ impl FilterArgs {
             until: self.before.as_deref().map(parse_instant).transpose()?,
             include_redacted,
             limit,
+            offset,
         })
     }
 }
@@ -211,9 +226,10 @@ fn main() -> Result<()> {
         Some(Command::Stop) => cmd_stop(),
         Some(Command::Log {
             number,
+            page,
             show_redacted,
             filter,
-        }) => cmd_log(number, show_redacted, &filter),
+        }) => cmd_log(number, page, show_redacted, &filter),
         Some(Command::Redact { id, reason, filter }) => cmd_redact(id, &reason, &filter),
         Some(Command::Purge {
             yes,
@@ -681,20 +697,47 @@ fn cmd_status() -> Result<()> {
     Ok(())
 }
 
-fn cmd_log(number: usize, show_redacted: bool, filter: &FilterArgs) -> Result<()> {
+fn cmd_log(number: usize, page: usize, show_redacted: bool, filter: &FilterArgs) -> Result<()> {
     let db = default_db_path();
     if !db.exists() {
         print!("{}", logview::render_log(&[], false));
         return Ok(());
     }
     let log = EventLog::open(&db).with_context(|| format!("open log {}", db.display()))?;
-    let f = filter.to_filter(show_redacted, Some(number))?;
-    let events = log.query(&f)?;
+    let number = number.max(1);
+    let page = page.max(1);
+    let offset = (page - 1) * number;
+
     let color = logview::use_color(
         std::env::var_os("NO_COLOR").is_some(),
         std::io::stdout().is_terminal(),
     );
+
+    let f = filter.to_filter_paged(show_redacted, Some(number), Some(offset))?;
+    let mut events = log.query(&f)?;
+    // The query returns the page oldest-first; flip it so the newest command in
+    // the page is on top.
+    events.reverse();
+
+    // Total matches (counting ignores limit/offset) for the page footer.
+    let total = log.count_matching(&filter.to_filter(show_redacted, None)?)? as usize;
+
+    if events.is_empty() {
+        if total == 0 {
+            // Genuinely empty log → the designed empty state.
+            print!("{}", logview::render_log(&events, color));
+        } else {
+            // Paged past the end.
+            println!("  no events on page {page} — {total} total; newest is page 1.");
+        }
+        return Ok(());
+    }
+
     print!("{}", logview::render_log(&events, color));
+    print!(
+        "{}",
+        logview::render_page_footer(page, offset, events.len(), total, color)
+    );
     Ok(())
 }
 

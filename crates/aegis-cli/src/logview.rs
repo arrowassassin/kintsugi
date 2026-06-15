@@ -27,7 +27,8 @@ fn decision_label(d: Decision) -> &'static str {
     }
 }
 
-/// Render a timeline of events, newest at the bottom (chronological).
+/// Render a timeline of events in the given order (the caller decides; `aegis
+/// log` passes them newest-first).
 pub fn render_log(events: &[LoggedEvent], color: bool) -> String {
     if events.is_empty() {
         return empty_state();
@@ -75,6 +76,34 @@ pub fn render_log(events: &[LoggedEvent], color: bool) -> String {
         }
     }
     out
+}
+
+/// A one-line footer showing where this page sits in the full match set and how
+/// to reach the adjacent pages. `offset` is how many newer events precede this
+/// page; `shown` is the number on this page; `total` is all matches.
+pub fn render_page_footer(
+    page: usize,
+    offset: usize,
+    shown: usize,
+    total: usize,
+    color: bool,
+) -> String {
+    // Newest event in the page is at rank `offset+1`; oldest at `offset+shown`.
+    let first = offset + 1;
+    let last = offset + shown;
+    let mut s = format!("\n  {first}\u{2013}{last} of {total}");
+    if last < total {
+        s.push_str(&format!("  ·  older → aegis log --page {}", page + 1));
+    }
+    if page > 1 {
+        s.push_str(&format!("  ·  newer → aegis log --page {}", page - 1));
+    }
+    s.push('\n');
+    if color {
+        format!("{DIM}{s}{RESET}")
+    } else {
+        s
+    }
 }
 
 fn header(color: bool) -> String {
@@ -166,6 +195,33 @@ mod tests {
         let evs = vec![event("a", &long, Class::Safe, Decision::Allow)];
         let out = render_log(&evs, false);
         assert!(out.contains('…'));
+    }
+
+    #[test]
+    fn footer_shows_range_and_older_link_on_a_full_first_page() {
+        // Page 1, 20/page, showed 20, 137 total → "1–20 of 137" + older link.
+        let out = render_page_footer(1, 0, 20, 137, false);
+        assert!(out.contains("1\u{2013}20 of 137"), "got: {out}");
+        assert!(out.contains("aegis log --page 2"));
+        assert!(!out.contains("newer"), "page 1 has no newer page");
+    }
+
+    #[test]
+    fn footer_on_a_middle_page_links_both_directions() {
+        // Page 2, 20/page, offset 20, showed 20, 137 total → 21–40, both links.
+        let out = render_page_footer(2, 20, 20, 137, false);
+        assert!(out.contains("21\u{2013}40 of 137"));
+        assert!(out.contains("--page 3"), "older link");
+        assert!(out.contains("--page 1"), "newer link");
+    }
+
+    #[test]
+    fn footer_on_the_last_page_has_no_older_link() {
+        // Page 7, offset 120, showed 17, 137 total → 121–137, no older.
+        let out = render_page_footer(7, 120, 17, 137, false);
+        assert!(out.contains("121\u{2013}137 of 137"));
+        assert!(!out.contains("older"), "last page has no older link");
+        assert!(out.contains("--page 6"), "newer link");
     }
 
     #[test]

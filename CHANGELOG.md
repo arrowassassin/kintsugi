@@ -26,6 +26,20 @@ All notable changes to Aegis are documented here. The format loosely follows
   Codex config.toml). Re-run `aegis init` once to clean an already-duplicated
   config.
 
+### Log & timeline UX
+- **Newest-first** everywhere: `aegis log` and the live TUI timeline now show the
+  most recent command at the top instead of the bottom.
+- **Pagination for `aegis log`**: `-n/--number` is the page size and `-p/--page`
+  picks the page (1 = newest; older events on higher pages). A footer shows the
+  range and total (`21–40 of 137`) with `older →`/`newer →` page hints, and
+  paging past the end says so instead of printing the empty state. Backed by a
+  new `offset` on the core `Filter`/`query`.
+- **Richer model summaries**: the Tier-2 model prompt now asks for a plain-English
+  explanation plus 2–3 short "• " pointers describing what the command does and
+  why it matters — for people who can't read the shell. The TUI detail pane
+  renders the pointers on their own lines. (Heuristic, model-free summaries stay
+  a single clear sentence.)
+
 ### CLI & install
 - **`aegis stop`** — stop the background daemon (the inverse of `aegis init`). The
   daemon writes its own PID file on startup; `stop` reads it and terminates it

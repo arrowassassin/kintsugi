@@ -222,3 +222,12 @@ the locked product decisions this build implements.
   fail-closed-catastrophic policy stay shared in `hook.rs`. Codex TOML is wired by
   text-append (not parse→serialize) to preserve user comments and dodge toml-rs's
   table-ordering rules. MCP stays as the documented manual fallback.
+- Log UX: timeline is newest-first in both `aegis log` and the TUI (reversed at
+  the display layer; `query()`/`tail()` keep their oldest-first contract so other
+  callers and the hash-chain logic are untouched). `aegis log` gained real
+  pagination via a new `Filter.offset` (`LIMIT ? OFFSET ?` on the newest-by-seq
+  window) + `-p/--page`, with a range/total footer from `count_matching`. The
+  Tier-2 llama prompt now requests a beginner-friendly explanation with 2-3 "• "
+  pointers folded into the existing `summary` string (no schema change; MAX_TOKENS
+  160→256); the TUI detail splits the summary on newlines so pointers render as
+  their own lines. Heuristic summaries stay one line.
