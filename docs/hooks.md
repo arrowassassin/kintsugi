@@ -51,6 +51,11 @@ own one-click "allow" run it would bypass Aegis's snapshot and void the
 reversibility guarantee. Catastrophic commands must go through a guarded path
 (the shim/CLI/TUI) that snapshots first.
 
+To make that path discoverable, the deny reason for a held-catastrophic command
+tells the human where the approval lives — it's queued in Aegis (keyed by the
+command id), so the agent relays "approve in `aegis tui` (press `a`) or `aegis
+approve <id>`" instead of seeing a bare denial and silently working around it.
+
 ## Fail behavior
 
 - **Daemon down + catastrophic command:** denied (fail-closed). The hook
