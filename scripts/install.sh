@@ -31,7 +31,6 @@ WITH_MODEL=0
 DO_INIT="ask"          # ask | yes | no
 ASSUME_YES=0
 BIN_ONLY=0             # 1 = install binaries only, skip the setup stepper
-DAEMON_STARTED=0       # set to 1 once we've started the daemon in this run
 PICKER_URL="https://github.com/arrowassassin/aegis/releases/latest/download/pick-model.sh"
 # Use sudo for system package installs when not already root.
 SUDO=""
@@ -225,21 +224,32 @@ setup_model() {
   dir="$1"
   echo
   say "setting up a local model — the in-process llama.cpp engine + a Hugging Face GGUF."
-  say "this compiles llama.cpp once (a few minutes) and needs a C/C++ toolchain."
-  ensure_build_tools || { warn "toolchain not ready; skipping the model (Aegis still works heuristically)."; return 0; }
-  ensure_cargo       || { warn "cargo unavailable; skipping the model build."; return 0; }
 
-  ok=1
-  if [ -n "$VERSION" ]; then
-    run_with_progress "compiling the llama.cpp engine (a few minutes)" \
-      cargo install --git "https://github.com/$REPO" aegis-daemon \
-        --features "aegis-model/llama" --root "$(dirname "$dir")" --force --tag "$VERSION" || ok=0
+  # Skip the (multi-minute) engine compile only if the installed daemon already
+  # has llama built in AT THE SAME VERSION as the freshly-installed `aegis`. An app
+  # upgrade changes the version, so the engine is rebuilt rather than left stale;
+  # a same-version re-run skips it.
+  llama_ver="$([ -x "$dir/aegis-daemon" ] && "$dir/aegis-daemon" --has-llama 2>/dev/null || true)"
+  want_ver="$("$dir/aegis" --version 2>/dev/null | awk '{print $NF}')"
+  if [ -n "$llama_ver" ] && [ "$llama_ver" = "$want_ver" ]; then
+    say "llama.cpp engine already built for v$llama_ver — skipping the compile."
   else
-    run_with_progress "compiling the llama.cpp engine (a few minutes)" \
-      cargo install --git "https://github.com/$REPO" aegis-daemon \
-        --features "aegis-model/llama" --root "$(dirname "$dir")" --force || ok=0
+    say "this compiles llama.cpp once (a few minutes) and needs a C/C++ toolchain."
+    ensure_build_tools || { warn "toolchain not ready; skipping the model (Aegis still works heuristically)."; return 0; }
+    ensure_cargo       || { warn "cargo unavailable; skipping the model build."; return 0; }
+
+    ok=1
+    if [ -n "$VERSION" ]; then
+      run_with_progress "compiling the llama.cpp engine (a few minutes)" \
+        cargo install --git "https://github.com/$REPO" aegis-daemon \
+          --features "aegis-model/llama" --root "$(dirname "$dir")" --force --tag "$VERSION" || ok=0
+    else
+      run_with_progress "compiling the llama.cpp engine (a few minutes)" \
+        cargo install --git "https://github.com/$REPO" aegis-daemon \
+          --features "aegis-model/llama" --root "$(dirname "$dir")" --force || ok=0
+    fi
+    [ "$ok" -eq 1 ] || { warn "model engine build failed; Aegis keeps working on the heuristic scorer."; return 0; }
   fi
-  [ "$ok" -eq 1 ] || { warn "model engine build failed; Aegis keeps working on the heuristic scorer."; return 0; }
 
   say "choosing a model from Hugging Face…"
   # Show the picker's menu and let the user choose — including the ★ recommended
@@ -257,23 +267,11 @@ setup_model() {
   model="$(ls -t "$mdir"/*.gguf 2>/dev/null | head -n1 || true)"
   if [ -n "$model" ]; then
     persist_env "AEGIS_MODEL_FILE" "$model"
-    # A daemon started earlier in this install (Step 1) was spawned WITHOUT
-    # AEGIS_MODEL_FILE in its environment, so it's still on the heuristic scorer.
-    # Export the var into this process and restart the daemon so it re-spawns with
-    # the model — otherwise the user gets thin, templated summaries and has no way
-    # to tell why until they manually restart from a fresh shell.
+    # Export into this process so the `aegis init` that runs after this (in the
+    # stepper) spawns the daemon already pointed at the model — no second start,
+    # no transient "heuristic fallback" message.
     export AEGIS_MODEL_FILE="$model"
-    if [ "$DAEMON_STARTED" -eq 1 ] && [ -x "$dir/aegis" ]; then
-      say "loading the model into the daemon (restarting it)…"
-      "$dir/aegis" stop >/dev/null 2>&1 || true
-      if "$dir/aegis" init >/dev/null 2>&1; then
-        say "model ready and loaded — the daemon is now scoring with $(basename "$model")."
-      else
-        warn "model set, but the daemon restart failed; run:  aegis stop && aegis init"
-      fi
-    else
-      say "model ready. Start/restart the daemon to load it:  aegis stop && aegis init"
-    fi
+    say "model ready: $(basename "$model")."
   else
     warn "no model file found; run the picker again later, then set AEGIS_MODEL_FILE."
   fi
@@ -288,18 +286,31 @@ stepper() {
     *) say "add to your shell profile:  export PATH=\"$dir:\$PATH\"" ;;
   esac
 
-  # Step 1 — wire agents and start the daemon.
+  # Decide on wiring up front, but DEFER running `aegis init` until after the
+  # model is in place. Otherwise init starts the daemon on the heuristic scorer,
+  # the model step rebuilds + restarts it, and the user sees a misleading "scoring
+  # with: heuristic fallback" line for a daemon that's about to be replaced.
+  do_init=0
   if [ "$DO_INIT" = "yes" ] || { [ "$DO_INIT" = "ask" ] && ask "Wire your agents and start the daemon now? (aegis init)" "Y"; }; then
-    if "$dir/aegis" init; then DAEMON_STARTED=1; else warn "aegis init failed; run it manually later."; fi
-  else
-    echo "  later:  aegis init      # detect agents, wire interception, start the daemon"
+    do_init=1
   fi
 
-  # Step 2 — optional local model.
+  # Step 1 — optional local model: build the engine, download a GGUF, and set
+  # AEGIS_MODEL_FILE (exported into this process so the init below inherits it).
   if [ "$WITH_MODEL" -eq 1 ] || ask "Set up a local model now? (optional; builds an engine + downloads a Qwen GGUF)" "N"; then
     setup_model "$dir"
   else
     echo "  later (optional):  curl -fsSL $PICKER_URL | sh   # download a model, then set AEGIS_MODEL_FILE"
+  fi
+
+  # Step 2 — wire agents and start the daemon, now that the model (if any) is set.
+  # `stop` first is idempotent and ensures a daemon left over from a prior install
+  # is replaced by one that inherits the freshly-set AEGIS_MODEL_FILE.
+  if [ "$do_init" -eq 1 ]; then
+    "$dir/aegis" stop >/dev/null 2>&1 || true
+    "$dir/aegis" init || warn "aegis init failed; run it manually later."
+  else
+    echo "  later:  aegis init      # detect agents, wire interception, start the daemon"
   fi
 
   echo
@@ -323,6 +334,16 @@ main() {
   if [ -z "$tag" ]; then
     warn "no published release found; building from source."
     install_from_source; return
+  fi
+
+  # Idempotent re-run: if the target version is already installed in BIN_DIR,
+  # skip the download. This also preserves a locally-built llama daemon (the
+  # prebuilt tarball would otherwise overwrite it with a heuristic-only build).
+  installed="$("$BIN_DIR/aegis" --version 2>/dev/null | awk '{print $NF}')"
+  if [ -n "$installed" ] && [ "$installed" = "${tag#v}" ]; then
+    say "aegis ${tag#v} already installed in $BIN_DIR — skipping binary download."
+    [ "$BIN_ONLY" -eq 1 ] && return
+    stepper "$BIN_DIR"; return
   fi
 
   base="https://github.com/$REPO/releases/download/$tag"

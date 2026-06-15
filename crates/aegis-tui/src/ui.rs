@@ -328,8 +328,27 @@ fn gauge_rect(area: Rect) -> Rect {
 
 fn render_footer(f: &mut Frame, app: &App, area: Rect) {
     let rows = Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).split(area);
-    let help = "j/k move · enter detail · a/d approve/deny · u undo · / filter · q quit";
-    f.render_widget(Paragraph::new(Span::styled(help, dim(app))), rows[0]);
+    let help = "j/k move · spc/b · enter detail · a/d approve/deny · u undo · / filter · q quit";
+    // Right-aligned "row N/M" indicator so paging has a frame of reference — but
+    // only when it fits without crowding the help (narrow terminals show help alone).
+    let total = app.visible().len();
+    let pos = if total > 0 {
+        format!("row {}/{}", app.selected + 1, total)
+    } else {
+        String::new()
+    };
+    let width = area.width as usize;
+    let help_line = if !pos.is_empty() && width > help.chars().count() + pos.chars().count() + 1 {
+        let pad = width - help.chars().count() - pos.chars().count();
+        Line::from(vec![
+            Span::styled(help, dim(app)),
+            Span::raw(" ".repeat(pad)),
+            Span::styled(pos, dim(app)),
+        ])
+    } else {
+        Line::from(Span::styled(help, dim(app)))
+    };
+    f.render_widget(Paragraph::new(help_line), rows[0]);
 
     let second = match app.mode {
         Mode::Filter => {

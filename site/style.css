@@ -286,7 +286,10 @@ footer a { color: var(--cyan); }
 
   .nav nav {
     display: none;
-    flex-basis: 100%;
+    /* Full-bleed panel: break out of the .wrap's 14px side padding. Basis must
+       be 100% + both paddings (not 100%, which is only the content width and
+       leaves a gap on the right), and it must not shrink back. */
+    flex: 0 0 calc(100% + 28px);
     margin: 0 -14px;
     padding: 8px 14px 14px;
     background: var(--bg);

@@ -155,6 +155,9 @@ pub struct App {
     pub status: Option<String>,
     /// Whether to use color (respects `NO_COLOR`).
     pub color: bool,
+    /// Number of timeline data-rows visible in the last render, used as the step
+    /// for `PageUp`/`PageDown`. Set by the renderer each frame; 0 until the first.
+    pub page_rows: usize,
 }
 
 impl App {
@@ -166,6 +169,7 @@ impl App {
             mode: Mode::Normal,
             status: None,
             color,
+            page_rows: 0,
         }
     }
 
@@ -233,6 +237,10 @@ impl App {
             KeyCode::Char('q') | KeyCode::Esc => return Action::Quit,
             KeyCode::Char('j') | KeyCode::Down => self.move_down(),
             KeyCode::Char('k') | KeyCode::Up => self.move_up(),
+            // Space/b are the primary page keys (pager convention) since Mac
+            // keyboards lack PageUp/PageDown; f and PgUp/PgDn are aliases.
+            KeyCode::Char(' ') | KeyCode::Char('f') | KeyCode::PageDown => self.page_down(),
+            KeyCode::Char('b') | KeyCode::PageUp => self.page_up(),
             KeyCode::Char('g') | KeyCode::Home => self.selected = 0,
             KeyCode::Char('G') | KeyCode::End => {
                 let len = self.visible_len();
@@ -309,6 +317,23 @@ impl App {
     fn move_up(&mut self) {
         self.selected = self.selected.saturating_sub(1);
     }
+
+    /// Step the selection down by one screenful (the last-rendered row count,
+    /// at least 1), clamped to the last row.
+    fn page_down(&mut self) {
+        let len = self.visible_len();
+        if len == 0 {
+            return;
+        }
+        let step = self.page_rows.max(1);
+        self.selected = (self.selected + step).min(len - 1);
+    }
+
+    /// Step the selection up by one screenful.
+    fn page_up(&mut self) {
+        let step = self.page_rows.max(1);
+        self.selected = self.selected.saturating_sub(step);
+    }
 }
 
 #[cfg(test)]
@@ -343,6 +368,36 @@ mod tests {
             None,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn page_keys_step_by_a_screenful_and_clamp() {
+        let mut app = App::new(false);
+        let many: Vec<_> = (0..50)
+            .map(|i| ev("shim", &format!("cmd {i}"), Class::Safe, Decision::Allow))
+            .collect();
+        app.set_events(many);
+        app.page_rows = 10;
+
+        // PageDown jumps a screenful, never past the last row.
+        app.on_key(KeyCode::PageDown);
+        assert_eq!(app.selected, 10);
+        // Space is the Mac-friendly alias and pages identically.
+        app.on_key(KeyCode::Char(' '));
+        assert_eq!(app.selected, 20);
+
+        // PageUp steps back symmetrically and clamps at the top.
+        app.on_key(KeyCode::PageUp);
+        assert_eq!(app.selected, 10);
+        app.on_key(KeyCode::PageUp);
+        app.on_key(KeyCode::PageUp);
+        assert_eq!(app.selected, 0);
+
+        // Near the end, PageDown stops on the last row rather than overshooting.
+        app.on_key(KeyCode::End);
+        assert_eq!(app.selected, 49);
+        app.on_key(KeyCode::PageDown);
+        assert_eq!(app.selected, 49);
     }
 
     #[test]
