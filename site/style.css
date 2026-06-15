@@ -252,16 +252,24 @@ footer a { color: var(--cyan); }
 }
 
 /* ---- hamburger (only visible <=640px) ---- */
+/* The ☰ glyph isn't in "Press Start 2P", so a pixel font would fall back to a
+   system font with odd vertical metrics and sit high in the box. Use the body
+   monospace and center the glyph in a fixed square so it lines up with the
+   brand on the header row. */
 .navtoggle {
   display: none;
   margin-left: auto;
-  font-family: "Press Start 2P", monospace;
-  font-size: 18px;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  font-family: ui-monospace, "DejaVu Sans Mono", monospace;
+  font-size: 20px;
   line-height: 1;
   background: var(--panel);
   color: var(--ink);
   border: 2px solid var(--line);
-  padding: 8px 10px;
+  padding: 0;
   cursor: pointer;
 }
 .navtoggle:hover, .navtoggle[aria-expanded="true"] { color: var(--green); }
@@ -282,7 +290,7 @@ footer a { color: var(--cyan); }
      expand when open without clipping. */
   .nav .wrap { gap: 10px; height: auto; min-height: 56px; flex-wrap: wrap; padding-top: 8px; padding-bottom: 8px; }
   .brand { font-size: 13px; }
-  .navtoggle { display: inline-flex; align-items: center; }
+  .navtoggle { display: inline-flex; }
 
   .nav nav {
     display: none;
