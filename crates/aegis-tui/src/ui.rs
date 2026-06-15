@@ -403,6 +403,22 @@ mod tests {
     }
 
     #[test]
+    fn color_mode_renders_without_panic() {
+        // Exercises the color branches (accent fg, border style, highlight, gauge).
+        let mut app = App::new(true);
+        app.set_events(vec![
+            ev("qwen", "make deploy", Class::Ambiguous, Decision::Hold),
+            ev("shim", "rm -rf /", Class::Catastrophic, Decision::Hold),
+        ]);
+        app.selected = 0; // the ambiguous row carries a risk score → gauge shows
+        let wide = buffer_text(&app, 120, 24); // split + detail + gauge
+        assert!(wide.contains("make deploy"));
+        assert!(wide.contains("risk"));
+        let narrow = buffer_text(&app, 80, 24); // list only
+        assert!(narrow.contains("held"));
+    }
+
+    #[test]
     fn filter_mode_shows_input_line() {
         let mut app = app_with_events();
         app.on_key(crossterm::event::KeyCode::Char('/'));
