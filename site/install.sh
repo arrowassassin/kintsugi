@@ -289,7 +289,7 @@ main() {
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' EXIT
 
-  say "downloading $tag for $target…"
+  say "downloading $tag for ${target}…"
   if ! fetch_to "$base/$tarball" "$tmp/$tarball"; then
     warn "release asset $tarball not found; building from source."
     install_from_source; return
