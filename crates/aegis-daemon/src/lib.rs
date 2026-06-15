@@ -393,6 +393,9 @@ impl Daemon {
             },
             ipc::Request::Approve { id } => self.resolve_pending_response(&id, Decision::Allow),
             ipc::Request::Deny { id } => self.resolve_pending_response(&id, Decision::Deny),
+            ipc::Request::Status => ipc::Response::Status {
+                scorer: self.scorer_name().to_string(),
+            },
         }
     }
 

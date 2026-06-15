@@ -18,6 +18,8 @@
 #   --with-model        non-interactively set up a local model (toolchain + GGUF)
 #   --init / --no-init  wire agents + start the daemon (default: ask)
 #   --yes               assume "yes" to prompts (non-interactive)
+#   --bin-only          just install/replace the binaries; skip the setup stepper
+#                       (used by `aegis update`)
 set -eu
 
 REPO="arrowassassin/aegis"
@@ -28,6 +30,8 @@ FROM_SOURCE=0
 WITH_MODEL=0
 DO_INIT="ask"          # ask | yes | no
 ASSUME_YES=0
+BIN_ONLY=0             # 1 = install binaries only, skip the setup stepper
+DAEMON_STARTED=0       # set to 1 once we've started the daemon in this run
 PICKER_URL="https://github.com/arrowassassin/aegis/releases/latest/download/pick-model.sh"
 # Use sudo for system package installs when not already root.
 SUDO=""
@@ -47,9 +51,10 @@ while [ $# -gt 0 ]; do
     --init) DO_INIT="yes" ;;
     --no-init) DO_INIT="no" ;;
     --yes|-y) ASSUME_YES=1 ;;
+    --bin-only) BIN_ONLY=1 ;;
     --bin-dir) BIN_DIR="${2:?--bin-dir needs a path}"; shift ;;
     --version) VERSION="${2:?--version needs a tag}"; shift ;;
-    -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
     *) die "unknown option: $1" ;;
   esac
   shift
@@ -124,6 +129,7 @@ install_from_source() {
       cargo install --git "https://github.com/$REPO" aegis-cli aegis-daemon aegis-intercept || die "source build failed (see output above)"
   fi
   say "installed to $HOME/.cargo/bin"
+  [ "$BIN_ONLY" -eq 1 ] && { say "binaries updated. Restart the daemon to run the new build:  aegis stop && aegis init"; return; }
   stepper "$HOME/.cargo/bin"
 }
 
@@ -236,13 +242,14 @@ setup_model() {
   [ "$ok" -eq 1 ] || { warn "model engine build failed; Aegis keeps working on the heuristic scorer."; return 0; }
 
   say "choosing a model from Hugging Face…"
-  # Always pass --auto from this code path. The user already opted in to "set
-  # up a local model" one step ago; making them answer a *second* prompt mid-
-  # install is the friction we're trying to remove. They can re-run the picker
-  # later (with full menu) if they want a different model. Also: when stdin is
-  # piped, the picker can't read a number anyway — passing --auto is the only
-  # correct behaviour, not an opt-in.
-  pickargs="--auto"
+  # Show the picker's menu and let the user choose — including the ★ recommended
+  # models alongside the popularity-ranked ones. The picker reads /dev/tty for the
+  # choice, so the menu works even under `curl | sh` (piped stdin). We only force
+  # --auto for a fully non-interactive install (--yes), where there's no human to
+  # answer; otherwise the picker itself falls back to the top recommendation when
+  # no terminal is available.
+  pickargs=""
+  [ "$ASSUME_YES" -eq 1 ] && pickargs="--auto"
   if have curl; then curl -fsSL "$PICKER_URL" | sh -s -- $pickargs
   elif have wget; then wget -qO- "$PICKER_URL" | sh -s -- $pickargs; fi
 
@@ -250,7 +257,23 @@ setup_model() {
   model="$(ls -t "$mdir"/*.gguf 2>/dev/null | head -n1 || true)"
   if [ -n "$model" ]; then
     persist_env "AEGIS_MODEL_FILE" "$model"
-    say "model ready. Restart the daemon to load it:  aegis stop && aegis init"
+    # A daemon started earlier in this install (Step 1) was spawned WITHOUT
+    # AEGIS_MODEL_FILE in its environment, so it's still on the heuristic scorer.
+    # Export the var into this process and restart the daemon so it re-spawns with
+    # the model — otherwise the user gets thin, templated summaries and has no way
+    # to tell why until they manually restart from a fresh shell.
+    export AEGIS_MODEL_FILE="$model"
+    if [ "$DAEMON_STARTED" -eq 1 ] && [ -x "$dir/aegis" ]; then
+      say "loading the model into the daemon (restarting it)…"
+      "$dir/aegis" stop >/dev/null 2>&1 || true
+      if "$dir/aegis" init >/dev/null 2>&1; then
+        say "model ready and loaded — the daemon is now scoring with $(basename "$model")."
+      else
+        warn "model set, but the daemon restart failed; run:  aegis stop && aegis init"
+      fi
+    else
+      say "model ready. Start/restart the daemon to load it:  aegis stop && aegis init"
+    fi
   else
     warn "no model file found; run the picker again later, then set AEGIS_MODEL_FILE."
   fi
@@ -267,7 +290,7 @@ stepper() {
 
   # Step 1 — wire agents and start the daemon.
   if [ "$DO_INIT" = "yes" ] || { [ "$DO_INIT" = "ask" ] && ask "Wire your agents and start the daemon now? (aegis init)" "Y"; }; then
-    "$dir/aegis" init || warn "aegis init failed; run it manually later."
+    if "$dir/aegis" init; then DAEMON_STARTED=1; else warn "aegis init failed; run it manually later."; fi
   else
     echo "  later:  aegis init      # detect agents, wire interception, start the daemon"
   fi
@@ -333,6 +356,7 @@ main() {
     install -m 0755 "$src" "$BIN_DIR/$b" 2>/dev/null || { cp "$src" "$BIN_DIR/$b"; chmod 0755 "$BIN_DIR/$b"; }
   done
   say "installed ${BINS} to $BIN_DIR"
+  [ "$BIN_ONLY" -eq 1 ] && { say "binaries updated. Restart the daemon to run the new build:  aegis stop && aegis init"; return; }
   stepper "$BIN_DIR"
 }
 
