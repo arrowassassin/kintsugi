@@ -190,6 +190,67 @@ footer a { color: var(--cyan); }
   display:inline-flex; align-items:center; line-height:1; }
 .themebtn:hover { color:var(--green); }
 
+/* ---- the tour page ---- */
+/* Each scene is a numbered story beat: a small 8-bit header, a square SVG
+   animation on the left, plain-English copy on the right. The grid collapses
+   to one column on mobile, with the SVG on top. */
+.scene { padding: 50px 0; border-top: 3px dashed var(--line); }
+.scene-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 18px; }
+.scene-num {
+  font-family: "Press Start 2P", monospace; font-size: 12px;
+  color: var(--green);
+  background: var(--panel); border: 2px solid var(--line);
+  padding: 8px 10px; line-height: 1;
+}
+.scene-head h2 {
+  margin: 0; font-size: 18px; color: var(--amber);
+  text-shadow: 3px 3px 0 #3a2b06; line-height: 1.2;
+}
+.scene-grid {
+  display: grid; grid-template-columns: 1fr; gap: 24px; align-items: start;
+}
+@media (min-width: 760px) {
+  .scene-grid { grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 36px; }
+}
+.scene-svg {
+  margin: 0;
+  border: 3px solid var(--line);
+  background: var(--term-bg);
+  box-shadow: 6px 6px 0 rgba(0,0,0,.5);
+  padding: 12px;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.scene-svg svg { display: block; width: 100%; height: auto; }
+.scene-body p { margin: 0 0 14px; font-size: 21px; color: var(--ink); }
+.scene-body .lead { font-size: 23px; }
+.scene-body .muted { font-size: 18px; }
+.scene-finale { text-align: center; }
+.scene-finale .lead { font-size: 26px; margin: 0 auto 22px; max-width: 760px; }
+.scene-finale .cta {
+  display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; margin-bottom: 16px;
+}
+.scene-finale .note { color: var(--dim); font-size: 17px; }
+
+/* Respect reduced-motion: the SVG SMIL animations are decorative; freeze them
+   for anyone who's asked the OS to dial things back. */
+@media (prefers-reduced-motion: reduce) {
+  .scene-svg svg * { animation: none !important; }
+  .scene-svg svg animate, .scene-svg svg animateTransform { display: none; }
+}
+
+/* Mobile tweaks for scenes. */
+@media (max-width: 640px) {
+  .scene { padding: 32px 0; }
+  .scene-head { flex-wrap: wrap; gap: 10px; }
+  .scene-head h2 { font-size: 14px; }
+  .scene-num { font-size: 10px; padding: 6px 8px; }
+  .scene-body p { font-size: 17px; }
+  .scene-body .lead { font-size: 19px; }
+  .scene-body .muted { font-size: 15px; }
+  .scene-finale .lead { font-size: 20px; }
+}
+
 /* ---- hamburger (only visible <=640px) ---- */
 .navtoggle {
   display: none;
