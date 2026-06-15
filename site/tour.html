@@ -270,8 +270,19 @@
           <em>argued past</em> — prompt-injected, tricked, talked down to
           "actually it's fine." Rules can't. <span class="t-red">rm -rf /</span>
           is always blocked. Always. There's no override.</p>
+        <p>And the rules read the <em>real shell structure</em> of a command, not
+          its raw text — a true bash parse (the kind static analyzers use), so
+          danger tucked inside <span class="muted">$(…)</span>, a here-doc, a
+          subshell, or an <span class="muted">if</span> block is still caught.
+          Anything it can't fully parse is <span class="t-amb">held</span>, never
+          waved through.</p>
         <p class="muted">A local model is allowed to <em>add</em> caution
           (escalate the amber middle) — never to <em>remove</em> it.</p>
+        <p>See for yourself — this runs nothing:
+          <br><span class="t-grn">aegis test</span>
+          <span class="muted">"cd build &amp;&amp; rm -rf ../dist"</span> →
+          <span class="t-red">⛔ catastrophic</span>. Try any command;
+          <a href="features.html">the features page</a> shows the full output.</p>
       </div>
     </div>
   </section>
