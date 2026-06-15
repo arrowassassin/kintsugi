@@ -6,6 +6,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod dialect;
 pub mod holdcard;
 pub mod hook;
 pub mod mcp;

@@ -70,10 +70,11 @@
       an LLM, so it can't be argued past by prompt injection. The raw command is
       always shown verbatim. The log is append-only and hash-chained.
     </div>
-    <p class="muted">Agent-agnostic from day one: Claude Code, Cursor CLI, Codex CLI,
-      Qwen Code, Gemini CLI, any custom/MCP agent — <em>and any raw shell</em> — via a
-      native hook, an MCP server, or a $PATH shim. Protection lives at the
-      process/PATH layer, not inside any one tool.</p>
+    <p class="muted">Agent-agnostic from day one, with a <em>native pre-tool hook</em>
+      for each: Claude Code, Qwen Code, Gemini CLI, GitHub Copilot CLI, Cursor CLI,
+      Codex CLI, and OpenCode — plus any custom/MCP agent and <em>any raw shell</em>
+      via the $PATH shim. <code>aegis init</code> detects what you have and wires
+      each one. Protection lives at the process layer, not inside any one tool.</p>
   </section>
 
   <section id="flow">
@@ -123,7 +124,8 @@
           and <span class="k">can't be talked out of</span> by a clever prompt.
           Zero catastrophic-as-safe, enforced by a golden corpus + property tests.</p></div>
       <div class="card"><h3>Works with every agent</h3>
-        <p>Claude Code, Cursor, Codex, Qwen, Gemini — <span class="k">or any raw shell</span>.
+        <p><span class="k">Native hooks</span> for Claude Code, Cursor, Codex, Qwen,
+          Gemini, Copilot &amp; OpenCode — <span class="k">or any raw shell</span>.
           One layer at the process level, wired in a single <span class="k">aegis init</span>.</p></div>
       <div class="card"><h3>Reversible by default</h3>
         <p>Snapshots before destructive ops (reflink CoW). <span class="k">aegis undo</span>

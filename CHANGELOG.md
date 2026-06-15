@@ -5,7 +5,61 @@ All notable changes to Aegis are documented here. The format loosely follows
 
 ## [Unreleased]
 
+### Interception
+- **Native hooks for every major agent CLI**, not just Claude Code. `aegis init`
+  now detects and wires Qwen Code (`~/.qwen/settings.json`, `PreToolUse`), Gemini
+  CLI (`~/.gemini/settings.json`, `BeforeTool`), GitHub Copilot CLI
+  (`~/.copilot/hooks/aegis.json`, fail-closed `preToolUse`), Cursor CLI
+  (`~/.cursor/hooks.json`, `beforeShellExecution`), Codex CLI
+  (`~/.codex/config.toml`, `[[hooks.PreToolUse]]`), and OpenCode (a bundled
+  `tool.execute.before` plugin at `~/.config/opencode/plugin/aegis.js` that
+  bridges to the hook). One binary, `aegis-hook --agent <id>`, speaks each CLI's
+  dialect; the daemon round-trip and fail-closed-catastrophic policy are shared.
+  Each wire-up is idempotent and backs up any file it touches. See
+  [`docs/hooks.md`](docs/hooks.md).
+- **Fix duplicate log rows.** `aegis init` deduped a hook by its *exact* command
+  string, so when the command changed (a new binary path, or adding `--agent
+  <id>`) a re-run appended a second entry instead of replacing the old one. Two
+  registered hooks made the CLI run Aegis twice per command and log every command
+  2–3×. Registration now matches on the `aegis-hook` binary name and collapses
+  any stale/duplicate entries to exactly one (settings.json, Cursor hooks.json,
+  Codex config.toml). Re-run `aegis init` once to clean an already-duplicated
+  config.
+
+### Log & timeline UX
+- **Newest-first** everywhere: `aegis log` and the live TUI timeline now show the
+  most recent command at the top instead of the bottom.
+- **Pagination for `aegis log`**: `-n/--number` is the page size and `-p/--page`
+  picks the page (1 = newest; older events on higher pages). A footer shows the
+  range and total (`21–40 of 137`) with `older →`/`newer →` page hints, and
+  paging past the end says so instead of printing the empty state. Backed by a
+  new `offset` on the core `Filter`/`query`.
+- **Richer model summaries**: the Tier-2 model prompt now asks for a plain-English
+  explanation plus 2–3 short "• " pointers describing what the command does and
+  why it matters — for people who can't read the shell. The TUI detail pane
+  renders the pointers on their own lines. (Heuristic, model-free summaries stay
+  a single clear sentence.)
+
 ### CLI & install
+- **`aegis update`** — check GitHub for a newer release and install it in place.
+  Compares the running version to the latest release tag and, with your consent,
+  re-runs the checksum-verifying installer in `--bin-only` mode (no re-wiring, no
+  model prompts) targeting the binary's own directory. `--check` reports only;
+  `--yes` skips the prompt. Manual and explicit: no automatic or background
+  checks, and no command/code/telemetry is ever sent — the one deliberate
+  exception to "never phone home", documented in DECISIONS.md.
+- **Active scorer is now visible.** `aegis status`, `aegis init`, and the bare
+  `aegis` banner report which scorer the daemon is using — the loaded local model
+  (`<model> (local model)`) or the offline `heuristic fallback (… set
+  AEGIS_MODEL_FILE)`. Previously a model-less daemon degraded silently, so a
+  mis-set `AEGIS_MODEL_FILE` only showed up as thin, templated hold summaries.
+  Backed by a new `Status` IPC request/response.
+- **Installer loads the model immediately.** When the guided installer sets up a
+  local model it now restarts the just-started daemon so it picks up
+  `AEGIS_MODEL_FILE` (the daemon inherits env at spawn time, and was started
+  before the var was written). It also no longer auto-downloads: the model picker
+  shows its full menu — ★ recommended models alongside the popularity-ranked
+  ones — and lets you choose (only `--yes` installs auto-pick the top match).
 - **`aegis stop`** — stop the background daemon (the inverse of `aegis init`). The
   daemon writes its own PID file on startup; `stop` reads it and terminates it
   cleanly, idempotent when nothing's running.

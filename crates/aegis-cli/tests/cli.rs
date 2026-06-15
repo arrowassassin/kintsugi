@@ -186,8 +186,52 @@ fn log_respects_number_flag() {
         .output()
         .unwrap();
     let text = String::from_utf8_lossy(&out.stdout);
-    // Only the most recent (rm -rf data) should show, not the earlier ls.
+    // Page 1 (newest first) shows only the most recent (rm -rf data).
     assert!(text.contains("rm -rf data"));
+    // Footer reflects the total and links to the older page.
+    assert!(text.contains("of 2"), "footer should show total:\n{text}");
+    assert!(
+        text.contains("--page 2"),
+        "footer should link older page:\n{text}"
+    );
+}
+
+#[test]
+fn log_pagination_shows_older_page() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = tmp.path().join("events.db");
+    seed_log(&db); // 2 events: ls (older), rm -rf data (newer)
+    let out = aegis()
+        .args(["log", "-n", "1", "--page", "2"])
+        .env("AEGIS_DB", &db)
+        .env("NO_COLOR", "1")
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    // Page 2 is the older event (ls), not the newest.
+    assert!(
+        text.contains("ls"),
+        "page 2 should show the older ls:\n{text}"
+    );
+    assert!(
+        !text.contains("rm -rf data"),
+        "newest is on page 1, not 2:\n{text}"
+    );
+    assert!(
+        text.contains("--page 1"),
+        "should link back to the newer page"
+    );
+
+    // Paging past the end is graceful, not an empty-state lie.
+    let past = aegis()
+        .args(["log", "-n", "1", "--page", "9"])
+        .env("AEGIS_DB", &db)
+        .env("NO_COLOR", "1")
+        .output()
+        .unwrap();
+    assert!(past.status.success());
+    assert!(String::from_utf8_lossy(&past.stdout).contains("no events on page 9"));
 }
 
 #[test]
@@ -348,4 +392,94 @@ fn init_no_daemon_creates_shims_and_wires_claude() {
         1,
         "hook must not duplicate"
     );
+}
+
+#[test]
+fn init_wires_every_supported_cli_natively() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().join("home");
+    let data = tmp.path().join("data");
+    // Create each CLI's config dir so detection fires for all of them.
+    for dir in [
+        ".claude", ".qwen", ".gemini", ".copilot", ".cursor", ".codex",
+    ] {
+        std::fs::create_dir_all(home.join(dir)).unwrap();
+    }
+    std::fs::create_dir_all(home.join(".config/opencode")).unwrap();
+
+    let run_init = || {
+        aegis()
+            .arg("init")
+            .arg("--no-daemon")
+            .env("HOME", &home)
+            .env("AEGIS_DATA_DIR", &data)
+            .env_remove("XDG_RUNTIME_DIR")
+            .output()
+            .unwrap()
+    };
+
+    let out = run_init();
+    assert!(
+        out.status.success(),
+        "init failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // Each CLI got its native config, with the right per-agent --agent flag and
+    // the right event/structure for that CLI.
+    let read = |p: &str| std::fs::read_to_string(home.join(p)).unwrap_or_default();
+
+    let claude = read(".claude/settings.json");
+    assert!(
+        claude.contains("PreToolUse") && claude.contains("--agent claude"),
+        "claude:\n{claude}"
+    );
+
+    let qwen = read(".qwen/settings.json");
+    assert!(
+        qwen.contains("PreToolUse") && qwen.contains("--agent qwen"),
+        "qwen:\n{qwen}"
+    );
+
+    let gemini = read(".gemini/settings.json");
+    assert!(
+        gemini.contains("BeforeTool") && gemini.contains("--agent gemini"),
+        "gemini:\n{gemini}"
+    );
+
+    let copilot = read(".copilot/hooks/aegis.json");
+    assert!(
+        copilot.contains("preToolUse") && copilot.contains("--agent copilot"),
+        "copilot:\n{copilot}"
+    );
+
+    let cursor = read(".cursor/hooks.json");
+    assert!(
+        cursor.contains("beforeShellExecution") && cursor.contains("--agent cursor"),
+        "cursor:\n{cursor}"
+    );
+
+    let codex = read(".codex/config.toml");
+    assert!(
+        codex.contains("PreToolUse") && codex.contains("--agent codex"),
+        "codex:\n{codex}"
+    );
+
+    let opencode = read(".config/opencode/plugin/aegis.js");
+    assert!(
+        opencode.contains("tool.execute.before") && opencode.contains("--agent"),
+        "opencode:\n{opencode}"
+    );
+
+    // Idempotent across the board: a second init duplicates nothing.
+    run_init();
+    for (p, needle) in [
+        (".qwen/settings.json", "--agent qwen"),
+        (".gemini/settings.json", "--agent gemini"),
+        (".cursor/hooks.json", "--agent cursor"),
+        (".codex/config.toml", "--agent codex"),
+    ] {
+        let body = read(p);
+        assert_eq!(body.matches(needle).count(), 1, "{p} duplicated:\n{body}");
+    }
 }

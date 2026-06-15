@@ -39,11 +39,26 @@ enum Command {
     Status,
     /// Stop the background daemon (the inverse of `aegis init`).
     Stop,
-    /// Show the recent command timeline from the event log.
+    /// Check GitHub for a newer release and install it in place. A manual,
+    /// user-invoked check that sends no data — only fetches the latest release
+    /// tag and (with consent) the verified installer. There are no automatic or
+    /// background update checks.
+    Update {
+        /// Only report whether a newer release exists; do not install anything.
+        #[arg(long)]
+        check: bool,
+        /// Install without the confirmation prompt.
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
+    /// Show the recent command timeline from the event log (newest first).
     Log {
-        /// How many recent events to show.
+        /// Page size — how many events per page.
         #[arg(short = 'n', long, default_value_t = 20)]
         number: usize,
+        /// Which page to show (1 = newest). Older events are on higher pages.
+        #[arg(short = 'p', long, default_value_t = 1)]
+        page: usize,
         /// Also show redacted entries (as ⟨redacted⟩ placeholders).
         #[arg(long)]
         show_redacted: bool,
@@ -145,6 +160,17 @@ impl FilterArgs {
         include_redacted: bool,
         limit: Option<usize>,
     ) -> Result<aegis_core::Filter> {
+        self.to_filter_paged(include_redacted, limit, None)
+    }
+
+    /// Like [`to_filter`], with a page offset (skip the newest `offset` matches
+    /// first) for `aegis log --page N`.
+    fn to_filter_paged(
+        &self,
+        include_redacted: bool,
+        limit: Option<usize>,
+        offset: Option<usize>,
+    ) -> Result<aegis_core::Filter> {
         let class = match self.class.as_deref() {
             None => None,
             Some("safe") => Some(aegis_core::Class::Safe),
@@ -161,6 +187,7 @@ impl FilterArgs {
             until: self.before.as_deref().map(parse_instant).transpose()?,
             include_redacted,
             limit,
+            offset,
         })
     }
 }
@@ -209,11 +236,13 @@ fn main() -> Result<()> {
         }
         Some(Command::Status) => cmd_status(),
         Some(Command::Stop) => cmd_stop(),
+        Some(Command::Update { check, yes }) => cmd_update(check, yes),
         Some(Command::Log {
             number,
+            page,
             show_redacted,
             filter,
-        }) => cmd_log(number, show_redacted, &filter),
+        }) => cmd_log(number, page, show_redacted, &filter),
         Some(Command::Redact { id, reason, filter }) => cmd_redact(id, &reason, &filter),
         Some(Command::Purge {
             yes,
@@ -414,16 +443,16 @@ fn cmd_init(no_daemon: bool) -> Result<()> {
     let agents = home.as_deref().map(init::detect_agents).unwrap_or_default();
     if agents.is_empty() {
         println!(
-            "  • no agent config dirs detected (~/.claude, ~/.codex, ~/.cursor, ~/.qwen, ~/.gemini)"
+            "  • no agent config dirs detected (~/.claude, ~/.qwen, ~/.gemini, ~/.copilot, ~/.cursor, ~/.codex, ~/.config/opencode)"
         );
     }
     let mut mcp_agents = Vec::new();
     for agent in &agents {
         match agent.via {
-            init::Interception::Hook => {
-                wire_claude_hook(home.as_deref())?;
-                println!("  ✓ {}: wired via {}", agent.name, agent.via.as_str());
-            }
+            init::Interception::Hook(kind) => match wire_hook(kind, home.as_deref()) {
+                Ok(()) => println!("  ✓ {}: wired via {}", agent.name, agent.via.as_str()),
+                Err(e) => println!("  ✗ {}: could not wire ({e})", agent.name),
+            },
             init::Interception::Mcp => {
                 mcp_agents.push(agent.name);
                 println!("  • {}: intercept via {}", agent.name, agent.via.as_str());
@@ -459,34 +488,122 @@ fn cmd_init(no_daemon: bool) -> Result<()> {
         println!("  ✓ daemon started on {}", ipc::socket_path().display());
     }
 
+    // Report the active scorer so a model-less daemon (the most common surprise
+    // after setting up a model) is visible right here, not silently degraded.
+    if !no_daemon {
+        if let Some(label) = active_scorer_label() {
+            println!("  ✓ scoring with: {label}");
+        }
+    }
+
     println!();
     println!("Done. Try: aegis status");
     Ok(())
 }
 
-fn wire_claude_hook(home: Option<&std::path::Path>) -> Result<()> {
+/// The `aegis-hook --agent <id>` command string a CLI's config should invoke.
+fn hook_command(agent: &str) -> String {
+    format!(
+        "{} --agent {agent}",
+        init::sibling_bin("aegis-hook").display()
+    )
+}
+
+/// Back up a user-owned file before we modify it, once, next to the original.
+fn backup_once(path: &std::path::Path) {
+    if path.exists() {
+        let backup = path.with_extension(format!(
+            "{}.aegis-bak",
+            path.extension().and_then(|e| e.to_str()).unwrap_or("bak")
+        ));
+        let _ = std::fs::copy(path, backup);
+    }
+}
+
+fn write_file(path: &std::path::Path, contents: &str) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    std::fs::write(path, contents).with_context(|| format!("write {}", path.display()))
+}
+
+/// Wire a single detected agent by writing its CLI-specific hook config.
+fn wire_hook(kind: init::HookKind, home: Option<&std::path::Path>) -> Result<()> {
     let Some(home) = home else {
         return Ok(());
     };
-    let settings_path = home.join(".claude").join("settings.json");
-    let existing = std::fs::read_to_string(&settings_path)
+    use init::HookKind::*;
+    match kind {
+        Claude => wire_settings_json(home, ".claude", "PreToolUse", "Bash", "claude"),
+        Qwen => wire_settings_json(
+            home,
+            ".qwen",
+            "PreToolUse",
+            "run_shell_command|Bash|Shell|ShellTool",
+            "qwen",
+        ),
+        Gemini => wire_settings_json(home, ".gemini", "BeforeTool", "run_shell_command", "gemini"),
+        Cursor => wire_cursor(home),
+        Copilot => wire_copilot(home),
+        Codex => wire_codex(home),
+        OpenCode => wire_opencode(home),
+    }
+}
+
+/// Claude/Qwen/Gemini: merge a hook into `~/.<dir>/settings.json`.
+fn wire_settings_json(
+    home: &std::path::Path,
+    dir: &str,
+    event: &str,
+    matcher: &str,
+    agent: &str,
+) -> Result<()> {
+    let path = home.join(dir).join("settings.json");
+    let existing = std::fs::read_to_string(&path)
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok());
+    backup_once(&path);
+    let merged = init::merge_settings_hook(existing, event, matcher, &hook_command(agent));
+    write_file(&path, &serde_json::to_string_pretty(&merged)?)
+}
 
-    // Back up before modifying anything the user owns.
-    if settings_path.exists() {
-        let backup = settings_path.with_extension("json.aegis-bak");
-        let _ = std::fs::copy(&settings_path, &backup);
-    }
+/// Cursor: merge a `beforeShellExecution` hook into `~/.cursor/hooks.json`.
+fn wire_cursor(home: &std::path::Path) -> Result<()> {
+    let path = home.join(".cursor").join("hooks.json");
+    let existing = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok());
+    backup_once(&path);
+    let merged = init::merge_cursor_hooks(existing, &hook_command("cursor"));
+    write_file(&path, &serde_json::to_string_pretty(&merged)?)
+}
 
-    let hook_cmd = init::sibling_bin("aegis-hook");
-    let merged = init::merge_claude_settings(existing, &hook_cmd.to_string_lossy());
-    if let Some(parent) = settings_path.parent() {
-        std::fs::create_dir_all(parent).ok();
-    }
-    std::fs::write(&settings_path, serde_json::to_string_pretty(&merged)?)
-        .with_context(|| format!("write {}", settings_path.display()))?;
-    Ok(())
+/// Copilot: write `~/.copilot/hooks/aegis.json` (a file Aegis owns wholesale).
+fn wire_copilot(home: &std::path::Path) -> Result<()> {
+    let path = home.join(".copilot").join("hooks").join("aegis.json");
+    let cfg = init::copilot_hooks_config(&hook_command("copilot"));
+    write_file(&path, &serde_json::to_string_pretty(&cfg)?)
+}
+
+/// Codex: merge a `[[hooks.PreToolUse]]` block into `~/.codex/config.toml`.
+fn wire_codex(home: &std::path::Path) -> Result<()> {
+    let path = home.join(".codex").join("config.toml");
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    backup_once(&path);
+    let merged = init::merge_codex_toml(&existing, &hook_command("codex"))?;
+    write_file(&path, &merged)
+}
+
+/// OpenCode: write the JS bridge plugin to `~/.config/opencode/plugin/aegis.js`.
+fn wire_opencode(home: &std::path::Path) -> Result<()> {
+    let path = home
+        .join(".config")
+        .join("opencode")
+        .join("plugin")
+        .join("aegis.js");
+    let hook_bin = init::sibling_bin("aegis-hook");
+    let js = init::opencode_plugin_js(&hook_bin.to_string_lossy());
+    write_file(&path, &js)
 }
 
 /// Bare `aegis`: a short banner that tells you the current state and the next step.
@@ -499,6 +616,9 @@ fn cmd_banner() -> Result<()> {
         println!("    run `aegis resume` to clear it.");
     } else if Client::is_daemon_running() {
         println!("  ✓ running and guarding your machine.");
+        if let Some(label) = active_scorer_label() {
+            println!("    model: {label}");
+        }
         println!("    `aegis tui` (live timeline) · `aegis status` · `aegis stop`");
     } else {
         println!("  • not running yet.");
@@ -534,6 +654,128 @@ fn cmd_stop() -> Result<()> {
     Ok(())
 }
 
+/// The GitHub repo + installer URL. The installer is the single source of
+/// truth for download/checksum/source-fallback logic — `update` just re-runs it.
+const UPDATE_REPO: &str = "arrowassassin/aegis";
+const INSTALL_URL: &str =
+    "https://github.com/arrowassassin/aegis/releases/latest/download/install.sh";
+
+/// `aegis update`: check GitHub for a newer release and (with consent) install it.
+///
+/// Egress here is the one explicit, user-invoked exception to the "never phone
+/// home" guardrail: it is never automatic, sends no command/code/telemetry, and
+/// only fetches the latest release tag (and, on install, the verified installer).
+fn cmd_update(check_only: bool, yes: bool) -> Result<()> {
+    let current = env!("CARGO_PKG_VERSION");
+    println!("aegis {current} — checking GitHub for a newer release…");
+
+    let tag = latest_release_tag().context("check for the latest release")?;
+    let latest = tag.trim_start_matches('v');
+    if !version_is_newer(&tag, current) {
+        println!("  ✓ up to date (latest release is {tag}).");
+        return Ok(());
+    }
+    println!("  ↑ update available: {current} → {latest}");
+
+    let one_liner = format!("curl -fsSL {INSTALL_URL} | sh -s -- --bin-only");
+    if check_only {
+        println!("    install it with:");
+        println!("      {one_liner}");
+        return Ok(());
+    }
+    if !yes && !confirm("Download and install the new binaries now?")? {
+        println!("  • skipped. To update later:  aegis update   (or: {one_liner})");
+        return Ok(());
+    }
+
+    run_installer().context("install the update")?;
+    println!("  ✓ updated to {latest}. Restart the daemon to run it:  aegis stop && aegis init");
+    Ok(())
+}
+
+/// Fetch the `tag_name` of the latest GitHub release via curl/wget.
+fn latest_release_tag() -> Result<String> {
+    let url = format!("https://api.github.com/repos/{UPDATE_REPO}/releases/latest");
+    let body = http_get(&url)?;
+    let json: serde_json::Value =
+        serde_json::from_slice(&body).context("parse the GitHub release response")?;
+    json.get("tag_name")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .context("no tag_name in the GitHub response (no published release yet?)")
+}
+
+/// HTTP GET via curl (then wget). No headers beyond the tool's defaults, no body
+/// — so no user data leaves the machine. Returns the response bytes.
+fn http_get(url: &str) -> Result<Vec<u8>> {
+    let attempts: [(&str, &[&str]); 2] = [("curl", &["-fsSL", url]), ("wget", &["-qO-", url])];
+    for (bin, args) in attempts {
+        match std::process::Command::new(bin).args(args).output() {
+            Ok(out) if out.status.success() => return Ok(out.stdout),
+            // Tool ran but the request failed (or the tool is missing): try the next.
+            Ok(_) | Err(_) => continue,
+        }
+    }
+    anyhow::bail!("could not reach GitHub — need curl or wget and network access")
+}
+
+/// Download the installer and run it in `--bin-only` mode, targeting the dir the
+/// running `aegis` binary lives in so the update lands in the same place.
+fn run_installer() -> Result<()> {
+    let script = http_get(INSTALL_URL).context("download the installer")?;
+    let tmp = std::env::temp_dir().join(format!("aegis-update-{}.sh", std::process::id()));
+    std::fs::write(&tmp, &script).with_context(|| format!("write {}", tmp.display()))?;
+
+    let mut cmd = std::process::Command::new("sh");
+    cmd.arg(&tmp).arg("--bin-only");
+    // Target the dir the running binary lives in, so the update lands in place.
+    let exe = std::env::current_exe().ok();
+    if let Some(parent) = exe.as_deref().and_then(|p| p.parent()) {
+        cmd.arg("--bin-dir").arg(parent);
+    }
+    let status = cmd.status().context("run the installer");
+    let _ = std::fs::remove_file(&tmp);
+    let status = status?;
+    if !status.success() {
+        anyhow::bail!("installer exited unsuccessfully ({status})");
+    }
+    Ok(())
+}
+
+/// A y/N confirmation read from the terminal. Non-interactive ⇒ `false` (never
+/// modify binaries without an explicit answer).
+fn confirm(prompt: &str) -> Result<bool> {
+    use std::io::Write;
+    if !std::io::stdin().is_terminal() {
+        return Ok(false);
+    }
+    print!("{prompt} [y/N] ");
+    std::io::stdout().flush().ok();
+    let mut answer = String::new();
+    std::io::stdin().read_line(&mut answer)?;
+    Ok(matches!(answer.trim(), "y" | "Y" | "yes" | "Yes"))
+}
+
+/// Parse a `vMAJOR.MINOR.PATCH`-ish version into a comparable tuple. Tolerant of
+/// a leading `v` and pre-release/build suffixes (compared on the numeric core).
+fn parse_version(s: &str) -> Option<(u64, u64, u64)> {
+    let core = s.trim().trim_start_matches('v');
+    let mut parts = core.split(['.', '-', '+']);
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next().unwrap_or("0").parse().ok()?;
+    let patch = parts.next().unwrap_or("0").parse().ok()?;
+    Some((major, minor, patch))
+}
+
+/// True when `latest` is a strictly newer release than `current`. If either is
+/// unparseable, fall back to "they differ" rather than silently claiming current.
+fn version_is_newer(latest: &str, current: &str) -> bool {
+    match (parse_version(latest), parse_version(current)) {
+        (Some(l), Some(c)) => l > c,
+        _ => latest.trim_start_matches('v') != current.trim_start_matches('v'),
+    }
+}
+
 /// Best-effort terminate a PID across platforms.
 #[cfg(unix)]
 fn kill_pid(pid: &str) {
@@ -565,11 +807,37 @@ fn start_daemon() -> Result<()> {
     Ok(())
 }
 
+/// Map a daemon scorer backend id to a one-line, human-readable description.
+/// `llama:<model>` means the local model loaded; `heuristic` is the always-on
+/// offline fallback (and a hint at why, so a missing `AEGIS_MODEL_FILE` is
+/// diagnosable without reading the daemon's swallowed stderr).
+fn describe_scorer(name: &str) -> String {
+    if let Some(model) = name.strip_prefix("llama:") {
+        format!("{model} (local model)")
+    } else if name == "heuristic" {
+        "heuristic fallback (no local model — set AEGIS_MODEL_FILE)".to_string()
+    } else {
+        name.to_string()
+    }
+}
+
+/// Human-friendly description of the daemon's active scorer, asked over IPC.
+/// `None` when the daemon isn't running or doesn't answer.
+fn active_scorer_label() -> Option<String> {
+    Client::status_scorer().ok().map(|n| describe_scorer(&n))
+}
+
 fn cmd_status() -> Result<()> {
     println!("aegis {}", env!("CARGO_PKG_VERSION"));
     let running = Client::is_daemon_running();
     println!("  daemon:  {}", if running { "running" } else { "stopped" });
     println!("  socket:  {}", ipc::socket_path().display());
+    if running {
+        match Client::status_scorer() {
+            Ok(name) => println!("  model:   {}", describe_scorer(&name)),
+            Err(_) => println!("  model:   (daemon not answering)"),
+        }
+    }
 
     // The panic kill-switch is the loudest state — surface it prominently.
     if aegis_daemon::kill_switch_path().exists() {
@@ -601,20 +869,47 @@ fn cmd_status() -> Result<()> {
     Ok(())
 }
 
-fn cmd_log(number: usize, show_redacted: bool, filter: &FilterArgs) -> Result<()> {
+fn cmd_log(number: usize, page: usize, show_redacted: bool, filter: &FilterArgs) -> Result<()> {
     let db = default_db_path();
     if !db.exists() {
         print!("{}", logview::render_log(&[], false));
         return Ok(());
     }
     let log = EventLog::open(&db).with_context(|| format!("open log {}", db.display()))?;
-    let f = filter.to_filter(show_redacted, Some(number))?;
-    let events = log.query(&f)?;
+    let number = number.max(1);
+    let page = page.max(1);
+    let offset = (page - 1) * number;
+
     let color = logview::use_color(
         std::env::var_os("NO_COLOR").is_some(),
         std::io::stdout().is_terminal(),
     );
+
+    let f = filter.to_filter_paged(show_redacted, Some(number), Some(offset))?;
+    let mut events = log.query(&f)?;
+    // The query returns the page oldest-first; flip it so the newest command in
+    // the page is on top.
+    events.reverse();
+
+    // Total matches (counting ignores limit/offset) for the page footer.
+    let total = log.count_matching(&filter.to_filter(show_redacted, None)?)? as usize;
+
+    if events.is_empty() {
+        if total == 0 {
+            // Genuinely empty log → the designed empty state.
+            print!("{}", logview::render_log(&events, color));
+        } else {
+            // Paged past the end.
+            println!("  no events on page {page} — {total} total; newest is page 1.");
+        }
+        return Ok(());
+    }
+
     print!("{}", logview::render_log(&events, color));
+    print!(
+        "{}",
+        logview::render_page_footer(page, offset, events.len(), total, color)
+    );
     Ok(())
 }
 
@@ -691,6 +986,40 @@ fn resolve_event_id(log: &EventLog, prefix: &str) -> Result<String> {
 #[cfg(test)]
 mod filter_tests {
     use super::*;
+
+    #[test]
+    fn version_compare_handles_tags_and_suffixes() {
+        // Newer wins, with or without the leading `v`.
+        assert!(version_is_newer("v0.2.0", "0.1.0"));
+        assert!(version_is_newer("0.1.1", "0.1.0"));
+        assert!(version_is_newer("v1.0.0", "0.9.9"));
+        // Same or older does not trigger an update.
+        assert!(!version_is_newer("v0.1.0", "0.1.0"));
+        assert!(!version_is_newer("0.1.0", "0.2.0"));
+        // Pre-release/build suffixes compare on the numeric core.
+        assert_eq!(parse_version("v0.1.0-rc1"), Some((0, 1, 0)));
+        assert_eq!(parse_version("0.1"), Some((0, 1, 0)));
+        // Unparseable tag: fall back to "differs" so we don't hide a real release.
+        assert!(version_is_newer("nightly", "0.1.0"));
+        assert!(!version_is_newer("v0.1.0", "0.1.0"));
+    }
+
+    #[test]
+    fn describe_scorer_distinguishes_model_from_fallback() {
+        // The local model loaded: show the model name, marked as such.
+        let m = describe_scorer("llama:Qwen3-4B-Instruct-2507-Q4_K_M");
+        assert!(m.contains("Qwen3-4B-Instruct-2507-Q4_K_M"));
+        assert!(m.contains("local model"));
+        assert!(!m.starts_with("llama:"), "the raw backend prefix is hidden");
+
+        // The offline fallback: name it and hint at the fix.
+        let h = describe_scorer("heuristic");
+        assert!(h.contains("heuristic"));
+        assert!(h.contains("AEGIS_MODEL_FILE"));
+
+        // An unknown backend id is passed through verbatim, not dropped.
+        assert_eq!(describe_scorer("future-backend"), "future-backend");
+    }
 
     #[test]
     fn parse_instant_relative_and_rfc3339() {

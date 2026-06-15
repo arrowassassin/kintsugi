@@ -285,10 +285,25 @@ fn render_detail(f: &mut Frame, app: &App, area: Rect, full: bool) {
         Span::raw(ev.reason.clone()),
     ]));
     if let Some(summary) = &ev.summary {
-        lines.push(Line::from(vec![
-            label("summary"),
-            Span::raw(summary.clone()),
-        ]));
+        // The model summary may carry "• " pointer lines (newline-separated);
+        // a single Span won't break on '\n', so render each line on its own —
+        // the label on the first, indented continuations after.
+        let mut parts = summary.split('\n');
+        if let Some(first) = parts.next() {
+            lines.push(Line::from(vec![
+                label("summary"),
+                Span::raw(first.to_string()),
+            ]));
+        }
+        for cont in parts {
+            if cont.trim().is_empty() {
+                continue;
+            }
+            lines.push(Line::from(vec![
+                Span::raw("           "),
+                Span::raw(cont.to_string()),
+            ]));
+        }
     }
     if let Some(snap) = &ev.snapshot_id {
         lines.push(Line::from(vec![

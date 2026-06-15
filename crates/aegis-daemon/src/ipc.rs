@@ -42,6 +42,10 @@ pub enum Request {
     Approve { id: String },
     /// "A human denied this queued command id."
     Deny { id: String },
+    /// "What is the daemon's runtime status?" — currently the active scorer, so
+    /// callers can tell whether the local model loaded or it's on the heuristic
+    /// fallback.
+    Status,
 }
 
 /// A filesystem change observed by the backstop watcher.
@@ -80,6 +84,9 @@ pub enum Response {
     /// The status of a queued command (reply to `PendingStatus`): `pending` |
     /// `approved` | `denied` | `gone` (not in the queue).
     Pending { status: String },
+    /// The daemon's runtime status (reply to `Status`). `scorer` is the active
+    /// backend id, e.g. `heuristic` or `llama:Qwen3-4B-Instruct-2507-Q4_K_M`.
+    Status { scorer: String },
     /// Something went wrong handling the request.
     Error { message: String },
 }
@@ -239,6 +246,16 @@ impl Client {
     /// Deny a queued command.
     pub fn deny(id: &str) -> Result<()> {
         expect_ack(round_trip(&Request::Deny { id: id.to_string() })?)
+    }
+
+    /// The daemon's active scorer backend id (e.g. `heuristic` or
+    /// `llama:<model>`). Lets callers report whether the local model is loaded.
+    pub fn status_scorer() -> Result<String> {
+        match round_trip(&Request::Status)? {
+            Response::Status { scorer } => Ok(scorer),
+            Response::Error { message } => anyhow::bail!("daemon error: {message}"),
+            _ => anyhow::bail!("unexpected response to Status"),
+        }
     }
 
     /// Whether a daemon appears to be listening.

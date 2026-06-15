@@ -166,6 +166,19 @@ fn is_daemon_running_is_false_without_a_listener() {
 }
 
 #[test]
+fn status_reports_the_active_scorer() {
+    let mut h = start(1);
+
+    // Without a model configured the daemon runs the always-on heuristic scorer;
+    // `Status` lets a client (e.g. `aegis status`) observe which backend is live
+    // rather than guessing from thin summaries.
+    let scorer = Client::status_scorer().unwrap();
+    assert_eq!(scorer, "heuristic");
+
+    h.join();
+}
+
+#[test]
 fn multiple_commands_chain_in_log() {
     let mut h = start(3);
 

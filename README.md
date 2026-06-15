@@ -29,8 +29,9 @@ frames in [`docs/img/`](docs/img/) if the animation doesn't play.)*
 - **It stops the mistake before it happens** — not a post-mortem. A deterministic
   rule engine (not an LLM rolling the dice) decides what's catastrophic, so the
   block is predictable and can't be "talked out of" by a clever prompt.
-- **Works with every agent — and your shell.** Claude Code, Cursor, Codex, Qwen,
-  Gemini, or a raw `bash` script: one safety layer at the process level, not a
+- **Works with every agent — and your shell.** Native pre-tool hooks for Claude
+  Code, Cursor, Codex, Qwen, Gemini, Copilot, and OpenCode — or a raw `bash`
+  script via the `$PATH` shim: one safety layer at the process level, not a
   fragile per-tool plugin. `aegis init` wires them all in one command.
 - **Reversible by default.** Aegis snapshots files before a destructive op, so
   `aegis undo` brings them back. The honest promise is *nothing unrecoverable* —
@@ -97,7 +98,8 @@ score for ambiguous commands; the installer can set it up, or do it later (see
 Day-to-day: `aegis status`, `aegis tui` (live timeline), `aegis stop` (stop the
 daemon — the inverse of `init`). Also: `aegis log`, `aegis undo [--session]`,
 `aegis queue` / `approve <id>` / `deny <id>`, `aegis watch <path>`,
-`aegis panic` / `resume`.
+`aegis panic` / `resume`, `aegis update` (manual check + self-install from the
+latest GitHub release; `--check` to only report).
 The Tier-2 model, snapshots/undo, the TUI, the FS backstop, and the kill-switch
 are documented in [`docs/`](docs/) (`model.md`, `policy.md`, `mcp.md`, `queue.md`,
 `demo.md`).
@@ -107,20 +109,32 @@ are documented in [`docs/`](docs/) (`model.md`, `policy.md`, `mcp.md`, `queue.md
 Aegis is agent-agnostic. Protection lives at the process/PATH layer, not inside
 any one tool, so anything that runs commands on your machine is covered:
 
+Every major agent CLI now exposes a *pre-tool hook*: it runs a command before
+executing a shell tool, hands it the proposed command, and reads back an
+allow / deny / ask decision. Aegis wires that hook on each — the tightest,
+in-band UX — so a held command pauses the agent itself, not just a `$PATH` shim:
+
 | agent | how Aegis intercepts it |
 |-------|--------------------------|
-| **Claude Code** | native `PreToolUse` hook (tightest UX) + `aegis-exec` MCP |
-| **Cursor CLI**, **Codex CLI**, **Qwen Code**, **Gemini CLI** | the `aegis-exec` MCP server (stdio) — add it to the agent's MCP config |
-| any other MCP client | the same `aegis-exec` MCP server |
+| **Claude Code** | native `PreToolUse` hook (`~/.claude/settings.json`) |
+| **Qwen Code** | native `PreToolUse` hook (`~/.qwen/settings.json`) |
+| **Gemini CLI** | native `BeforeTool` hook (`~/.gemini/settings.json`) |
+| **GitHub Copilot CLI** | native `preToolUse` hook (`~/.copilot/hooks/aegis.json`, fail-closed) |
+| **Cursor CLI** | native `beforeShellExecution` hook (`~/.cursor/hooks.json`) |
+| **Codex CLI** | native `PreToolUse` hook (`~/.codex/config.toml`) |
+| **OpenCode** | a bundled `tool.execute.before` plugin (`~/.config/opencode/plugin/aegis.js`) that bridges to the hook |
+| any other MCP client | the `aegis-exec` MCP server (stdio) |
 | **any tool or raw shell** (Aider, Continue, a `bash` script, a Makefile, you) | the `$PATH` shim — `aegis init` prints the `PATH` line to prepend |
 
-`aegis init` detects installed agents (`~/.claude`, `~/.codex`, `~/.cursor`,
-`~/.qwen`, `~/.gemini`), wires the Claude Code hook, prints the MCP server command
-for the rest, and prints the shim `PATH` line that guards every other shell-out.
-The only caveat (consistent with the security spine): the shim is a `$PATH`
-mechanism, not a kernel hook — a process that calls a binary by absolute path
-bypasses it, which is exactly why the FS-watcher backstop exists so "nothing is
-unrecoverable." See [`docs/mcp.md`](docs/mcp.md) and
+One binary, `aegis-hook --agent <id>`, speaks each CLI's dialect; `aegis init`
+detects installed agents (`~/.claude`, `~/.qwen`, `~/.gemini`, `~/.copilot`,
+`~/.cursor`, `~/.codex`, `~/.config/opencode`), writes each one's hook config
+idempotently (backing up anything it touches), and prints the shim `PATH` line
+that guards every other shell-out. The caveat that keeps the guarantee honest:
+hooks are an interception layer, not a kernel firewall — an agent in a
+"yolo"/auto-approve mode, or a process that calls a binary by absolute path,
+can bypass them, which is exactly why the FS-watcher backstop exists so
+"nothing is unrecoverable." See [`docs/mcp.md`](docs/mcp.md) and
 [`docs/policy.md`](docs/policy.md).
 
 ### Claude Code plugin
