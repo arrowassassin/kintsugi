@@ -51,6 +51,21 @@ fn unknown_id_has_no_status_or_command() {
 }
 
 #[test]
+fn status_and_command_round_trip() {
+    let log = EventLog::open_in_memory().unwrap();
+    let c = cmd("rm z.txt");
+    log.enqueue_pending(&c, Class::Ambiguous, "r").unwrap();
+    let id = c.id.to_string();
+    assert_eq!(log.pending_status(&id).unwrap().as_deref(), Some("pending"));
+    log.set_pending_status(&id, "approved").unwrap();
+    assert_eq!(
+        log.pending_status(&id).unwrap().as_deref(),
+        Some("approved")
+    );
+    assert_eq!(log.pending_command(&id).unwrap().unwrap().raw, "rm z.txt");
+}
+
+#[test]
 fn cas_transitions_exactly_once() {
     let log = EventLog::open_in_memory().unwrap();
     let c = cmd("rm a.txt");

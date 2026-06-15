@@ -1229,6 +1229,22 @@ mod filter_tests {
     use super::*;
 
     #[test]
+    fn run_in_shell_propagates_exit_code() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(run_in_shell(tmp.path(), "exit 0").unwrap().success());
+        let st = run_in_shell(tmp.path(), "exit 7").unwrap();
+        assert_eq!(st.code(), Some(7));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tty_code_is_short_and_hex() {
+        let c = tty_code();
+        assert_eq!(c.len(), 4);
+        assert!(c.chars().all(|ch| ch.is_ascii_hexdigit()), "got {c}");
+    }
+
+    #[test]
     fn in_band_only_for_shim_and_mcp() {
         // Shim and MCP have a caller waiting → approve runs it there.
         assert!(is_in_band("shim"));

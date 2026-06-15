@@ -304,6 +304,21 @@ mod tests {
         // A piped/chained second command's paths are still seen.
         let q = predict_paths(&cmd(cwd, "ls; rm notes.txt"));
         assert!(q.contains(&PathBuf::from("/work/notes.txt")));
+        // A pipe `|` also splits segments.
+        let r = predict_paths(&cmd(cwd, "cat a.txt | rm b.txt"));
+        assert!(r.contains(&PathBuf::from("/work/b.txt")), "got {r:?}");
+    }
+
+    #[test]
+    fn predicts_redirect_variants() {
+        let cwd = Path::new("/work");
+        for raw in ["echo x >> log.txt", "echo x 2> err.txt", "echo x >out.txt"] {
+            let p = predict_paths(&cmd(cwd, raw));
+            assert!(
+                p.iter().any(|x| x.to_string_lossy().ends_with(".txt")),
+                "{raw}: {p:?}"
+            );
+        }
     }
 
     #[test]
@@ -320,6 +335,27 @@ mod tests {
             cwd,
             "dd if=/dev/zero of=/dev/sda"
         )));
+    }
+
+    #[test]
+    fn captures_and_restores_a_directory_tree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = tmp.path().join("store");
+        let work = tmp.path().join("work");
+        std::fs::create_dir_all(work.join("sub/deep")).unwrap();
+        std::fs::write(work.join("sub/a.txt"), b"one").unwrap();
+        std::fs::write(work.join("sub/deep/b.txt"), b"two").unwrap();
+
+        let manifest = capture(&store, &cmd(&work, "rm -rf sub"))
+            .unwrap()
+            .expect("a directory to capture");
+        assert!(manifest.entries.iter().any(|e| e.is_dir), "captured a dir");
+
+        // Delete the whole tree, then restore it from the snapshot.
+        std::fs::remove_dir_all(work.join("sub")).unwrap();
+        restore(&store, &manifest).unwrap();
+        assert_eq!(std::fs::read(work.join("sub/a.txt")).unwrap(), b"one");
+        assert_eq!(std::fs::read(work.join("sub/deep/b.txt")).unwrap(), b"two");
     }
 
     #[test]
