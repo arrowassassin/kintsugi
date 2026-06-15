@@ -5,17 +5,46 @@
 When Aegis **holds** a command, the agent is never left without an answer. How it
 proceeds depends on the path:
 
-| path | on hold | how the agent proceeds |
+| path | on hold | how it proceeds |
 |------|---------|------------------------|
-| Claude Code hook (attended) | `permissionDecision: "ask"` | Claude Code's own prompt; approve → it runs → agent continues |
+| native hook, **ambiguous** | `ask` (or `deny` on CLIs without ask) | the agent's own prompt; approve → it runs → agent continues |
+| native hook, **catastrophic** | `deny` (one-shot) | the agent does **not** run it; you run it yourself with `aegis run <id>` (see below) |
 | `$PATH` shim (attended) | live hold card | press `a` → real binary runs → shell gets the output |
 | MCP `aegis-exec` | enqueued + (optional) wait | a human approves from CLI/TUI → the same call runs the command and returns output |
 
-The **queue** is "holds not yet resolved." It is resolvable from three places:
+The **queue** is "holds not yet resolved." Two verbs resolve it, by origin:
 
-- the agent's own bounded wait (MCP), 
-- the CLI: `aegis queue`, `aegis approve <id>`, `aegis deny <id>`,
-- the TUI: `a` / `d` on a held row.
+- **`aegis approve <id>`** — for an **in-band** origin (the `$PATH` shim or the
+  MCP server), a caller is already waiting; approving runs it *there* and returns
+  the output to the agent. For a **hook** origin nothing is waiting, so approve
+  only records the decision (it won't execute) — it tells you to use `aegis run`.
+- **`aegis run <id>`** — for a **hook**-blocked command (one-shot, no waiter):
+  **you** run it. Aegis snapshots the predicted paths, runs the exact command in
+  its original directory, and records it; `aegis undo` rolls it back. You confirm
+  with a code typed at your terminal (`/dev/tty`), so an agent shelling out to
+  `aegis run` can't self-approve by pre-stuffing a keypress. Pass no id when a
+  single command is held. (Refuses on an in-band origin — use `aegis approve`,
+  since its waiting caller would otherwise run it too.)
+
+Both are also reachable from `aegis queue` (lists held ids + the right verb) and
+`aegis tui` (`a` / `d` on a held row).
+
+### Exactly-once
+
+Resolving a held command is an atomic compare-and-swap on its queue status, so a
+racing double `aegis approve`/`aegis run` can't double-execute or log a phantom
+approval — only the first claim proceeds.
+
+### Honest reversibility
+
+`aegis run` snapshots the files a command is *predicted* to touch (parsing
+`;`/`&&`/`|` segments and tracking `cd`). For **bounded** targets (a directory,
+named files) `aegis undo` fully restores them. For **unbounded** targets — globs,
+`$VARS`/expansions, the filesystem root, device nodes — a snapshot can't cover
+everything; `aegis run` says so before you confirm and the filesystem-watcher
+backstop is the net. The terminal confirmation is a strong speed bump, not a
+sandbox: per the honest guarantee, Aegis guards agent *mistakes*, not a malicious
+same-user process.
 
 ## In-band approval for autonomous agents (MCP)
 

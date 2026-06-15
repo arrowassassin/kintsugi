@@ -97,6 +97,20 @@ fn queue_without_daemon_is_graceful() {
 }
 
 #[test]
+fn run_without_daemon_errors() {
+    let tmp = tempfile::tempdir().unwrap();
+    // No daemon → `aegis run` should fail cleanly (non-zero), not panic.
+    let out = aegis()
+        .args(["run", "abc"])
+        .env("AEGIS_SOCKET", tmp.path().join("none.sock"))
+        .env("AEGIS_DB", tmp.path().join("e.db"))
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("daemon"));
+}
+
+#[test]
 fn approve_unknown_prefix_errors() {
     let tmp = tempfile::tempdir().unwrap();
     // No daemon → the command should fail cleanly (non-zero), not panic.
@@ -511,4 +525,198 @@ fn test_command_is_a_dry_run_classifier() {
         st.contains("CATASTROPHIC"),
         "substitution should be caught:\n{st}"
     );
+}
+
+/// Drives a live daemon through `aegis queue` and the `aegis run` branches, to
+/// cover the queue/run handlers (which only exercise meaningfully against a real
+/// daemon + queued items). Linux-only: it relies on `setsid` to run `aegis run`
+/// in a session with no controlling terminal, so the catastrophic confirmation
+/// (`/dev/tty`) declines deterministically instead of blocking on input.
+#[cfg(target_os = "linux")]
+#[test]
+fn run_and_queue_against_live_daemon() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().join("home");
+    let data = home.join(".local/share");
+    let run = tmp.path().join("run");
+    std::fs::create_dir_all(&run).unwrap();
+    let db = data.join("events.db");
+    let cfg = tmp.path().join("none.toml");
+
+    let common = |cmd: &mut Command| {
+        cmd.env("HOME", &home)
+            .env("XDG_DATA_HOME", &data)
+            .env("AEGIS_DATA_DIR", &data)
+            .env("AEGIS_DB", &db)
+            .env("XDG_RUNTIME_DIR", &run)
+            .env("AEGIS_CONFIG", &cfg)
+            .env("NO_COLOR", "1");
+    };
+
+    // Start the daemon (detached child) and wait for it to bind.
+    let mut init = aegis();
+    init.arg("init");
+    common(&mut init);
+    assert!(init.output().unwrap().status.success());
+    let mut up = false;
+    for _ in 0..200 {
+        let mut s = aegis();
+        s.arg("status");
+        common(&mut s);
+        if String::from_utf8_lossy(&s.output().unwrap().stdout).contains("running") {
+            up = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert!(up, "daemon should be running");
+
+    // Enqueue two held commands into the daemon's DB: one from a hook (no waiter
+    // → `aegis run`) and one in-band from MCP (a waiter → `aegis approve`).
+    let (hook_id, mcp_id, deny_id);
+    {
+        let log = EventLog::open(&db).unwrap();
+        let hook = ProposedCommand::new(
+            "claude-code",
+            "/tmp/proj",
+            vec!["rm".into(), "-rf".into(), "build".into()],
+            "rm -rf build",
+        );
+        hook_id = hook.id.to_string();
+        log.enqueue_pending(&hook, Class::Catastrophic, "rm:recursive")
+            .unwrap();
+        let mcp = ProposedCommand::new(
+            "mcp",
+            "/tmp/proj",
+            vec!["rm".into(), "-rf".into(), "dist".into()],
+            "rm -rf dist",
+        );
+        mcp_id = mcp.id.to_string();
+        log.enqueue_pending(&mcp, Class::Catastrophic, "rm:recursive")
+            .unwrap();
+        let extra = ProposedCommand::new(
+            "shim",
+            "/tmp/proj",
+            vec!["rm".into(), "-rf".into(), "tmp".into()],
+            "rm -rf tmp",
+        );
+        deny_id = extra.id.to_string();
+        log.enqueue_pending(&extra, Class::Catastrophic, "rm:recursive")
+            .unwrap();
+    }
+
+    let kill = || {
+        if let Ok(pid) = std::fs::read_to_string(data.join("aegis.pid")) {
+            let _ = Command::new("kill").arg(pid.trim()).status();
+        }
+    };
+
+    // `aegis queue` lists both and shows the origin-aware verbs.
+    let mut q = aegis();
+    q.arg("queue");
+    common(&mut q);
+    let qt = String::from_utf8_lossy(&q.output().unwrap().stdout).into_owned();
+
+    // `aegis run <mcp>` → in-band, redirected to approve (bails non-zero).
+    let mut r1 = aegis();
+    r1.args(["run", &mcp_id[..8]]);
+    common(&mut r1);
+    let r1o = r1.output().unwrap();
+    let r1t = String::from_utf8_lossy(&r1o.stderr).into_owned();
+
+    // `aegis run` with no id and 2 held → asks for an id (bails non-zero).
+    let mut r2 = aegis();
+    r2.arg("run");
+    common(&mut r2);
+    let r2o = r2.output().unwrap();
+    let r2t = String::from_utf8_lossy(&r2o.stderr).into_owned();
+
+    // `setsid aegis run <hook>` → no controlling tty → the confirmation declines
+    // and nothing runs (covers the run-plan print + reversibility note + confirm).
+    let mut r3 = Command::new("setsid");
+    r3.arg(env!("CARGO_BIN_EXE_aegis"))
+        .args(["run", &hook_id[..8]])
+        .stdin(std::process::Stdio::null());
+    common(&mut r3);
+    let r3o = r3.output().unwrap();
+    let r3t = String::from_utf8_lossy(&r3o.stdout).into_owned();
+
+    // `aegis run <unknown>` while the queue is non-empty → no match (bails).
+    let mut r4 = aegis();
+    r4.args(["run", "zzzzzzzz"]);
+    common(&mut r4);
+    let r4o = r4.output().unwrap();
+    let r4t = String::from_utf8_lossy(&r4o.stderr).into_owned();
+
+    // Approve both, exercising the origin-aware messages: hook (use `aegis run`)
+    // and in-band MCP (the agent may proceed).
+    let mut a1 = aegis();
+    a1.args(["approve", &hook_id[..8]]);
+    common(&mut a1);
+    let a1t = String::from_utf8_lossy(&a1.output().unwrap().stdout).into_owned();
+    let mut a2 = aegis();
+    a2.args(["approve", &mcp_id[..8]]);
+    common(&mut a2);
+    let a2t = String::from_utf8_lossy(&a2.output().unwrap().stdout).into_owned();
+
+    // Deny the third (covers the deny branch).
+    let mut d1 = aegis();
+    d1.args(["deny", &deny_id[..8]]);
+    common(&mut d1);
+    let d1t = String::from_utf8_lossy(&d1.output().unwrap().stdout).into_owned();
+
+    // Queue now empty → `aegis run` and `aegis queue` both say so.
+    let mut r5 = aegis();
+    r5.arg("run");
+    common(&mut r5);
+    let r5t = String::from_utf8_lossy(&r5.output().unwrap().stdout).into_owned();
+    let mut q2 = aegis();
+    q2.arg("queue");
+    common(&mut q2);
+    let q2t = String::from_utf8_lossy(&q2.output().unwrap().stdout).into_owned();
+
+    // approve of an unknown id → clean error (covers the no-match arm).
+    let mut au = aegis();
+    au.args(["approve", "zzzzzzzz"]);
+    common(&mut au);
+    let auo = au.output().unwrap();
+
+    kill();
+
+    assert!(
+        qt.contains("rm -rf build"),
+        "queue lists the hook cmd:\n{qt}"
+    );
+    assert!(
+        qt.contains("aegis run") && qt.contains("aegis approve"),
+        "queue shows both verbs:\n{qt}"
+    );
+    assert!(
+        !r1o.status.success() && r1t.contains("approve"),
+        "in-band run redirects to approve:\n{r1t}"
+    );
+    assert!(
+        !r2o.status.success() && r2t.contains("held"),
+        "no-id with many held asks for an id:\n{r2t}"
+    );
+    assert!(
+        r3t.contains("rm -rf build") && r3t.contains("Not run"),
+        "no-tty run shows the plan and declines:\n{r3t}"
+    );
+    assert!(
+        !r4o.status.success() && r4t.contains("no held command"),
+        "unknown id:\n{r4t}"
+    );
+    assert!(
+        a1t.contains("aegis run"),
+        "hook approve points at run:\n{a1t}"
+    );
+    assert!(
+        a2t.contains("proceed"),
+        "in-band approve lets the agent proceed:\n{a2t}"
+    );
+    assert!(d1t.contains("denied"), "deny reports denied:\n{d1t}");
+    assert!(r5t.contains("empty"), "empty queue run:\n{r5t}");
+    assert!(q2t.contains("empty"), "empty queue listing:\n{q2t}");
+    assert!(!auo.status.success(), "approve of unknown id errors");
 }

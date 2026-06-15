@@ -313,3 +313,28 @@ the locked product decisions this build implements.
   alias.* / *.command …) is `git:config-exec`. Reads of those keys stay safe.
 - Decoder-to-shell joins download-to-shell: `… | base64 -d | sh` (and base32 /
   xxd / uudecode / openssl) is `net:pipe-to-shell`, not just `curl|sh`.
+- aegis run / approval flow (6-reviewer roundtable: 2 principal sys-design, 2
+  junior daily users, 1 PM, 1 infosec). A catastrophic command via a native hook
+  is one-shot deny (an in-agent allow would skip the snapshot), so the human path
+  to run it is `aegis run <id>`: snapshot predicted paths → execute the raw
+  command in its original cwd → record. Confirmation is a random code typed at
+  /dev/tty (not stdin) so an agent with piped stdio can't self-approve by
+  pre-stuffing a key. Decisions taken from the panel: (1) origin-aware verbs —
+  in-band (shim/MCP) keep approve (the waiting caller runs it); hook origins use
+  run; approve on a hook origin no longer claims "agent may proceed" — fixes the
+  approve-vs-run footgun both principals + juniors + PM flagged. (2) exactly-once
+  CAS on the queue status (cas_pending_status) — kills the double-run/phantom
+  Principal A found. (3) Honest reversibility (infosec V3 + both principals):
+  predict_paths is now segment+cd aware, and is_fully_reversible flags unbounded
+  targets (glob/$/root/device) so aegis run states plainly when undo can't cover
+  it instead of over-promising — keeps spine #7 honest. (4) The /dev/tty gate is
+  documented as a strong speed bump, NOT a sandbox: infosec correctly noted a
+  same-user agent can self-approve over the unauthenticated local socket or echo
+  the code from a PTY it owns. That is OUT of Aegis's stated threat model (spine
+  #7: guards mistakes, "not an unbypassable firewall"); we raise the bar (typed
+  random code, drain, tty-only) and are honest rather than claim a guarantee we
+  can't keep. Deferred, deliberately, with this design as the extension point: a
+  daemon-owned lease/redeem capability that unifies all paths, an explicit
+  armed-vs-consumed state for a future "agent re-runs after human arm" feature,
+  and nonce-bound socket auth for catastrophic — each is a protocol change that
+  warrants its own review rather than riding this PR.

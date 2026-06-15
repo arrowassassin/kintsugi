@@ -37,8 +37,9 @@
 
   <section class="hero" style="border-top:none; padding-bottom:10px">
     <h1 style="font-size:34px">FEATURES</h1>
-    <p class="sub" style="font-size:22px">Every feature with a real captured frame. Everything
-      below is output captured from the running binaries — no mockups.</p>
+    <p class="sub" style="font-size:22px">Every feature with a real captured frame —
+      the gate, the timeline, the TUI, the queue, undo, setup, every-CLI hooks,
+      running a blocked command yourself, and how it decides. No mockups.</p>
   </section>
 
   <section>
@@ -159,7 +160,51 @@ aegis 0.1.0
   </section>
 
   <section>
-    <h2><span class="n">7 &gt;</span> how it decides — deterministic AST analysis</h2>
+    <h2><span class="n">7 &gt;</span> works with every CLI — one native hook each</h2>
+    <p class="lead">Aegis isn't a plug-in for one tool. Every major agent CLI
+      exposes a <em>pre-tool hook</em>, and <span class="muted">aegis init</span>
+      wires each natively, so a held command pauses the agent itself — not just a
+      <span class="muted">$PATH</span> shim. One binary,
+      <span class="muted">aegis-hook --agent &lt;id&gt;</span>, speaks every dialect.</p>
+    <div class="cards">
+      <div class="card"><h3>Claude Code</h3><p><span class="k">PreToolUse</span> · ~/.claude/settings.json</p></div>
+      <div class="card"><h3>Qwen Code</h3><p><span class="k">PreToolUse</span> · ~/.qwen/settings.json</p></div>
+      <div class="card"><h3>Gemini CLI</h3><p><span class="k">BeforeTool</span> · ~/.gemini/settings.json</p></div>
+      <div class="card"><h3>Copilot CLI</h3><p><span class="k">preToolUse</span> · ~/.copilot (fail-closed)</p></div>
+      <div class="card"><h3>Cursor CLI</h3><p><span class="k">beforeShellExecution</span> · ~/.cursor/hooks.json</p></div>
+      <div class="card"><h3>Codex CLI</h3><p><span class="k">[[hooks.PreToolUse]]</span> · ~/.codex/config.toml</p></div>
+      <div class="card"><h3>OpenCode</h3><p><span class="k">tool.execute.before</span> plugin · bridges to the hook</p></div>
+      <div class="card"><h3>Any other tool / raw shell</h3><p>the <span class="k">$PATH</span> shim, or the <span class="k">aegis-exec</span> MCP server</p></div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="n">8 &gt;</span> when Aegis blocks something — run it yourself</h2>
+    <p class="lead">A <span class="t-red">catastrophic</span> command is denied to
+      the agent (an in-agent "allow" would skip the snapshot). The agent stops and
+      you decide. <span class="muted">aegis run &lt;id&gt;</span> runs it yourself,
+      reversibly — snapshot first, confirm with a code typed at your terminal, then
+      execute in its original directory. <span class="muted">aegis undo</span>
+      rolls it back.</p>
+    <figure style="margin:0">
+      <img src="run.svg" alt="aegis run: a held catastrophic command is shown, confirmed with a typed code, run reversibly, and undoable"
+           style="width:100%; height:auto; border-radius:10px" loading="lazy" />
+    </figure>
+    <div class="grid" style="margin-top:18px">
+      <div class="feat"><h3>aegis run &lt;id&gt;</h3><p>You run a hook-blocked command, reversibly. Snapshots the files, runs the exact command, undoable. Confirmed at your real terminal — the agent can't self-approve.</p></div>
+      <div class="feat"><h3>aegis approve &lt;id&gt;</h3><p>For shim / MCP holds, the waiting call runs it. (For a hook block, approve only records — use <span class="muted">aegis run</span>.)</p></div>
+      <div class="feat"><h3>aegis deny &lt;id&gt;</h3><p>Drop it. Nothing runs.</p></div>
+    </div>
+    <p class="note" style="margin-top:14px">Honest about reversibility: for bounded
+      targets (a directory, named files) <span class="muted">aegis undo</span> fully
+      restores them; for unbounded ones (globs, <span class="muted">$VARS</span>, the
+      root, devices) a snapshot can't cover everything — Aegis says so before you
+      confirm, and the filesystem-watcher backstop is the net. The terminal prompt
+      is a strong speed bump, not a sandbox against a malicious local process.</p>
+  </section>
+
+  <section>
+    <h2><span class="n">9 &gt;</span> how it decides — deterministic AST analysis</h2>
     <p class="lead">The block decision is <strong>LLM-free</strong>: fixed rules a
       human wrote, never a model guessing. What makes it trustworthy is that Aegis
       reads the <em>real shell structure</em> of a command, not its raw text.</p>

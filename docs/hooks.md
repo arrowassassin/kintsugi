@@ -51,6 +51,20 @@ own one-click "allow" run it would bypass Aegis's snapshot and void the
 reversibility guarantee. Catastrophic commands must go through a guarded path
 (the shim/CLI/TUI) that snapshots first.
 
+A hook is **one-shot**: by the time you see the deny, the agent already has it
+and has moved on. Unlike the MCP and `$PATH` shim paths — where the original
+call waits in-band and *does* run the command when you `aegis approve` it — there
+is no waiting process behind a hook, so approving a hook-originated catastrophic
+would only record the decision, not execute it.
+
+So the way to run a hook-blocked command yourself is **`aegis run <id>`** (the
+deny reason names it). It snapshots the predicted paths, runs the exact command
+in its original directory, records it, and is undoable with `aegis undo`. It
+confirms with a code typed at your real terminal (`/dev/tty`), so an agent that
+shells out to `aegis run` can't self-approve. See [`docs/queue.md`](queue.md) for
+the full approve-vs-run model, exactly-once resolution, and the honest limits of
+snapshot-based reversibility.
+
 ## Fail behavior
 
 - **Daemon down + catastrophic command:** denied (fail-closed). The hook

@@ -120,6 +120,19 @@ enum Command {
         /// The queue id (or a unique prefix).
         id: String,
     },
+    /// Run a held command yourself, reversibly. Aegis snapshots the paths it
+    /// will touch (so `aegis undo` can roll it back), executes it in its original
+    /// directory, and records the run. This is the guarded way to run a command
+    /// an agent hook blocked — the agent never runs it, you do.
+    ///
+    /// The confirmation is read from the real terminal (`/dev/tty`), not stdin,
+    /// so it is a human keypress by construction: even if an agent invokes this,
+    /// only the person at the keyboard can approve it. There is intentionally no
+    /// `--yes` bypass.
+    Run {
+        /// The queue id (or a unique prefix). Omit when exactly one is held.
+        id: Option<String>,
+    },
     /// PANIC: engage the kill-switch — halt all current and queued agent actions.
     Panic,
     /// Clear the kill-switch and resume normal operation.
@@ -262,6 +275,7 @@ fn main() -> Result<()> {
         Some(Command::Queue) => cmd_queue(),
         Some(Command::Approve { id }) => cmd_resolve_pending(&id, true),
         Some(Command::Deny { id }) => cmd_resolve_pending(&id, false),
+        Some(Command::Run { id }) => cmd_run(id.as_deref()),
         Some(Command::Panic) => cmd_panic(),
         Some(Command::Resume) => cmd_resume(),
     }
@@ -345,8 +359,20 @@ fn cmd_queue() -> Result<()> {
         );
     }
     println!();
-    println!("Approve with `aegis approve <id>` or deny with `aegis deny <id>`.");
+    // Two verbs, by origin: an in-band command (shim/MCP) has a caller waiting,
+    // so `approve` runs it there; a hook-blocked command has no waiter, so you
+    // run it yourself with `aegis run`.
+    println!("In-band (shim/MCP): `aegis approve <id>` runs it where it's waiting.");
+    println!("Hook-blocked:       `aegis run <id>` runs it yourself, reversibly.");
+    println!("Either:             `aegis deny <id>` to drop it.");
     Ok(())
+}
+
+/// Whether a queued command's origin has a caller waiting in-band to execute it
+/// on approval (the shim and the MCP server), versus a one-shot hook that has
+/// already returned and moved on.
+fn is_in_band(agent: &str) -> bool {
+    matches!(agent, "shim" | "mcp")
 }
 
 fn cmd_resolve_pending(id: &str, approve: bool) -> Result<()> {
@@ -355,26 +381,204 @@ fn cmd_resolve_pending(id: &str, approve: bool) -> Result<()> {
     }
     // Resolve a prefix to a full id via the queue, for convenience.
     let items = Client::list_pending().context("list pending")?;
-    let matches: Vec<String> = items
+    let matches: Vec<_> = items
         .iter()
-        .map(|i| i.command.id.to_string())
-        .filter(|full| full.starts_with(id))
+        .filter(|i| i.command.id.to_string().starts_with(id))
         .collect();
-    let full = match matches.as_slice() {
-        [one] => one.clone(),
+    let item = match matches.as_slice() {
+        [one] => *one,
         [] => anyhow::bail!("no pending command matches id `{id}`"),
         _ => anyhow::bail!("id `{id}` is ambiguous; use more characters"),
     };
-
+    let full = item.command.id.to_string();
     let short = full.get(..8).unwrap_or(&full);
     if approve {
         Client::approve(&full).context("approve")?;
-        println!("✓ approved {short} — the requesting agent may now proceed.");
+        if is_in_band(&item.command.agent) {
+            println!("✓ approved {short} — the requesting agent may now proceed.");
+        } else {
+            // A hook origin has no waiter; approving alone won't execute it.
+            println!("✓ approved {short} (recorded). It came from a hook, so nothing is");
+            println!("  waiting to run it — use `aegis run {short}` to run it yourself.");
+        }
     } else {
         Client::deny(&full).context("deny")?;
         println!("✗ denied {short}.");
     }
     Ok(())
+}
+
+/// Run a held command yourself, reversibly.
+///
+/// Resolves the id (or the sole held command when none is given), shows exactly
+/// what will run and whether `aegis undo` can cover it, asks for a typed code on
+/// the real terminal, then approves it through the daemon (which snapshots the
+/// predicted paths and logs the resolution) and executes the raw command in its
+/// original directory.
+///
+/// The agent never runs the command — this is the human, in their own terminal.
+/// The confirmation is a random code shown on `/dev/tty` that the human types
+/// back, so an agent shelling out to this can't self-approve by pre-stuffing a
+/// keypress. (A determined same-user process that can read your terminal could
+/// still echo the code — Aegis guards mistakes, not a malicious local process;
+/// see the honest guarantee in CLAUDE.md.)
+fn cmd_run(id: Option<&str>) -> Result<()> {
+    if !Client::is_daemon_running() {
+        anyhow::bail!("the daemon isn't running; start it with `aegis init`");
+    }
+    let items = Client::list_pending().context("list pending")?;
+    if items.is_empty() {
+        println!("The approval queue is empty — nothing to run.");
+        return Ok(());
+    }
+    let item = match id {
+        Some(prefix) => {
+            let m: Vec<_> = items
+                .iter()
+                .filter(|i| i.command.id.to_string().starts_with(prefix))
+                .collect();
+            match m.as_slice() {
+                [one] => *one,
+                [] => anyhow::bail!("no held command matches id `{prefix}` (see `aegis queue`)"),
+                _ => anyhow::bail!("id `{prefix}` is ambiguous; use more characters"),
+            }
+        }
+        // No id and exactly one held command: use it. Otherwise ask for an id.
+        None => match items.as_slice() {
+            [one] => one,
+            _ => anyhow::bail!(
+                "{} commands are held — pass an id (see `aegis queue`)",
+                items.len()
+            ),
+        },
+    };
+    let full = item.command.id.to_string();
+    let short = full.get(..8).unwrap_or(&full);
+
+    // In-band origins (shim / MCP) have a caller already waiting to execute on
+    // approval; running it here too would double-run it. Redirect to approve.
+    if is_in_band(&item.command.agent) {
+        anyhow::bail!(
+            "{short} came from the `{}` adapter, which is waiting to run it itself — \
+             approve it with `aegis approve {short}` (or press `a` in `aegis tui`).",
+            item.command.agent
+        );
+    }
+
+    let reversible = aegis_core::snapshot::is_fully_reversible(&item.command);
+    println!("Run this held command yourself? Aegis snapshots first, then runs it in");
+    println!("its original directory. The agent does not run it — you do.");
+    println!();
+    println!("    {}", item.command.raw);
+    println!();
+    println!("  dir:    {}", item.command.cwd.display());
+    println!("  class:  {}", item.class.as_str());
+    println!("  reason: {}", item.reason);
+    if reversible {
+        println!("  undo:   `aegis undo` can roll this back — the snapshot covers its targets.");
+    } else {
+        println!("  undo:   ⚠ unbounded target (glob/expansion/root/device): a snapshot may NOT");
+        println!("          fully cover it. The filesystem-watcher backstop is the only net.");
+    }
+    println!();
+
+    if !confirm_code_on_tty() {
+        println!("Not run. (It stays queued; `aegis deny {short}` to drop it.)");
+        return Ok(());
+    }
+
+    // Approve via the daemon: snapshots the predicted paths, logs the Allow
+    // resolution, and marks the queue entry resolved (CAS, exactly once). Honors
+    // the kill-switch.
+    Client::approve(&full).context("approve for run")?;
+    // Execute the raw command (preserving chaining/redirects) in its original
+    // directory, inheriting stdio so the user sees output live.
+    let status = run_in_shell(&item.command.cwd, &item.command.raw)?;
+    let code = status.code().unwrap_or(1);
+    println!();
+    if code == 0 {
+        let tail = if reversible {
+            " Reverse it with `aegis undo`."
+        } else {
+            ""
+        };
+        println!("✓ ran {short}.{tail}");
+    } else {
+        println!("• {short} exited with code {code}.");
+    }
+    std::process::exit(code);
+}
+
+/// Execute a raw command line in `cwd` via the platform shell, inheriting stdio.
+fn run_in_shell(cwd: &std::path::Path, raw: &str) -> Result<std::process::ExitStatus> {
+    let mut cmd = if cfg!(windows) {
+        let mut c = std::process::Command::new("cmd");
+        c.arg("/C").arg(raw);
+        c
+    } else {
+        let mut c = std::process::Command::new("sh");
+        c.arg("-c").arg(raw);
+        c
+    };
+    cmd.current_dir(cwd);
+    cmd.status().with_context(|| format!("run `{raw}`"))
+}
+
+/// Confirm by showing a random code on the real terminal (`/dev/tty`) and
+/// requiring the human to type it back. Reading from `/dev/tty` (not stdin)
+/// means an agent with piped stdio can't answer; the *random* code means a
+/// pre-stuffed terminal buffer won't match either. Returns false with no tty.
+#[cfg(unix)]
+fn confirm_code_on_tty() -> bool {
+    use std::io::{Read, Write};
+    let code = tty_code();
+    let Ok(mut tty) = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/tty")
+    else {
+        eprintln!("aegis: no terminal to confirm on — run `aegis run` from an interactive shell.");
+        return false;
+    };
+    let _ = write!(
+        tty,
+        "This prompt is Aegis (not the agent). To run it, type  {code}  then Enter: "
+    );
+    let _ = tty.flush();
+    let mut buf = [0u8; 64];
+    let n = tty.read(&mut buf).unwrap_or(0);
+    String::from_utf8_lossy(&buf[..n]).trim() == code
+}
+
+/// A short unpredictable code from the OS RNG (falls back to a time seed).
+#[cfg(unix)]
+fn tty_code() -> String {
+    use std::io::Read;
+    let mut b = [0u8; 2];
+    if std::fs::File::open("/dev/urandom")
+        .and_then(|mut f| f.read_exact(&mut b))
+        .is_err()
+    {
+        let n = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos())
+            .unwrap_or(0);
+        b = [(n >> 8) as u8, n as u8];
+    }
+    format!("{:02x}{:02x}", b[0], b[1])
+}
+
+#[cfg(not(unix))]
+fn confirm_code_on_tty() -> bool {
+    use std::io::Write;
+    // Best effort on non-Unix: prompt and read a line from stdin.
+    print!("Type 'yes' to run it: ");
+    let _ = std::io::stdout().flush();
+    let mut line = String::new();
+    if std::io::stdin().read_line(&mut line).is_err() {
+        return false;
+    }
+    matches!(line.trim(), "yes" | "YES")
 }
 
 fn cmd_panic() -> Result<()> {
@@ -1087,6 +1291,33 @@ fn resolve_event_id(log: &EventLog, prefix: &str) -> Result<String> {
 #[cfg(test)]
 mod filter_tests {
     use super::*;
+
+    #[test]
+    fn run_in_shell_propagates_exit_code() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(run_in_shell(tmp.path(), "exit 0").unwrap().success());
+        let st = run_in_shell(tmp.path(), "exit 7").unwrap();
+        assert_eq!(st.code(), Some(7));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tty_code_is_short_and_hex() {
+        let c = tty_code();
+        assert_eq!(c.len(), 4);
+        assert!(c.chars().all(|ch| ch.is_ascii_hexdigit()), "got {c}");
+    }
+
+    #[test]
+    fn in_band_only_for_shim_and_mcp() {
+        // Shim and MCP have a caller waiting → approve runs it there.
+        assert!(is_in_band("shim"));
+        assert!(is_in_band("mcp"));
+        // Hook origins are one-shot → `aegis run` is the way to run them.
+        assert!(!is_in_band("claude-code"));
+        assert!(!is_in_band("cursor"));
+        assert!(!is_in_band("codex"));
+    }
 
     #[test]
     fn version_compare_handles_tags_and_suffixes() {

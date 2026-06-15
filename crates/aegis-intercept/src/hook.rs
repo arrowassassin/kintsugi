@@ -14,12 +14,12 @@
 //! never blocks the agent — *except* a catastrophic command with the daemon
 //! down (denied fail-closed), or when `AEGIS_FAIL_CLOSED=1`.
 
-use aegis_core::{shell, Class, ProposedCommand};
+use aegis_core::{shell, Class, Decision, ProposedCommand};
 use aegis_daemon::Client;
 
 pub use crate::dialect::HookOutcome;
 
-use crate::dialect::{self, Dialect, Parsed};
+use crate::dialect::{self, Dialect, Parsed, Resolved};
 
 /// Handle one hook payload for a given dialect, performing the daemon round-trip.
 pub fn handle_with(dialect: Dialect, input: &str) -> HookOutcome {
@@ -41,7 +41,23 @@ pub fn handle_with(dialect: Dialect, input: &str) -> HookOutcome {
         .with_session(parsed.session_id);
 
     match Client::send(&proposed) {
-        Ok(verdict) => dialect.format(&dialect::resolve(&verdict)),
+        Ok(verdict) => {
+            let resolved = match dialect::resolve(&verdict) {
+                // A catastrophic command is held in Aegis's queue but denied to
+                // the agent: an in-agent "allow" would run it with no snapshot,
+                // voiding reversibility. The agent can't offer that approval, so
+                // tell the human where it lives — otherwise the agent just sees a
+                // bare deny and silently works around it.
+                Resolved::Deny(reason)
+                    if verdict.decision == Decision::Hold
+                        && verdict.class == Class::Catastrophic =>
+                {
+                    Resolved::Deny(held_for_approval(&reason, &proposed.id.to_string()))
+                }
+                other => other,
+            };
+            dialect.format(&resolved)
+        }
         Err(e) => {
             // Daemon down: locally classify so a catastrophic command is still
             // denied (fail-closed for the hard floor); non-catastrophic honors
@@ -69,6 +85,23 @@ pub fn handle_with(dialect: Dialect, input: &str) -> HookOutcome {
 /// Backwards-compatible Claude Code entry point.
 pub fn handle(input: &str) -> HookOutcome {
     handle_with(Dialect::Claude, input)
+}
+
+/// Augment a catastrophic deny with the guarded way to run it yourself.
+///
+/// A hook is one-shot: by the time you see this, the agent already got the deny.
+/// The agent must never run a catastrophic itself, but the human can — via
+/// `aegis run <id>`, which snapshots first (so `aegis undo` works), runs the
+/// command in its original directory, and is gated on a real-terminal keypress
+/// (so an agent shelling out to it still can't self-approve). The queue id is
+/// the command's id, so we surface its short prefix here.
+fn held_for_approval(reason: &str, id: &str) -> String {
+    let short = id.get(..8).unwrap_or(id);
+    format!(
+        "{reason} Aegis blocked it; the agent will not run it. To run it yourself: \
+         `aegis run {short}` — it snapshots the affected files first (so `aegis undo` \
+         can roll them back) and confirms with a code typed at your terminal."
+    )
 }
 
 fn fail_closed() -> bool {
@@ -140,6 +173,21 @@ mod tests {
     fn non_shell_tool_is_allowed_silently() {
         let payload = r#"{"tool_name":"Edit","tool_input":{"file_path":"x"}}"#;
         assert_eq!(handle(payload), HookOutcome::silent());
+    }
+
+    #[test]
+    fn held_for_approval_points_at_aegis_run_with_short_id() {
+        let msg = held_for_approval("recursively deletes files.", "abcd1234-5678-90ab-cdef");
+        assert!(msg.contains("recursively deletes files."));
+        assert!(
+            msg.contains("will not run"),
+            "must say the agent won't run it"
+        );
+        assert!(
+            msg.contains("aegis run abcd1234"),
+            "should give the guarded run command"
+        );
+        assert!(msg.contains("undo"), "should mention reversibility");
     }
 
     #[test]

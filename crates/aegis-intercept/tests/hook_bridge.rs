@@ -105,6 +105,16 @@ fn catastrophic_bash_hook_payload_is_denied_not_ask() {
     let outcome = handle(payload);
     let body: serde_json::Value = serde_json::from_str(outcome.stdout.as_deref().unwrap()).unwrap();
     assert_eq!(body["hookSpecificOutput"]["permissionDecision"], "deny");
+    // The deny must be honest: the agent won't run it, and the guarded way to
+    // run it yourself is the shim (so the agent can relay that instead of
+    // silently working around the block).
+    let reason = body["hookSpecificOutput"]["permissionDecisionReason"]
+        .as_str()
+        .unwrap();
+    assert!(
+        reason.contains("will not run") && reason.contains("aegis run "),
+        "deny reason should explain the agent won't run it and give `aegis run <id>`: {reason}"
+    );
 
     h.join();
     let log = EventLog::open(&h.db).unwrap();

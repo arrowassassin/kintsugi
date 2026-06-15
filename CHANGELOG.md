@@ -74,6 +74,26 @@ All notable changes to Aegis are documented here. The format loosely follows
   Codex config.toml). Re-run `aegis init` once to clean an already-duplicated
   config.
 
+### Run a blocked command (`aegis run`)
+- **`aegis run <id>`** — run a command an agent hook blocked, yourself and
+  reversibly. Aegis snapshots the predicted paths, runs the exact command in its
+  original directory, records it, and `aegis undo` rolls it back. Confirmed by a
+  random code typed at the real terminal (`/dev/tty`, not stdin), so an agent
+  shelling out to it can't self-approve by pre-stuffing a keypress. Omit the id
+  when a single command is held. The catastrophic deny message now names it.
+- **Origin-aware approve vs run.** A hook-blocked command is one-shot (no waiter),
+  so `aegis approve` only records the decision and points you at `aegis run`;
+  in-band origins (shim / MCP) keep `aegis approve` (their waiting caller runs it),
+  and `aegis run` redirects there to avoid a double-run. `aegis queue` shows both.
+- **Exactly-once resolution.** Approving/running a held command is an atomic
+  compare-and-swap on its queue status, so a racing double `approve`/`run` can't
+  double-execute or log a phantom approval.
+- **Honest reversibility.** Snapshot prediction is now shell-segment and `cd`
+  aware (`cd build; rm -rf ../dist` resolves correctly), and `aegis run` tells you
+  up front when a target is *unbounded* (glob, `$VAR`, root, device) and a
+  snapshot can't fully cover it — leaning on the filesystem-watcher backstop
+  rather than over-promising `aegis undo`.
+
 ### Log & timeline UX
 - **Newest-first** everywhere: `aegis log` and the live TUI timeline now show the
   most recent command at the top instead of the bottom.

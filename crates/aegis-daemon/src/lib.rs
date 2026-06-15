@@ -249,6 +249,17 @@ impl Daemon {
         if decision == Decision::Allow && self.kill_switch_engaged() {
             anyhow::bail!("kill-switch engaged; clear it with `aegis resume` before approving");
         }
+        let status = if decision == Decision::Allow {
+            "approved"
+        } else {
+            "denied"
+        };
+        // Claim the entry exactly once. If the CAS doesn't win, the command was
+        // already resolved (or never queued) — return false rather than snapshot
+        // and log a second time, which is what would double-run an approved cmd.
+        if !self.log.cas_pending_status(id, "pending", status)? {
+            return Ok(false);
+        }
         let Some(cmd) = self.log.pending_command(id)? else {
             return Ok(false);
         };
@@ -257,12 +268,6 @@ impl Daemon {
             decision,
             remember: false,
         })?;
-        let status = if decision == Decision::Allow {
-            "approved"
-        } else {
-            "denied"
-        };
-        self.log.set_pending_status(id, status)?;
         Ok(true)
     }
 

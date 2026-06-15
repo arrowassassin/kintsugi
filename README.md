@@ -174,6 +174,36 @@ can bypass them, which is exactly why the FS-watcher backstop exists so
 "nothing is unrecoverable." See [`docs/mcp.md`](docs/mcp.md) and
 [`docs/policy.md`](docs/policy.md).
 
+## When Aegis blocks something
+
+A **catastrophic** command (an `rm -rf`, a `git push --force`, a `DROP TABLE`)
+is denied to the agent — never silently allowed through the agent's own UI,
+because that would run it with no snapshot. So the agent stops and you see why:
+
+```
+✗ rm:recursive — recursively deletes files and directories. Aegis blocked it;
+  the agent will not run it. To run it yourself: `aegis run 50d56fd9` — it
+  snapshots the affected files first (so `aegis undo` can roll them back) and
+  confirms with a code typed at your terminal.
+```
+
+You then have three moves:
+
+| you want to… | do this |
+|--------------|---------|
+| **run it yourself, reversibly** | `aegis run <id>` — snapshots the files, runs the exact command in its directory, undoable with `aegis undo`. Confirms with a code typed at your terminal, so the agent can't self-approve. (No id needed if only one is held.) |
+| **let a waiting agent proceed** (shim / MCP) | `aegis approve <id>` — the waiting call runs it. (For a hook-blocked command, `aegis approve` only records the decision; use `aegis run` to actually run it.) |
+| **drop it** | `aegis deny <id>` |
+| **see what's held** | `aegis queue`, or `aegis tui` (press `a`) |
+
+**Honest about reversibility:** `aegis run` snapshots the files a command is
+predicted to touch. For *bounded* targets (a directory, named files) `aegis undo`
+fully restores them. For *unbounded* ones — globs, `$VARS`, the filesystem root,
+device nodes — a snapshot can't cover everything, and `aegis run` says so before
+you confirm; the filesystem-watcher backstop is the net there. And the terminal
+confirmation is a strong speed bump, not a sandbox: Aegis guards against agent
+*mistakes*, not a malicious same-user process (see the honest guarantee above).
+
 ### Claude Code plugin
 
 This repo doubles as a Claude Code plugin marketplace. Install the binaries (see
