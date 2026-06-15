@@ -61,6 +61,11 @@ fn home_dir() -> Option<PathBuf> {
 }
 
 fn shim_dir() -> PathBuf {
+    // `AEGIS_DATA_DIR` overrides the platform data dir (deterministic in tests and
+    // portable across OSes, where `directories` resolves the data dir differently).
+    if let Ok(dir) = std::env::var("AEGIS_DATA_DIR") {
+        return PathBuf::from(dir).join("shims");
+    }
     if let Some(dirs) = directories::ProjectDirs::from("", "", "aegis") {
         return dirs.data_dir().join("shims");
     }

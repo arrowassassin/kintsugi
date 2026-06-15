@@ -120,6 +120,8 @@ fn init_starts_daemon_and_status_reports_running() {
     let common = |cmd: &mut Command| {
         cmd.env("HOME", &home)
             .env("XDG_DATA_HOME", &data)
+            .env("AEGIS_DATA_DIR", &data)
+            .env("AEGIS_DB", data.join("events.db"))
             .env("XDG_RUNTIME_DIR", &run)
             .env("AEGIS_CONFIG", tmp.path().join("none.toml"));
     };
@@ -156,18 +158,23 @@ fn init_starts_daemon_and_status_reports_running() {
 fn init_no_daemon_creates_shims_and_wires_claude() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path().join("home");
-    let data = home.join(".local/share");
+    // Use AEGIS_DATA_DIR so the shim location is deterministic on every OS
+    // (the `directories` crate resolves the data dir differently per platform).
+    let data = tmp.path().join("data");
     std::fs::create_dir_all(home.join(".claude")).unwrap();
 
-    let out = aegis()
-        .arg("init")
-        .arg("--no-daemon")
-        .env("HOME", &home)
-        .env("XDG_DATA_HOME", &data)
-        .env_remove("XDG_RUNTIME_DIR")
-        .output()
-        .unwrap();
+    let run_init = || {
+        aegis()
+            .arg("init")
+            .arg("--no-daemon")
+            .env("HOME", &home)
+            .env("AEGIS_DATA_DIR", &data)
+            .env_remove("XDG_RUNTIME_DIR")
+            .output()
+            .unwrap()
+    };
 
+    let out = run_init();
     assert!(
         out.status.success(),
         "init failed: {}",
@@ -175,7 +182,7 @@ fn init_no_daemon_creates_shims_and_wires_claude() {
     );
 
     // Shims created under the data dir.
-    let shim_rm = data.join("aegis/shims/rm");
+    let shim_rm = data.join("shims/rm");
     assert!(
         shim_rm.is_symlink() || shim_rm.exists(),
         "rm shim should exist"
@@ -191,14 +198,7 @@ fn init_no_daemon_creates_shims_and_wires_claude() {
     assert!(body.contains("PreToolUse"));
 
     // Idempotent: running again does not duplicate the hook.
-    aegis()
-        .arg("init")
-        .arg("--no-daemon")
-        .env("HOME", &home)
-        .env("XDG_DATA_HOME", &data)
-        .env_remove("XDG_RUNTIME_DIR")
-        .output()
-        .unwrap();
+    run_init();
     let body2 = std::fs::read_to_string(&settings).unwrap();
     assert_eq!(
         body2.matches("aegis-hook").count(),
