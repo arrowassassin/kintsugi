@@ -5,6 +5,13 @@ All notable changes to Aegis are documented here. The format loosely follows
 
 ## [Unreleased]
 
+### Docs/site
+- **Fix clipped SVG frames**: the doc/site terminal "screenshots" sized their
+  frame at 8.6 px/glyph, but the fallback monospace fonts advance wider, so the
+  hold card's reason line and the TUI risk gauge overflowed the right border.
+  Bumped `gen_svg.py` `CHARW` to a safe 9.3 and widened the committed SVGs to fit
+  their real content (`scripts/fix_svg_width.py`, content-preserving).
+
 ### Agent coverage
 - **Cursor CLI detection**: `aegis init` now recognizes `~/.cursor` and reports
   it as intercepted via the `aegis-exec` MCP server (verified: Cursor CLI runs in

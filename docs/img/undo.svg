@@ -1,7 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="603" height="140" viewBox="0 0 603 140" font-family="ui-monospace,DejaVu Sans Mono,Consolas,monospace">
-<rect x="1" y="1" width="601" height="138" rx="8" fill="#070a11" stroke="#283557" stroke-width="3"/>
-<rect x="1" y="1" width="601" height="34" rx="8" fill="#141c30"/>
-<rect x="1" y="20" width="601" height="15" fill="#141c30"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="650" height="140" viewBox="0 0 650 140" font-family="ui-monospace,DejaVu Sans Mono,Consolas,monospace">
+<rect x="1" y="1" width="648" height="138" rx="8" fill="#070a11" stroke="#283557" stroke-width="3"/>
+<rect x="1" y="1" width="648" height="34" rx="8" fill="#141c30"/>
+<rect x="1" y="20" width="648" height="15" fill="#141c30"/>
 <rect x="18" y="12" width="11" height="11" fill="#ff5d5d"/>
 <rect x="36" y="12" width="11" height="11" fill="#ffd866"/>
 <rect x="54" y="12" width="11" height="11" fill="#5af78e"/>
