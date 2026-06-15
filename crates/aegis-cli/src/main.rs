@@ -45,6 +45,14 @@ enum Command {
         #[arg(long)]
         session: bool,
     },
+    /// Backstop: watch paths and record filesystem changes (even un-intercepted).
+    Watch {
+        /// One or more directories to watch recursively.
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
+    },
+    /// Open the live timeline TUI.
+    Tui,
 }
 
 fn main() -> Result<()> {
@@ -60,6 +68,8 @@ fn main() -> Result<()> {
         Some(Command::Status) => cmd_status(),
         Some(Command::Log { number }) => cmd_log(number),
         Some(Command::Undo { session }) => cmd_undo(session),
+        Some(Command::Watch { paths }) => aegis_daemon::watch::run(&paths),
+        Some(Command::Tui) => aegis_tui::run(&default_db_path(), &snapshot_dir()),
     }
 }
 

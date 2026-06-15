@@ -11,6 +11,7 @@
 #![forbid(unsafe_code)]
 
 pub mod ipc;
+pub mod watch;
 
 use std::path::PathBuf;
 
@@ -18,7 +19,7 @@ use aegis_core::{Decision, EventLog, Mode, ProposedCommand, Verdict};
 use anyhow::{Context, Result};
 use directories::ProjectDirs;
 
-pub use ipc::{Client, Resolution, Server};
+pub use ipc::{Client, Observation, Resolution, Server};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -226,11 +227,42 @@ impl Daemon {
         Ok(())
     }
 
+    /// Record an observed filesystem change from the backstop watcher. Logged as
+    /// `agent = "fs-watch"`, decision Allow (it already happened) — its purpose is
+    /// to keep the timeline and undo complete for actions that bypassed
+    /// interception.
+    pub fn observe(&self, obs: &ipc::Observation) -> Result<()> {
+        let raw = format!("{} {}", obs.kind, obs.path);
+        let cwd = std::path::Path::new(&obs.path)
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_default();
+        let cmd = ProposedCommand::new(
+            "fs-watch",
+            cwd,
+            vec![obs.kind.clone(), obs.path.clone()],
+            raw,
+        );
+        let verdict = Verdict::rules(
+            aegis_core::Class::Safe,
+            Decision::Allow,
+            format!("fs:{}", obs.kind),
+        );
+        self.log.log_event(&cmd, &verdict, None)?;
+        Ok(())
+    }
+
     /// Dispatch an IPC request to its handler.
     pub fn handle_request(&self, req: ipc::Request) -> ipc::Response {
         match req {
             ipc::Request::Propose(cmd) => ipc::Response::Verdict(self.handle(cmd)),
             ipc::Request::Resolve(resolution) => match self.resolve(&resolution) {
+                Ok(()) => ipc::Response::Ack,
+                Err(e) => ipc::Response::Error {
+                    message: e.to_string(),
+                },
+            },
+            ipc::Request::Observe(obs) => match self.observe(&obs) {
                 Ok(()) => ipc::Response::Ack,
                 Err(e) => ipc::Response::Error {
                     message: e.to_string(),

@@ -92,3 +92,9 @@ the locked product decisions this build implements.
   reflink-copy with copy fallback. Daemon snapshots synchronously before
   returning Allow, so files are intact at capture time and the shim execs after.
   snapshots table lives in the same DB; undo is append-only (logs an undo event).
+- Phase 4: FS-watcher writes through the daemon (Observe IPC), never a second
+  concurrent SQLite writer — that would race prev_hash and fork the chain. TUI
+  state (app.rs) is terminal-free and unit-tested; rendering (ui.rs) is tested
+  with ratatui TestBackend at multiple sizes; teardown uses ratatui::init/restore
+  (panic-safe). frontend-design skill was unavailable in the build env, so its
+  principles were applied directly from the CLAUDE.md TUI requirements.

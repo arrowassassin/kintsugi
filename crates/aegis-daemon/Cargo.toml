@@ -27,6 +27,7 @@ uuid.workspace = true
 time.workspace = true
 interprocess.workspace = true
 directories.workspace = true
+notify = "8.2.0"
 
 [dev-dependencies]
 tempfile.workspace = true

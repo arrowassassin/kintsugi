@@ -28,6 +28,19 @@ pub enum Request {
     Propose(ProposedCommand),
     /// "A human resolved a held command; record it (and maybe remember it)."
     Resolve(Resolution),
+    /// "I observed a filesystem change that bypassed interception — just record
+    /// it." The backstop sends these so the daemon's single writer keeps the hash
+    /// chain intact.
+    Observe(Observation),
+}
+
+/// A filesystem change observed by the backstop watcher.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Observation {
+    /// `created` | `modified` | `removed`.
+    pub kind: String,
+    /// The path that changed.
+    pub path: String,
 }
 
 /// A human's resolution of a held command.
@@ -141,6 +154,15 @@ impl Client {
             Response::Ack => Ok(()),
             Response::Error { message } => anyhow::bail!("daemon error: {message}"),
             Response::Verdict(_) => anyhow::bail!("unexpected Verdict in response to Resolve"),
+        }
+    }
+
+    /// Record an observed filesystem change (backstop).
+    pub fn observe(observation: &Observation) -> Result<()> {
+        match round_trip(&Request::Observe(observation.clone()))? {
+            Response::Ack => Ok(()),
+            Response::Error { message } => anyhow::bail!("daemon error: {message}"),
+            Response::Verdict(_) => anyhow::bail!("unexpected Verdict in response to Observe"),
         }
     }
 

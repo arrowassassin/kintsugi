@@ -108,6 +108,18 @@ All notable changes to Aegis are documented here. The format loosely follows
   snapshot. Scope is stated plainly: files only — not network calls or pushed
   commits. Safe commands are never snapshotted.
 
+- **Phase 4** — FS-watcher backstop + `ratatui` timeline.
+  - Backstop: `aegis watch <path>` watches recursively (`notify`) and records FS
+    changes as `fs-watch` events **through the daemon's single writer** (new
+    `Observe` IPC), so the hash chain is never raced. Keeps the timeline and undo
+    complete for actions that bypassed interception.
+  - TUI: `aegis tui` is a real, interactive `ratatui` app over the live event log
+    — keyboard navigation (`j/k`, `g/G`), `/` filter, `enter` detail, `u` undo,
+    `q` quit; live polling refresh; a designed empty state; a "terminal too
+    small" notice; one reserved danger accent with words-not-color and `NO_COLOR`
+    support; panic-safe teardown via `ratatui::init`/`restore`. Covered by
+    state-transition tests and `TestBackend` render tests at several sizes.
+
 ### Changed
 - Pinned all dependencies to latest stable. `rusqlite` held at 0.39 because 0.40
   pulls `libsqlite3-sys` 0.38 which needs the unstable `cfg_select!` feature.

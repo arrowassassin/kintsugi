@@ -1,6 +1,6 @@
 [package]
 name = "aegis-tui"
-description = "Aegis ratatui terminal UI. Created empty in Phase 0/1; the real timeline lands in Phase 4."
+description = "Aegis ratatui terminal UI: a live timeline over the event log with keyboard navigation, filtering, detail, and undo."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,3 +10,10 @@ rust-version.workspace = true
 
 [dependencies]
 aegis-core.workspace = true
+anyhow.workspace = true
+ratatui = "0.30.1"
+crossterm = "0.29.0"
+time = { workspace = true }
+
+[dev-dependencies]
+tempfile.workspace = true
