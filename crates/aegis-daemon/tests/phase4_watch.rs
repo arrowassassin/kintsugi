@@ -1,12 +1,19 @@
 //! Phase 4 acceptance (backstop): an observed filesystem change is recorded as an
 //! `fs-watch` event through the daemon's single writer, keeping the chain intact.
 
+use aegis_core::Decision;
+use aegis_daemon::{ipc, Daemon, Observation};
+
+// The over-the-socket test is Unix-only (pins a filesystem socket); these imports
+// are only used there.
+#[cfg(unix)]
+use aegis_daemon::{Client, Server};
+#[cfg(unix)]
 use std::sync::{Mutex, MutexGuard, OnceLock};
+#[cfg(unix)]
 use std::thread;
 
-use aegis_core::Decision;
-use aegis_daemon::{ipc, Client, Daemon, Observation, Server};
-
+#[cfg(unix)]
 fn serial_lock() -> MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
@@ -49,33 +56,31 @@ fn observe_via_request_dispatch() {
     assert_eq!(daemon.log().tail(1).unwrap()[0].reason, "fs:created");
 }
 
+// Exercises the real serialization path (where a tag/field collision would
+// surface), not just an in-process dispatch. Unix-only (pins a filesystem socket).
+#[cfg(unix)]
 #[test]
 fn observe_over_the_socket_is_recorded() {
-    // Exercises the real serialization path (where a tag/field collision would
-    // surface), not just an in-process dispatch.
     let _g = serial_lock();
-    #[cfg(unix)]
-    {
-        let tmp = tempfile::tempdir().unwrap();
-        std::env::set_var("AEGIS_SOCKET", tmp.path().join("a.sock"));
-        std::env::set_var("AEGIS_DB", tmp.path().join("e.db"));
-        std::env::set_var("AEGIS_CONFIG", tmp.path().join("none.toml"));
-        let db = tmp.path().join("e.db");
+    let tmp = tempfile::tempdir().unwrap();
+    std::env::set_var("AEGIS_SOCKET", tmp.path().join("a.sock"));
+    std::env::set_var("AEGIS_DB", tmp.path().join("e.db"));
+    std::env::set_var("AEGIS_CONFIG", tmp.path().join("none.toml"));
+    let db = tmp.path().join("e.db");
 
-        let server = Server::bind().unwrap();
-        let handle = thread::spawn(move || {
-            let daemon = Daemon::open(&db).unwrap();
-            server.serve_n(1, |req| daemon.handle_request(req)).unwrap();
-        });
+    let server = Server::bind().unwrap();
+    let handle = thread::spawn(move || {
+        let daemon = Daemon::open(&db).unwrap();
+        server.serve_n(1, |req| daemon.handle_request(req)).unwrap();
+    });
 
-        Client::observe(&Observation {
-            kind: "removed".into(),
-            path: "/work/gone.txt".into(),
-        })
-        .unwrap();
+    Client::observe(&Observation {
+        kind: "removed".into(),
+        path: "/work/gone.txt".into(),
+    })
+    .unwrap();
 
-        handle.join().unwrap();
-        let log = aegis_core::EventLog::open(tmp.path().join("e.db")).unwrap();
-        assert_eq!(log.tail(1).unwrap()[0].reason, "fs:removed");
-    }
+    handle.join().unwrap();
+    let log = aegis_core::EventLog::open(tmp.path().join("e.db")).unwrap();
+    assert_eq!(log.tail(1).unwrap()[0].reason, "fs:removed");
 }
