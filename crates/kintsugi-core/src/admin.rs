@@ -338,6 +338,60 @@ impl SealedVault {
     }
 }
 
+/// The provisioning state of a machine, derived from the on-disk vault.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VaultState {
+    /// No vault present — Kintsugi is unlocked (default install). Privileged ops
+    /// are unauthenticated (today's behavior).
+    Unprovisioned,
+    /// A valid sealed vault exists — privileged ops require the admin password.
+    Locked(Box<SealedVault>),
+    /// A vault exists but could not be read/parsed. **Stays locked** (refuse
+    /// privileged ops) — never silently drops to Unprovisioned, so corrupting or
+    /// hiding the vault is not a bypass. The string is a non-sensitive reason.
+    Degraded(String),
+}
+
+impl VaultState {
+    /// Whether privileged operations must be password-authenticated.
+    pub fn is_locked(&self) -> bool {
+        !matches!(self, VaultState::Unprovisioned)
+    }
+}
+
+/// Load the vault state from `path`. Distinguishes "absent" (genuinely
+/// unprovisioned) from "present but unreadable" (Degraded → stay locked).
+pub fn load_vault(path: &std::path::Path) -> VaultState {
+    match std::fs::read(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => VaultState::Unprovisioned,
+        Err(e) => VaultState::Degraded(format!("vault unreadable: {}", e.kind())),
+        Ok(bytes) => match serde_json::from_slice::<SealedVault>(&bytes) {
+            Ok(v) => VaultState::Locked(Box::new(v)),
+            Err(_) => VaultState::Degraded("vault is corrupt or not valid JSON".into()),
+        },
+    }
+}
+
+/// Persist the vault to `path` atomically (temp file + rename), `0600` on Unix so
+/// a non-privileged user can't read or replace it. The caller chooses a path the
+/// audited user can't write (e.g. root-owned `/etc/kintsugi/` in the locked
+/// system posture).
+pub fn save_vault(path: &std::path::Path, vault: &SealedVault) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let tmp = path.with_extension("tmp");
+    let json = serde_json::to_vec_pretty(vault)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    std::fs::write(&tmp, &json)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
+    }
+    std::fs::rename(&tmp, path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -442,5 +496,44 @@ mod tests {
         assert!(back.unseal("pw").is_ok());
         // the plaintext settings never appear in the serialized vault.
         assert!(!json.contains("recording"));
+    }
+
+    #[test]
+    fn vault_store_states_and_failclosed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("admin-vault.json");
+
+        // Absent → genuinely unprovisioned (unlocked).
+        assert_eq!(load_vault(&path), VaultState::Unprovisioned);
+        assert!(!load_vault(&path).is_locked());
+
+        // Save + load → Locked, and it still unseals.
+        let p = provision_fast("pw", &LockedSettings::default());
+        save_vault(&path, &p.vault).unwrap();
+        match load_vault(&path) {
+            VaultState::Locked(v) => assert!(v.unseal("pw").is_ok()),
+            other => panic!("expected Locked, got {other:?}"),
+        }
+        assert!(load_vault(&path).is_locked());
+
+        // Corrupt file → Degraded (stays locked — NOT a bypass).
+        std::fs::write(&path, b"{ not valid json").unwrap();
+        match load_vault(&path) {
+            VaultState::Degraded(_) => {}
+            other => panic!("corrupt vault must be Degraded, got {other:?}"),
+        }
+        assert!(load_vault(&path).is_locked());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn saved_vault_is_0600() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("v.json");
+        let p = provision_fast("pw", &LockedSettings::default());
+        save_vault(&path, &p.vault).unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "vault must be private to the owner");
     }
 }
