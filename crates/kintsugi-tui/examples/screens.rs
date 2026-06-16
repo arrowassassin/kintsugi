@@ -32,12 +32,48 @@ fn main() {
 
     let log = EventLog::open_in_memory().unwrap();
     let events = vec![
-        ev(&log, "claude-code", "git status", Class::Safe, Decision::Allow),
-        ev(&log, "shell", "psql -c 'TRUNCATE events'", Class::Catastrophic, Decision::Allow),
-        ev(&log, "cursor", "npm install", Class::Ambiguous, Decision::Hold),
-        ev(&log, "shim", "rm -rf /srv/app/data", Class::Catastrophic, Decision::Hold),
-        ev(&log, "claude-code", "cargo build --release", Class::Safe, Decision::Allow),
-        ev(&log, "shell", "mysql -p[redacted] -e 'DROP DATABASE staging'", Class::Catastrophic, Decision::Allow),
+        ev(
+            &log,
+            "claude-code",
+            "git status",
+            Class::Safe,
+            Decision::Allow,
+        ),
+        ev(
+            &log,
+            "shell",
+            "psql -c 'TRUNCATE events'",
+            Class::Catastrophic,
+            Decision::Allow,
+        ),
+        ev(
+            &log,
+            "cursor",
+            "npm install",
+            Class::Ambiguous,
+            Decision::Hold,
+        ),
+        ev(
+            &log,
+            "shim",
+            "rm -rf /srv/app/data",
+            Class::Catastrophic,
+            Decision::Hold,
+        ),
+        ev(
+            &log,
+            "claude-code",
+            "cargo build --release",
+            Class::Safe,
+            Decision::Allow,
+        ),
+        ev(
+            &log,
+            "shell",
+            "mysql -p[redacted] -e 'DROP DATABASE staging'",
+            Class::Catastrophic,
+            Decision::Allow,
+        ),
     ];
 
     let mut app = App::new(true);
@@ -46,9 +82,11 @@ fn main() {
     app.scorer = Some("llama:Qwen3-4B".into());
 
     if which == "login" {
-        let prov =
-            kintsugi_core::admin::provision("demo-password", &kintsugi_core::admin::LockedSettings::default())
-                .unwrap();
+        let prov = kintsugi_core::admin::provision(
+            "demo-password",
+            &kintsugi_core::admin::LockedSettings::default(),
+        )
+        .unwrap();
         app.set_vault(Some(prov.vault));
         app.screen = Screen::Login;
         for c in "demo".chars() {
