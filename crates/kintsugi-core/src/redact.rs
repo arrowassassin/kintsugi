@@ -128,17 +128,23 @@ fn redact_token(tok: &str, ctx: &Ctx) -> (String, usize, bool) {
         return (red, 1, false);
     }
 
-    // 3. A URI: redact userinfo password (last `@` before path), or a colonless
-    //    token-as-username (a PAT), and any sensitive query-string parameter.
-    if tok.contains("://") {
-        if let Some(red) = redact_uri(tok) {
+    // 3. A URI: redact the userinfo password (or a colonless PAT), AND any
+    //    sensitive query-string parameter in the SAME token — a connection string
+    //    can carry a secret in both (`scheme://u:p@host/db?password=…`), so we must
+    //    not stop after the userinfo: compose both passes on the one token.
+    let uri_red = if tok.contains("://") {
+        redact_uri(tok)
+    } else {
+        None
+    };
+    let base = uri_red.as_deref().unwrap_or(tok);
+    if base.contains('?') || base.contains('&') || base.contains(":_") {
+        if let Some(red) = redact_query_params(base) {
             return (red, 1, false);
         }
     }
-    if tok.contains('?') || tok.contains('&') || tok.contains(":_") {
-        if let Some(red) = redact_query_params(tok) {
-            return (red, 1, false);
-        }
+    if let Some(red) = uri_red {
+        return (red, 1, false);
     }
 
     // 4. Long credential flags: --password=…, --token=…, openssl -passin=… (and
@@ -236,19 +242,30 @@ fn is_auth_scheme(w: &str) -> bool {
 fn redact_uri(tok: &str) -> Option<String> {
     let scheme_end = tok.find("://")? + 3;
     let rest = &tok[scheme_end..];
-    let path = rest.find(['/', '?', '#']).unwrap_or(rest.len());
-    // userinfo is delimited by the LAST `@` before the path (passwords may contain `@`).
-    let at = rest[..path].rfind('@')?;
+    // The userinfo lives before the query/fragment. `?` and `#` reliably END the
+    // authority (they're not valid unencoded in userinfo), and a secret in the
+    // query is redacted separately by the compose pass — so confine the search to
+    // the pre-query region. Within it, the userinfo `@` is the RIGHTMOST `@`: a
+    // password may contain `@` and `/`, and the host may be empty
+    // (`scheme://user:pass@/db`). The colon/path heuristic below then decides
+    // whether this is real userinfo or just an `@` inside a path.
+    let authority = &rest[..rest.find(['?', '#']).unwrap_or(rest.len())];
+    let at = authority.rfind('@')?;
     let userinfo = &rest[..at];
     let tail = &rest[at..];
     match userinfo.find(':') {
+        // `user:password` — redact the password (which may contain `/` or `@`).
         Some(c) => Some(format!(
             "{}{}:{MARKER}{tail}",
             &tok[..scheme_end],
             &userinfo[..c]
         )),
-        // scheme://TOKEN@host with no colon: a PAT-as-username — redact it.
-        None => Some(format!("{}{MARKER}{tail}", &tok[..scheme_end])),
+        // Colonless userinfo is a PAT-as-username (redact) ONLY when it has no path
+        // chars; otherwise the `@` is just inside the path — leave the URL alone.
+        None if !userinfo.contains(['/', '?', '#']) => {
+            Some(format!("{}{MARKER}{tail}", &tok[..scheme_end]))
+        }
+        None => None,
     }
 }
 
@@ -611,6 +628,19 @@ mod tests {
             "svc --url=jdbc:postgresql://h/db?user=u&password=p4ss",
             "p4ss"
         ));
+        // Password containing '/' (e.g. a base64 secret) — must not slip through
+        // because the matcher mistook the '/' for the path boundary (regression).
+        assert!(!leaks("psql postgres://app:aB/cD/ef@host/db", "aB/cD/ef"));
+        // Secret in the query string ALONGSIDE userinfo: BOTH must be redacted —
+        // the userinfo pass must not short-circuit the query pass (regression).
+        let both = red("psql \"postgres://u:userpw@db/prod?password=QUERYSECRET\"");
+        assert!(!both.contains("userpw"), "userinfo leaked: {both}");
+        assert!(!both.contains("QUERYSECRET"), "query secret leaked: {both}");
+        // Empty-host DSN (default host / unix socket): the real '@' precedes '/',
+        // so an '@' inside the password must not be mistaken for the delimiter.
+        assert!(!leaks("psql postgresql://user:pa@ss@/dbname", "pa@ss"));
+        // An '@' that is purely in the path (no userinfo) must be left untouched.
+        assert_eq!(red("curl http://host/p@q"), "curl http://host/p@q");
     }
 
     #[test]

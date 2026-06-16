@@ -3,9 +3,11 @@
 //! A shell preexec hook calls `kintsugi ingest` on every command a human runs,
 //! so a DBA / operator gets the same tamper-evident, classified audit trail
 //! Kintsugi keeps for agents — without any command being blocked. This is an
-//! *after-the-fact recorder*, not a gate: by the time we hear about a command it
-//! has already run, so we classify it (to flag destructive actions in the
-//! timeline and `kintsugi report`) but never hold, deny, or snapshot it.
+//! recorder, not a gate: it never holds or denies a human's command. It does
+//! classify each one (to flag destructive actions in the timeline and
+//! `kintsugi report`), and — because the preexec hook fires *before* the command
+//! runs — the daemon snapshots destructive commands just-in-time so `kintsugi
+//! undo` can recover a human's mistake (the recoverer).
 //!
 //! Honest guarantee: this preserves "a tamper-evident record of everything,"
 //! NOT "nothing runs un-warned" — the latter never applied to commands a person
@@ -53,26 +55,141 @@ pub fn spool_path() -> PathBuf {
     default_db_path().with_file_name("record-spool.jsonl")
 }
 
-/// `kintsugi record install` — print the shell hook to source from rc.
-pub fn install() -> Result<()> {
-    // Print to stdout so it composes with a redirect: `… install >> ~/.bashrc`.
-    // We never edit the user's rc ourselves — that's their file to own.
-    println!("{HOOK}");
-    eprintln!(
-        "# Appended nothing yet — pipe this into your shell rc, e.g.:\n\
-         #   kintsugi record install >> ~/.bashrc   # or ~/.zshrc\n\
-         # then restart your shell. Verify with `kintsugi record status`."
+/// The fence markers delimiting Kintsugi's managed block in an rc file. They are
+/// the first/last lines of [`HOOK`], so install can idempotently replace the block.
+const FENCE_BEGIN: &str = "# >>> kintsugi session recorder >>>";
+const FENCE_END: &str = "# <<< kintsugi session recorder <<<";
+
+/// `kintsugi record install` — print the hook (default), or with `--write <rc>`
+/// install it as an idempotent, fenced block in that file.
+pub fn install(write: Option<PathBuf>) -> Result<()> {
+    let Some(rc) = write else {
+        // Default: print to stdout so it composes with a redirect, and never touch
+        // the user's rc ourselves — that's their file to own.
+        println!("{HOOK}");
+        eprintln!(
+            "# Appended nothing yet — pipe this into your shell rc, e.g.:\n\
+             #   kintsugi record install >> ~/.bashrc   # or ~/.zshrc\n\
+             # (or let Kintsugi manage it: `kintsugi record install --write ~/.bashrc`)\n\
+             # then restart your shell. Verify with `kintsugi record status`."
+        );
+        return Ok(());
+    };
+    let existing = std::fs::read_to_string(&rc).unwrap_or_default();
+    let (replaced, body) = replace_block(&existing, Some(HOOK));
+    atomic_write(&rc, &body)?;
+    println!(
+        "✓ {} the Kintsugi recorder block in {}",
+        if replaced { "updated" } else { "installed" },
+        rc.display()
+    );
+    println!(
+        "  Restart your shell (or `source {}`) to start recording.",
+        rc.display()
     );
     Ok(())
 }
 
-/// `kintsugi record uninstall` — explain how to remove the hook.
-pub fn uninstall() -> Result<()> {
+/// `kintsugi record uninstall` — remove the managed block from `--write <rc>`, or
+/// explain how to remove it by hand.
+pub fn uninstall(write: Option<PathBuf>) -> Result<()> {
+    let Some(rc) = write else {
+        println!(
+            "To stop recording, delete the block between\n  \
+             '{FENCE_BEGIN}' and '{FENCE_END}'\n  \
+             from your shell rc (~/.bashrc or ~/.zshrc), then restart your shell.\n  \
+             (or let Kintsugi remove it: `kintsugi record uninstall --write ~/.bashrc`)"
+        );
+        return Ok(());
+    };
+    let existing = std::fs::read_to_string(&rc).unwrap_or_default();
+    let (removed, body) = replace_block(&existing, None);
+    if !removed {
+        println!("No Kintsugi recorder block found in {}.", rc.display());
+        return Ok(());
+    }
+    atomic_write(&rc, &body)?;
     println!(
-        "To stop recording, delete the block between\n  \
-         '# >>> kintsugi session recorder >>>' and '# <<< kintsugi session recorder <<<'\n  \
-         from your shell rc (~/.bashrc or ~/.zshrc), then restart your shell."
+        "✓ removed the Kintsugi recorder block from {}.",
+        rc.display()
     );
+    println!("  Restart your shell to stop recording.");
+    Ok(())
+}
+
+/// Replace the fenced Kintsugi block in `content`: drop any existing block, then
+/// append `replacement` (when `Some`). Returns `(had_existing_block, new_content)`.
+/// Idempotent — re-running never duplicates the block.
+fn replace_block(content: &str, replacement: Option<&str>) -> (bool, String) {
+    let mut out = String::with_capacity(content.len() + replacement.map_or(0, |r| r.len() + 2));
+    let mut had = false;
+    let mut skipping = false;
+    // Buffer the lines inside a block so an UNCLOSED block (a BEGIN with no END —
+    // a truncated install or a hand-edit) doesn't silently eat the rest of the
+    // user's file: if we hit EOF still skipping, we put those lines back.
+    let mut skipped: Vec<&str> = Vec::new();
+    for line in content.lines() {
+        if line.trim() == FENCE_BEGIN {
+            had = true;
+            skipping = true;
+            skipped.clear();
+            continue;
+        }
+        if line.trim() == FENCE_END {
+            skipping = false;
+            skipped.clear();
+            continue;
+        }
+        if skipping {
+            skipped.push(line);
+        } else {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    // Unclosed block: the END fence was missing, so the "block" wasn't really one —
+    // restore the buffered lines rather than dropping the user's content.
+    if skipping {
+        for line in skipped {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    // Trim trailing blank lines left behind, then append the fresh block.
+    while out.ends_with("\n\n") {
+        out.pop();
+    }
+    if let Some(block) = replacement {
+        if !out.is_empty() && !out.ends_with('\n') {
+            out.push('\n');
+        }
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(block);
+        out.push('\n');
+    }
+    (had, out)
+}
+
+/// Write `content` to `path` atomically (temp file in the same dir + rename).
+/// The temp name *appends* a suffix to the full file name (so it never clobbers a
+/// real extension like `.sh`), and on Unix we copy the original file's mode onto
+/// the temp before the rename — so we never widen a user's hardened rc (e.g.
+/// `chmod 600 ~/.bashrc`). A brand-new file keeps the default (umask) mode.
+fn atomic_write(path: &Path, content: &str) -> Result<()> {
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(dir).ok();
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("rc");
+    let tmp = dir.join(format!(".{name}.kintsugi-tmp-{}", std::process::id()));
+    std::fs::write(&tmp, content).with_context(|| format!("write {}", tmp.display()))?;
+    #[cfg(unix)]
+    if let Ok(meta) = std::fs::metadata(path) {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = meta.permissions().mode() & 0o777;
+        let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(mode));
+    }
+    std::fs::rename(&tmp, path).with_context(|| format!("install into {}", path.display()))?;
     Ok(())
 }
 
@@ -275,5 +392,38 @@ fn adopt_orphaned_draining() {
             }
         }
         let _ = std::fs::remove_file(&f);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn replace_block_is_idempotent_and_preserves_content() {
+        let base = "export A=1\n# mine\n";
+        let (had, once) = replace_block(base, Some(HOOK));
+        assert!(!had);
+        assert!(once.contains("export A=1") && once.contains("# mine"));
+        assert_eq!(once.matches(FENCE_BEGIN).count(), 1);
+        // Re-running replaces, never duplicates.
+        let (had2, twice) = replace_block(&once, Some(HOOK));
+        assert!(had2);
+        assert_eq!(twice.matches(FENCE_BEGIN).count(), 1);
+        // Removal leaves the user's content.
+        let (removed, gone) = replace_block(&twice, None);
+        assert!(removed);
+        assert!(!gone.contains(FENCE_BEGIN));
+        assert!(gone.contains("export A=1") && gone.contains("# mine"));
+    }
+
+    #[test]
+    fn unclosed_block_does_not_eat_user_content() {
+        // A BEGIN fence with no END (truncated install / hand-edit) must NOT drop
+        // everything after it — the lines are restored.
+        let corrupt = format!("export A=1\n{FENCE_BEGIN}\nalias gs='git status'\nexport B=2\n");
+        let (_had, out) = replace_block(&corrupt, None);
+        assert!(out.contains("alias gs='git status'"), "data lost: {out}");
+        assert!(out.contains("export B=2"), "data lost: {out}");
     }
 }

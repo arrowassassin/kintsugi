@@ -266,11 +266,14 @@ $ <span class="t-grn">kintsugi report</span> --since 24h
       <div class="feat"><h3>Undo a human's mistake — the recoverer</h3>
         <p>The hook fires <em>before</em> the command runs, so Kintsugi
           <strong>snapshots destructive human commands just-in-time</strong> (reflink
-          copy-on-write, predicted paths only). When a DBA fat-fingers
-          <span class="muted">rm -rf</span> or <span class="muted">DROP</span>,
+          copy-on-write, predicted paths only). When an operator fat-fingers
+          <span class="muted">rm -rf</span> on a data directory,
           <span class="muted">kintsugi undo</span> rolls it back — the same recovery
-          agents get. Best-effort by design (the filesystem-watcher backstop catches
-          what a race misses); recoverable, not a hard transaction.</p></div>
+          agents get. It is a <em>filesystem</em> recoverer: in-database
+          <span class="muted">DROP</span>/<span class="muted">TRUNCATE</span> aren't
+          files (use your DB's PITR/backups), and it captures interactive bash/zsh
+          only. Best-effort by design — the filesystem-watcher backstop catches what a
+          race misses; recoverable, not a hard transaction.</p></div>
       <div class="feat"><h3>Redact before hash</h3>
         <p>Secrets are redacted at the source, before IPC and before hashing — DB URIs
           (<span class="muted">scheme://user:****@host</span>),
@@ -329,6 +332,11 @@ $ <span class="t-grn">kintsugi report</span> --since 24h
     <figure style="margin:0">
       <img src="tui.svg" alt="The Kintsugi control-room TUI: tabbed Timeline / Audit / Recorder views over the live log, with a vitals strip and a detail pane"
            style="width:100%; height:auto; border-radius:10px" loading="lazy" />
+    </figure>
+    <figure style="margin:18px 0 0">
+      <img src="login.svg" alt="The Kintsugi admin login screen: a centered password dialog before the TUI opens, masked input, constant-time verified"
+           style="width:100%; height:auto; border-radius:10px" loading="lazy" />
+      <figcaption class="note" style="margin-top:8px">↑ Password login screen — shown when the vault is locked. Masked input, constant-time verified; password zeroized after unlock.</figcaption>
     </figure>
     <div class="grid" style="margin-top:18px">
       <div class="feat"><h3>Tabbed views</h3>

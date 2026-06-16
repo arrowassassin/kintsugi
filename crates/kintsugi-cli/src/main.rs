@@ -37,6 +37,12 @@ enum Command {
         /// Use as: `eval "$(kintsugi init --print-path)"`.
         #[arg(long)]
         print_path: bool,
+        /// Set up the enterprise posture: after wiring, print the next steps to
+        /// lock settings behind a password, install the auto-restart watchdog, and
+        /// turn on the passive recorder. Default is the personal posture (just the
+        /// gate + reversible undo, no admin machinery).
+        #[arg(long)]
+        enterprise: bool,
     },
     /// Show daemon, socket, log, and interception status.
     Status,
@@ -185,11 +191,22 @@ enum Command {
 /// `kintsugi record` subcommands (passive session recorder).
 #[derive(Debug, Subcommand)]
 enum RecordCmd {
-    /// Print the shell hook to source from your rc file (bash/zsh). Use as:
-    /// `kintsugi record install >> ~/.bashrc` (or `~/.zshrc`), then restart the shell.
-    Install,
-    /// Print how to remove the shell hook.
-    Uninstall,
+    /// Print the shell hook to source from your rc file (bash/zsh) — or, with
+    /// `--write <rc>`, install it as an idempotent fenced block in that file.
+    /// Without `--write`: `kintsugi record install >> ~/.bashrc`, then restart.
+    Install {
+        /// Write the hook into this rc file as a managed, fenced block (idempotent:
+        /// re-running replaces the existing block rather than duplicating it).
+        #[arg(long, value_name = "RC_FILE")]
+        write: Option<PathBuf>,
+    },
+    /// Remove the shell hook — with `--write <rc>`, delete the managed block from
+    /// that file; otherwise print how to remove it by hand.
+    Uninstall {
+        /// Remove the managed fenced block from this rc file.
+        #[arg(long, value_name = "RC_FILE")]
+        write: Option<PathBuf>,
+    },
     /// Show whether the daemon is up to receive recordings, and any spooled gap.
     Status,
 }
@@ -348,12 +365,13 @@ fn main() -> Result<()> {
         Some(Command::Init {
             no_daemon,
             print_path,
+            enterprise,
         }) => {
             if print_path {
                 println!("export PATH=\"{}:$PATH\"", shim_dir().display());
                 Ok(())
             } else {
-                cmd_init(no_daemon)
+                cmd_init(no_daemon, enterprise)
             }
         }
         Some(Command::Status) => cmd_status(),
@@ -401,8 +419,8 @@ fn main() -> Result<()> {
         Some(Command::Panic) => cmd_panic(),
         Some(Command::Resume) => cmd_resume(),
         Some(Command::Record { cmd }) => match cmd {
-            RecordCmd::Install => record::install(),
-            RecordCmd::Uninstall => record::uninstall(),
+            RecordCmd::Install { write } => record::install(write),
+            RecordCmd::Uninstall { write } => record::uninstall(write),
             RecordCmd::Status => record::status(),
         },
         Some(Command::Ingest { command, cwd }) => record::ingest(&command, cwd),
@@ -824,8 +842,11 @@ fn shim_dir() -> PathBuf {
     std::env::temp_dir().join("kintsugi-shims")
 }
 
-fn cmd_init(no_daemon: bool) -> Result<()> {
-    println!("kintsugi init");
+fn cmd_init(no_daemon: bool, enterprise: bool) -> Result<()> {
+    println!(
+        "kintsugi init{}",
+        if enterprise { " (enterprise)" } else { "" }
+    );
     println!();
 
     // 1. Shims for raw shell-outs.
@@ -900,7 +921,28 @@ fn cmd_init(no_daemon: bool) -> Result<()> {
     }
 
     println!();
-    println!("Done. Try: kintsugi status");
+    if enterprise {
+        // Enterprise posture: guide the operator. These are MANUAL follow-ups —
+        // init does not apply them (each needs a password / a deliberate choice).
+        println!("Enterprise setup — run these next (not applied yet; each is deliberate):");
+        println!("  1. Lock settings + require a password to stop:");
+        println!("       kintsugi admin provision");
+        println!("  2. Install the auto-restart watchdog (a kill relaunches the daemon):");
+        println!("       kintsugi service install");
+        println!("  3. Record human shell sessions for a tamper-evident audit trail:");
+        println!("       kintsugi record install --write ~/.bashrc   # or ~/.zshrc");
+        println!("       (filesystem undo for rm/overwrites; DB DROP/TRUNCATE → use PITR/backups)");
+        println!(
+            "  Review the audit trail with `kintsugi report` and the live TUI `kintsugi tui`."
+        );
+    } else {
+        // Personal posture: just the safety net — no admin machinery to learn.
+        println!("You're protected. Kintsugi holds dangerous agent commands for your OK and");
+        println!("makes them reversible — `kintsugi undo` rolls back the last destructive action.");
+        println!("  Try:  kintsugi status   ·   kintsugi tui   ·   kintsugi test \"rm -rf /\"");
+        println!("  Running on a shared/production host? `kintsugi init --enterprise` adds the");
+        println!("  password lock, auto-restart watchdog, and session recorder.");
+    }
     Ok(())
 }
 

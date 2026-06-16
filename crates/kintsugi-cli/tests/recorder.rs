@@ -104,6 +104,58 @@ fn record_install_prints_a_sourceable_hook() {
 }
 
 #[test]
+fn record_install_write_is_idempotent_and_uninstall_removes_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let rc = tmp.path().join(".bashrc");
+    std::fs::write(&rc, "export PATH=$PATH\n# my stuff\n").unwrap();
+
+    // Install into the rc as a managed block.
+    let out = kintsugi()
+        .args(["record", "install", "--write"])
+        .arg(&rc)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let body = std::fs::read_to_string(&rc).unwrap();
+    assert!(
+        body.contains("# my stuff"),
+        "must preserve existing rc content"
+    );
+    assert_eq!(
+        body.matches(">>> kintsugi session recorder >>>").count(),
+        1,
+        "exactly one block"
+    );
+
+    // Re-installing must REPLACE, not duplicate.
+    kintsugi()
+        .args(["record", "install", "--write"])
+        .arg(&rc)
+        .output()
+        .unwrap();
+    let body = std::fs::read_to_string(&rc).unwrap();
+    assert_eq!(
+        body.matches(">>> kintsugi session recorder >>>").count(),
+        1,
+        "re-install must not duplicate the block"
+    );
+
+    // Uninstall removes the block but keeps the user's content.
+    kintsugi()
+        .args(["record", "uninstall", "--write"])
+        .arg(&rc)
+        .output()
+        .unwrap();
+    let body = std::fs::read_to_string(&rc).unwrap();
+    assert!(!body.contains("kintsugi session recorder"), "block removed");
+    assert!(body.contains("# my stuff"), "user content preserved");
+}
+
+#[test]
 fn report_on_empty_log_is_clean() {
     let tmp = tempfile::tempdir().unwrap();
     let db = tmp.path().join("events.db");

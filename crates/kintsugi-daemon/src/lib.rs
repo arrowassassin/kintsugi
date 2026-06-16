@@ -612,13 +612,16 @@ impl Daemon {
         // class still rides along (verdict.class) so the timeline flags danger.
         let verdict = Verdict::rules(m.class, Decision::Allow, format!("recorded:{}", m.rule));
         // Recoverer: snapshot the paths a *destructive* human command will touch,
-        // so `kintsugi undo` can roll back a person's mistake (rm -rf, DROP, force
-        // delete) the same way it rolls back an agent's. The shell preexec hook
-        // fires before the command runs, so this is a just-in-time capture;
-        // `maybe_snapshot` no-ops for Safe commands and reflinks where it can, so
-        // the common case stays cheap. Best-effort: if the snapshot loses the race
-        // (or the fs can't reflink), the filesystem-watcher backstop still records
-        // the change. The honest guarantee is "recoverable", not transactional.
+        // so `kintsugi undo` can roll back a person's *filesystem* mistake (rm -rf,
+        // a clobbering overwrite) the same way it rolls back an agent's. The shell
+        // preexec hook fires before the command runs, so this is a just-in-time
+        // capture; `maybe_snapshot` no-ops for Safe commands and reflinks where it
+        // can, so the common case stays cheap. Best-effort: if the snapshot loses
+        // the race (or the fs can't reflink), the filesystem-watcher backstop still
+        // records the change. This is a filesystem recoverer — an in-database
+        // DROP/TRUNCATE is not a file, so it's flagged/recorded but recovery there
+        // is your DB's PITR/backups. The honest guarantee is "recoverable", not
+        // transactional.
         let snapshot_id = self.maybe_snapshot(&cmd, &verdict);
         self.log.log_event(&cmd, &verdict, snapshot_id.as_deref())?;
         Ok(())

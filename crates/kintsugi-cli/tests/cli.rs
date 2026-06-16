@@ -181,6 +181,46 @@ fn init_print_path_emits_export_line() {
 }
 
 #[test]
+fn init_tailors_guidance_by_profile() {
+    // Personal (default) posture: focused safety-net guidance, no admin machinery.
+    let tmp = tempfile::tempdir().unwrap();
+    let personal = kintsugi()
+        .args(["init", "--no-daemon"])
+        .env("HOME", tmp.path())
+        .env("KINTSUGI_DATA_DIR", tmp.path().join("data"))
+        .env("KINTSUGI_SOCKET", tmp.path().join("none.sock"))
+        .output()
+        .unwrap();
+    assert!(personal.status.success());
+    let p = String::from_utf8_lossy(&personal.stdout);
+    assert!(p.contains("You're protected"), "personal guidance: {p}");
+    assert!(
+        p.contains("--enterprise"),
+        "should hint the enterprise posture"
+    );
+    assert!(
+        !p.contains("admin provision"),
+        "personal must not push admin steps"
+    );
+
+    // Enterprise posture: the managed-control next steps.
+    let tmp2 = tempfile::tempdir().unwrap();
+    let ent = kintsugi()
+        .args(["init", "--no-daemon", "--enterprise"])
+        .env("HOME", tmp2.path())
+        .env("KINTSUGI_DATA_DIR", tmp2.path().join("data"))
+        .env("KINTSUGI_SOCKET", tmp2.path().join("none.sock"))
+        .output()
+        .unwrap();
+    assert!(ent.status.success());
+    let e = String::from_utf8_lossy(&ent.stdout);
+    assert!(e.contains("Enterprise setup"), "enterprise guidance: {e}");
+    assert!(e.contains("admin provision"));
+    assert!(e.contains("service install"));
+    assert!(e.contains("record install"));
+}
+
+#[test]
 fn bare_invocation_prints_banner() {
     let tmp = tempfile::tempdir().unwrap();
     // Point at a dead socket + clean data dir so the banner deterministically

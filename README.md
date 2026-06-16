@@ -4,7 +4,11 @@
 
 # Kintsugi
 
-### Let AI coding agents move fast — without letting them wreck your machine.
+### Let AI agents — and your team — move fast, without wrecking the machine.
+
+*A safety net for every command on your box: AI agents are caught before they do
+damage; the humans (DBAs, operators) get a tamper-evident audit trail with
+one-command undo.*
 
 AI agents now run real shell commands on your computer: `rm -rf`, `git push
 --force`, `DROP TABLE`, writes straight to disk. Almost always that's fine. The one
@@ -116,8 +120,10 @@ All build phases are implemented (see
 
 ## Enterprise: admin lock, passive recorder, and the control-room TUI
 
-Beyond guarding agents, Kintsugi can be run as a managed, audited control on a
-shared or production host:
+`kintsugi init` sets up the **personal posture** by default — just the gate plus
+reversible undo, nothing to administer. On a shared or production host, run
+`kintsugi init --enterprise` for the **managed posture**, which adds the controls
+below:
 
 - **Password-locked settings + "password to stop."** `kintsugi admin provision`
   seals the settings behind an admin password (argon2id verifier +
@@ -138,13 +144,17 @@ shared or production host:
   fail-closed set, an unreachable daemon **blocks** rather than runs unguarded — so
   killing the daemon can't be used to open the gate.
 - **Passive session recording + recoverer (no AI agent).** `kintsugi record install`
-  adds a bash/zsh preexec hook so **every command a human runs** lands on the same
+  prints a bash/zsh preexec hook (or `--write ~/.bashrc` installs it as an
+  idempotent, managed block) so **every command a human runs** lands on the same
   tamper-evident, classified audit log — for DBA/operator compliance. It blocks
   nothing, spools across daemon restarts, and redacts command-line secrets before
   hashing. Because the hook fires *before* the command, Kintsugi **snapshots
   destructive human commands just-in-time**, so `kintsugi undo` can roll back a
-  person's `rm -rf` / `DROP` the same way it rolls back an agent's. `kintsugi report`
-  lists the destructive commands for review.
+  person's destructive *filesystem* command — `rm -rf`, a clobbering overwrite, a
+  bad `mv` — the same way it rolls back an agent's. (It's a filesystem recoverer:
+  in-database `DROP`/`TRUNCATE`/DML aren't files, so use your database's PITR /
+  backups for those; and only interactive bash/zsh sessions are captured.)
+  `kintsugi report` lists the destructive commands for review.
 - **A real control-room TUI.** `kintsugi tui` opens an animated, branded terminal
   app: tabbed **Timeline / Audit / Recorder** views over the live log, a vitals
   strip, one-key approve/deny/undo, a password login when locked, and an in-app
