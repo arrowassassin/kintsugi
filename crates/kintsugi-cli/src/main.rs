@@ -1374,18 +1374,23 @@ fn cmd_report(catastrophic_only: bool, number: usize, filter: &FilterArgs) -> Re
         std::io::stdout().is_terminal(),
     );
 
-    // The core Filter holds a single class; a report spans two. Query without a
-    // class filter and keep the destructive ones in Rust, so one pass covers
-    // both bands. Pull a generous window, then trim to `number` after filtering.
-    let f = filter.to_filter(false, Some(number.max(1) * 50))?;
-    let mut events = log.query(&f)?;
-    events.retain(|e| match e.class {
-        Class::Catastrophic => true,
-        Class::Ambiguous => !catastrophic_only,
-        Class::Safe => false,
-    });
-    events.reverse(); // newest first
-    events.truncate(number.max(1));
+    // A report spans up to two classes. Query EACH class with its own `LIMIT`
+    // pushed into SQL, then merge — so a flood of Safe commands can never push the
+    // destructive ones outside a fixed window (the bug a single capped query had).
+    let n = number.max(1);
+    let mut classes = vec![Class::Catastrophic];
+    if !catastrophic_only {
+        classes.push(Class::Ambiguous);
+    }
+    let mut events = Vec::new();
+    for c in classes {
+        let mut f = filter.to_filter(false, Some(n))?;
+        f.class = Some(c);
+        events.extend(log.query(&f)?);
+    }
+    // Merge the per-class results newest-first by sequence, then cap.
+    events.sort_by(|a, b| b.seq.cmp(&a.seq));
+    events.truncate(n);
 
     if events.is_empty() {
         let scope = if catastrophic_only {

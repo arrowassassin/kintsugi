@@ -378,12 +378,20 @@ impl Daemon {
     /// ran outside Kintsugi; the "tamper-evident record of everything" one does,
     /// which is exactly what this preserves.
     pub fn record_shell(&self, cmd: &ProposedCommand) -> Result<()> {
-        let m = kintsugi_core::classify(cmd);
+        // Provenance: the recorder is for human shell sessions, so force the agent
+        // label to "shell" regardless of what the caller sent. A local peer that
+        // can reach the socket therefore cannot forge a record attributed to an
+        // AI agent ("claude-code") or the watcher ("fs-watch"); the worst it can
+        // do is inject a self-reported *shell* event, which the Audit view treats
+        // accordingly. (The socket is already owner-only; this is defense in depth.)
+        let mut cmd = cmd.clone();
+        cmd.agent = "shell".to_string();
+        let m = kintsugi_core::classify(&cmd);
         // Allow, not the rule's gate decision: the command already executed, so
         // recording a Hold/Deny here would be a lie about what happened. The
         // class still rides along (verdict.class) so the timeline flags danger.
         let verdict = Verdict::rules(m.class, Decision::Allow, format!("recorded:{}", m.rule));
-        self.log.log_event(cmd, &verdict, None)?;
+        self.log.log_event(&cmd, &verdict, None)?;
         Ok(())
     }
 

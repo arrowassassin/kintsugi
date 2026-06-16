@@ -130,6 +130,18 @@ fn recorded_secret_command_is_redacted_in_the_log() {
 }
 
 #[test]
+fn record_cannot_forge_an_agent_label() {
+    // A Record carrying agent="claude-code" must be logged as "shell" — a peer
+    // can't impersonate an AI agent or the watcher through the recorder path.
+    let mut h = start(1);
+    let forged = ProposedCommand::new("claude-code", "/tmp", vec!["ls".into()], "ls");
+    Client::record(&forged).unwrap();
+    h.join();
+    let log = EventLog::open(&h.db).unwrap();
+    assert_eq!(log.tail(1).unwrap()[0].agent, "shell");
+}
+
+#[test]
 fn recorded_and_proposed_events_share_one_intact_chain() {
     let mut h = start(2);
 

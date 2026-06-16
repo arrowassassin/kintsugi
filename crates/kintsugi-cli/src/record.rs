@@ -27,16 +27,22 @@ const HOOK: &str = r#"# >>> kintsugi session recorder >>>
 # Records every command you run to Kintsugi's tamper-evident audit log.
 # Passive: nothing is blocked. Remove this block to stop recording.
 _kintsugi_record() {
+  case "$1" in
+    *kintsugi\ ingest*|kintsugi\ ingest*) return ;;   # never record our own plumbing
+  esac
   command kintsugi ingest --cwd "$PWD" -- "$1" >/dev/null 2>&1 &
 }
 if [ -n "$ZSH_VERSION" ]; then
   autoload -Uz add-zsh-hook 2>/dev/null && add-zsh-hook preexec _kintsugi_record
 elif [ -n "$BASH_VERSION" ]; then
   _kintsugi_record_bash() {
-    [ -n "$COMP_LINE" ] && return
-    [ "$BASH_COMMAND" = "$PROMPT_COMMAND" ] && return
+    [ -n "$COMP_LINE" ] && return                     # skip completion
+    [ -n "$_KINTSUGI_IN_PROMPT" ] && return           # skip PROMPT_COMMAND hooks
+    case "$BASH_COMMAND" in _kintsugi_*) return ;; esac
     _kintsugi_record "$BASH_COMMAND"
   }
+  # Mark the prompt window so the DEBUG trap ignores PROMPT_COMMAND's own commands.
+  PROMPT_COMMAND="_KINTSUGI_IN_PROMPT=1${PROMPT_COMMAND:+; $PROMPT_COMMAND}; _KINTSUGI_IN_PROMPT="
   trap '_kintsugi_record_bash' DEBUG
 fi
 # <<< kintsugi session recorder <<<"#;
@@ -103,22 +109,33 @@ pub fn ingest(command: &str, cwd: Option<PathBuf>) -> Result<()> {
         return Ok(());
     }
     let cwd = cwd.unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-    let cmd = ProposedCommand::new("shell", cwd, kintsugi_core::shell::split(command), command);
 
-    if Client::is_daemon_running() {
+    // Redact command-line secrets up front, so a credential never travels the
+    // socket *or* lands in the on-disk spool in the clear (the daemon also
+    // redacts at log time; this makes the recorder path safe at every hop).
+    let red = kintsugi_core::redact::redact_command(command);
+    let (text, argv) = if red.any() {
+        (red.text.clone(), kintsugi_core::shell::split(&red.text))
+    } else {
+        (command.to_string(), kintsugi_core::shell::split(command))
+    };
+    let cmd = ProposedCommand::new("shell", cwd, argv, text);
+
+    // One connection on the happy path: try to record live; if that lands, also
+    // drain any backlog; if it fails (daemon down), spool for later. No separate
+    // liveness probe (it was a second, redundant connect per command).
+    if Client::record(&cmd).is_ok() {
         drain_spool();
-        // Best-effort: if the live record fails (daemon raced down), spool it so
-        // it isn't lost. Never surface the error to the shell.
-        if Client::record(&cmd).is_err() {
-            let _ = append_spool(&cmd);
-        }
     } else {
         let _ = append_spool(&cmd);
     }
     Ok(())
 }
 
-/// Append one command to the spool (newline-delimited JSON), best-effort.
+/// Append one command to the spool (newline-delimited JSON), best-effort. The
+/// file is created `0600` atomically (mode at open, not a chmod-after-create, so
+/// there is no world-readable window), and the spooled command is already
+/// redacted by `ingest`, so no secret is ever written to disk in the clear.
 fn append_spool(cmd: &ProposedCommand) -> Result<()> {
     let path = spool_path();
     if let Some(parent) = path.parent() {
@@ -126,18 +143,16 @@ fn append_spool(cmd: &ProposedCommand) -> Result<()> {
     }
     let mut line = serde_json::to_string(cmd).context("serialize spooled command")?;
     line.push('\n');
-    let mut f = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .with_context(|| format!("open spool {}", path.display()))?;
-    // Keep the spool owner-only — it holds verbatim commands (already redacted at
-    // log time, but raw on the way in).
+    let mut opts = std::fs::OpenOptions::new();
+    opts.create(true).append(true);
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
     }
+    let mut f = opts
+        .open(&path)
+        .with_context(|| format!("open spool {}", path.display()))?;
     f.write_all(line.as_bytes())
         .with_context(|| format!("write spool {}", path.display()))?;
     Ok(())
@@ -147,6 +162,12 @@ fn append_spool(cmd: &ProposedCommand) -> Result<()> {
 /// first (so concurrent ingests don't double-record), then replays each line;
 /// any lines that still fail are written back to the spool.
 fn drain_spool() {
+    // First, re-adopt any *stale* `.draining.*` files left by a process that
+    // crashed mid-drain (after the rename-claim, before write-back), folding them
+    // back into the live spool so those events aren't orphaned. "Stale" = older
+    // than 60s, so we never steal a concurrent drainer's in-flight file.
+    adopt_orphaned_draining();
+
     let path = spool_path();
     if !path.exists() {
         return;
@@ -189,9 +210,71 @@ fn drain_spool() {
     }
 }
 
-/// Count spooled commands (lines) — best-effort; 0 if the file is absent.
+/// Count spooled commands (lines) across the live spool AND any leftover
+/// `.draining.*` files — best-effort; 0 when nothing is pending. Counting the
+/// draining files too means a crash mid-drain doesn't report a false "empty".
 fn spool_depth(path: &Path) -> usize {
-    std::fs::read_to_string(path)
-        .map(|c| c.lines().filter(|l| !l.trim().is_empty()).count())
-        .unwrap_or(0)
+    let count = |p: &Path| {
+        std::fs::read_to_string(p)
+            .map(|c| c.lines().filter(|l| !l.trim().is_empty()).count())
+            .unwrap_or(0)
+    };
+    let mut total = count(path);
+    for f in draining_files(path) {
+        total += count(&f);
+    }
+    total
+}
+
+/// All `record-spool.jsonl.draining.*` files next to the spool (orphans from a
+/// crashed drain, or a concurrent drainer's in-flight file).
+fn draining_files(spool: &Path) -> Vec<PathBuf> {
+    let Some(dir) = spool.parent() else {
+        return Vec::new();
+    };
+    let Some(name) = spool.file_name().and_then(|n| n.to_str()) else {
+        return Vec::new();
+    };
+    let prefix = format!("{name}.draining.");
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    rd.flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with(&prefix))
+        })
+        .collect()
+}
+
+/// Fold stale (>60s old) `.draining.*` orphans back into the live spool so a
+/// crash mid-drain doesn't lose those events. The age gate avoids stealing a
+/// concurrent drainer's in-flight file.
+fn adopt_orphaned_draining() {
+    let spool = spool_path();
+    let now = std::time::SystemTime::now();
+    for f in draining_files(&spool) {
+        let stale = std::fs::metadata(&f)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| now.duration_since(t).ok())
+            .is_some_and(|age| age.as_secs() > 60);
+        if !stale {
+            continue;
+        }
+        if let Ok(body) = std::fs::read_to_string(&f) {
+            if !body.trim().is_empty() {
+                if let Ok(mut s) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&spool)
+                {
+                    let _ = s.write_all(body.as_bytes());
+                }
+            }
+        }
+        let _ = std::fs::remove_file(&f);
+    }
 }

@@ -51,19 +51,28 @@ pub fn redact_command(raw: &str) -> Redaction {
     let segments = split_keep_ws(raw);
     let token_count = segments.iter().filter(|s| !s.is_ws).count();
 
-    // Program = first token that isn't a `KEY=value` assignment prefix.
-    let program = segments
-        .iter()
-        .filter(|s| !s.is_ws)
-        .map(|s| s.text.as_str())
-        .find(|t| env_assignment(t).is_none())
-        .map(program_name)
+    // Effective program for flag-gating. A credential client is honored *anywhere*
+    // on the line so command wrappers (`sudo mysql -p…`, `env mysql -p…`,
+    // `sudo -u postgres mysql -p…`, `timeout 5 mysql -p…`) can't smuggle a secret
+    // past the program-gated redaction. Otherwise it's the first non-wrapper,
+    // non-assignment, non-flag token. Over-redaction here is the safe direction.
+    let progs = || {
+        segments
+            .iter()
+            .filter(|s| !s.is_ws)
+            .map(|s| s.text.as_str())
+            .filter(|t| env_assignment(t).is_none())
+            .map(program_name)
+    };
+    let program = progs()
+        .find(|p| is_credential_client(p))
+        .or_else(|| progs().find(|p| !is_wrapper(p) && !p.starts_with('-')))
         .unwrap_or_default();
-    let line_lower = raw.to_ascii_lowercase();
     let ctx = Ctx {
         program: &program,
-        // `docker login -p` is a password; `docker run -p` is a port.
-        docker_login: program == "docker" && line_lower.contains("login"),
+        // `docker login -p` is a password; `docker run -p` is a port. Detect the
+        // `login` subcommand as a bare token (no full-line lowercase allocation).
+        docker_login: program == "docker" && segments.iter().any(|s| !s.is_ws && s.text == "login"),
     };
 
     // `redact_next[k]` = the next token's whole value is the secret of a separated
@@ -498,6 +507,53 @@ fn split_keep_ws(s: &str) -> Vec<Segment> {
     out
 }
 
+/// Command wrappers that prefix the real program (so the program-gated redaction
+/// must look past them, not treat the wrapper as the program).
+fn is_wrapper(p: &str) -> bool {
+    matches!(
+        p,
+        "sudo"
+            | "doas"
+            | "env"
+            | "nice"
+            | "ionice"
+            | "nohup"
+            | "time"
+            | "timeout"
+            | "stdbuf"
+            | "setsid"
+            | "xargs"
+            | "command"
+            | "builtin"
+            | "exec"
+    )
+}
+
+/// Programs whose short flags carry a credential (so `-p…`/`-a…`/`-u…` redaction
+/// must fire even when the program appears after a wrapper). Mirrors the set
+/// `redact_short_flag` switches on.
+fn is_credential_client(p: &str) -> bool {
+    matches!(
+        p,
+        "mysql"
+            | "mysqldump"
+            | "mysqladmin"
+            | "mariadb"
+            | "mariadb-dump"
+            | "cqlsh"
+            | "mongosh"
+            | "mongo"
+            | "mongodump"
+            | "mongorestore"
+            | "docker"
+            | "sqlcmd"
+            | "redis-cli"
+            | "curl"
+            | "wget"
+            | "sshpass"
+    )
+}
+
 fn program_name(arg0: &str) -> String {
     let base = arg0
         .trim_matches(['"', '\''])
@@ -516,6 +572,23 @@ mod tests {
     }
     fn leaks(s: &str, secret: &str) -> bool {
         red(s).contains(secret)
+    }
+
+    #[test]
+    fn wrappers_do_not_smuggle_a_secret_past_redaction() {
+        // sudo/env/nice/time/timeout prefixes must not defeat the -p redaction.
+        assert!(!leaks("sudo mysql -ps3cr3t", "s3cr3t"));
+        assert!(!leaks("env mysql -ps3cr3t -u root", "s3cr3t"));
+        assert!(!leaks("nice -n10 mysql -ps3cr3t", "s3cr3t"));
+        assert!(!leaks("time mysql -ps3cr3t", "s3cr3t"));
+        assert!(!leaks("timeout 5 mysql -ps3cr3t", "s3cr3t"));
+        // sudo WITH its own options before the real client.
+        assert!(!leaks("sudo -u postgres mysql -ps3cr3t", "s3cr3t"));
+        // redis-cli and curl behind a wrapper, too.
+        assert!(!leaks("sudo redis-cli -ap@ss", "p@ss"));
+        assert!(!leaks("sudo curl -u alice:hunter2 https://x", "hunter2"));
+        // a non-client token named like a client must NOT trigger a port redaction.
+        assert_eq!(red("cat mysql.log"), "cat mysql.log");
     }
 
     #[test]

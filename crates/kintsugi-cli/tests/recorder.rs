@@ -44,6 +44,36 @@ fn ingest_spools_when_daemon_is_down() {
 }
 
 #[test]
+fn spooled_command_never_contains_a_secret() {
+    // With the daemon down, a credential command must be redacted BEFORE it is
+    // written to the on-disk spool (no cleartext secret at rest).
+    let tmp = tempfile::tempdir().unwrap();
+    let (db, sock) = isolated(tmp.path());
+    let out = kintsugi()
+        .args([
+            "ingest",
+            "--cwd",
+            "/srv",
+            "--",
+            "mysql -ps3cr3tPa55 -u root",
+        ])
+        .env("KINTSUGI_DB", &db)
+        .env("KINTSUGI_SOCKET", &sock)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let body = std::fs::read_to_string(db.with_file_name("record-spool.jsonl")).unwrap();
+    assert!(
+        !body.contains("s3cr3tPa55"),
+        "secret leaked to spool: {body}"
+    );
+    assert!(
+        body.contains("[redacted]"),
+        "expected a redaction marker: {body}"
+    );
+}
+
+#[test]
 fn empty_ingest_is_a_noop() {
     let tmp = tempfile::tempdir().unwrap();
     let (db, sock) = isolated(tmp.path());
