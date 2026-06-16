@@ -188,12 +188,13 @@ impl Tab {
     }
 }
 
-/// The top-level screen: the launch animation, then the live application. Login
-/// and settings screens are layered on in later stages.
+/// The top-level screen: launch animation, optional password gate, then the app.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Screen {
     /// The animated launch logo (auto-advances; any key skips it).
     Splash,
+    /// The admin password gate, shown when the settings vault is locked.
+    Login,
     /// The live application (tabs, timeline, detail, …).
     Main,
 }
@@ -233,10 +234,21 @@ pub struct App {
     pub daemon_up: bool,
     /// The active Tier-2 scorer backend id, if the daemon reported one.
     pub scorer: Option<String>,
-    /// The current top-level screen (splash → main).
+    /// The current top-level screen (splash → [login] → main).
     pub screen: Screen,
     /// Animation frame for the launch splash (advanced by the event loop).
     pub splash_frame: usize,
+    /// The sealed admin vault, when settings are locked (drives the login gate).
+    pub vault: Option<kintsugi_core::admin::SealedVault>,
+    /// Whether the admin password has been entered this session.
+    pub authed: bool,
+    /// The password being typed on the login screen (never echoed verbatim).
+    pub login_input: String,
+    /// The last login error, shown under the prompt.
+    pub login_error: Option<String>,
+    /// The verified admin password, held for the session so settings changes can
+    /// re-seal the vault without re-prompting. Zeroized on drop.
+    pub(crate) password: Option<zeroize::Zeroizing<String>>,
 }
 
 impl App {
@@ -256,6 +268,11 @@ impl App {
             // unit tests exercise the app directly without animating through it.
             screen: Screen::Main,
             splash_frame: 0,
+            vault: None,
+            authed: false,
+            login_input: String::new(),
+            login_error: None,
+            password: None,
         }
     }
 
@@ -263,6 +280,40 @@ impl App {
     pub fn start_on_splash(&mut self) {
         self.screen = Screen::Splash;
         self.splash_frame = 0;
+    }
+
+    /// Attach the loaded vault state. A `Locked` vault gates the app behind the
+    /// admin password; `Unprovisioned`/`Degraded` leave it open (viewing the
+    /// audit log was never password-gated — only *changing* settings is).
+    pub fn set_vault(&mut self, vault: Option<kintsugi_core::admin::SealedVault>) {
+        self.vault = vault;
+    }
+
+    /// Whether the password gate must be shown before the app.
+    pub fn needs_login(&self) -> bool {
+        self.vault.is_some() && !self.authed
+    }
+
+    /// Submit the typed password. On success, authenticate and enter the app;
+    /// on failure, clear the field and show an error. The password never appears
+    /// on the wire or in a log — only a constant-time verify against the vault.
+    pub fn submit_login(&mut self) {
+        let input = std::mem::take(&mut self.login_input);
+        match &self.vault {
+            Some(v) if v.verify_password(&input) => {
+                self.authed = true;
+                self.password = Some(zeroize::Zeroizing::new(input));
+                self.login_error = None;
+                self.screen = Screen::Main;
+            }
+            Some(_) => {
+                self.login_error = Some("incorrect password".to_string());
+            }
+            None => {
+                // No vault → nothing to authenticate against; just enter.
+                self.screen = Screen::Main;
+            }
+        }
     }
 
     /// Advance the splash animation one tick; once it completes, enter the app.
@@ -279,9 +330,14 @@ impl App {
         self.screen == Screen::Splash
     }
 
-    /// Leave the splash and show the application.
+    /// Leave the splash and show the application — via the login gate when the
+    /// vault is locked and the password hasn't been entered yet.
     fn enter_main(&mut self) {
-        self.screen = Screen::Main;
+        self.screen = if self.needs_login() {
+            Screen::Login
+        } else {
+            Screen::Main
+        };
     }
 
     /// Counts for the header vitals strip: (total, held, catastrophic) over the
@@ -359,13 +415,17 @@ impl App {
 
     /// Handle a keypress, returning any side-effecting action for the loop.
     pub fn on_key(&mut self, key: KeyCode) -> Action {
-        // On the splash, any key except quit skips straight into the app.
+        // On the splash, any key except quit skips straight into the app (or the
+        // login gate, if the vault is locked).
         if self.screen == Screen::Splash {
             if matches!(key, KeyCode::Char('q') | KeyCode::Esc) {
                 return Action::Quit;
             }
             self.enter_main();
             return Action::None;
+        }
+        if self.screen == Screen::Login {
+            return self.on_key_login(key);
         }
         // A keypress dismisses a transient status message.
         self.status = None;
@@ -374,6 +434,20 @@ impl App {
             Mode::Filter => self.on_key_filter(key),
             Mode::Detail => self.on_key_detail(key),
         }
+    }
+
+    /// Login screen: type the password, Enter submits, Esc quits (no bypass).
+    fn on_key_login(&mut self, key: KeyCode) -> Action {
+        match key {
+            KeyCode::Esc => return Action::Quit,
+            KeyCode::Enter => self.submit_login(),
+            KeyCode::Backspace => {
+                self.login_input.pop();
+            }
+            KeyCode::Char(c) => self.login_input.push(c),
+            _ => {}
+        }
+        Action::None
     }
 
     fn on_key_normal(&mut self, key: KeyCode) -> Action {
@@ -742,6 +816,59 @@ mod tests {
         let mut app = App::new(false);
         app.start_on_splash();
         assert_eq!(app.on_key(KeyCode::Char('q')), Action::Quit);
+    }
+
+    #[test]
+    fn login_gate_blocks_until_correct_password() {
+        let prov = kintsugi_core::admin::provision(
+            "correct horse battery",
+            &kintsugi_core::admin::LockedSettings::default(),
+        )
+        .unwrap();
+        let mut app = App::new(false);
+        app.set_vault(Some(prov.vault));
+        app.start_on_splash();
+
+        // Skipping the splash lands on the login gate (vault is locked).
+        app.on_key(KeyCode::Char(' '));
+        assert_eq!(app.screen, Screen::Login);
+
+        // A wrong password is rejected and stays on the gate.
+        for c in "nope".chars() {
+            app.on_key(KeyCode::Char(c));
+        }
+        app.on_key(KeyCode::Enter);
+        assert_eq!(app.screen, Screen::Login);
+        assert!(app.login_error.is_some());
+        assert!(app.login_input.is_empty(), "field cleared after a failure");
+
+        // The correct password authenticates and enters the app.
+        for c in "correct horse battery".chars() {
+            app.on_key(KeyCode::Char(c));
+        }
+        app.on_key(KeyCode::Enter);
+        assert_eq!(app.screen, Screen::Main);
+        assert!(app.authed);
+
+        // Esc on the gate quits rather than bypassing it.
+        let mut app2 = App::new(false);
+        app2.set_vault(Some(
+            kintsugi_core::admin::provision("xy", &kintsugi_core::admin::LockedSettings::default())
+                .unwrap()
+                .vault,
+        ));
+        app2.start_on_splash();
+        app2.on_key(KeyCode::Char(' '));
+        assert_eq!(app2.on_key(KeyCode::Esc), Action::Quit);
+    }
+
+    #[test]
+    fn no_vault_skips_the_login_gate() {
+        let mut app = App::new(false);
+        app.start_on_splash();
+        app.on_key(KeyCode::Char(' '));
+        assert_eq!(app.screen, Screen::Main);
+        assert!(!app.needs_login());
     }
 
     #[test]

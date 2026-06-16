@@ -1716,6 +1716,7 @@ dependencies = [
  "ratatui",
  "tempfile",
  "time",
+ "zeroize",
 ]
 
 [[package]]
