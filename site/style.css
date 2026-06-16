@@ -119,11 +119,19 @@ header.nav {
 
 /* ---- the brand hero: the logo lockup is the centerpiece ---- */
 .brandhero { padding: 64px 0 34px; text-align: center; border-top: none; }
+.lockup-frame { display: inline-block; margin: 0 auto 28px; max-width: 600px; width: 100%; }
 .brandhero .lockup {
-  display: block; width: 100%; max-width: 560px; height: auto; margin: 0 auto 28px;
+  display: block; width: 100%; max-width: 560px; height: auto; margin: 0 auto;
   /* a faint molten glow so the gold seam reads as the focal point */
   filter: drop-shadow(0 6px 26px rgba(212,175,55,.22));
 }
+/* The shard is near-black; on the cream light theme it would vanish. Float it
+   on a quiet dark plate so the mark keeps its contrast in either theme. */
+:root[data-theme="light"] .lockup-frame {
+  background: #11151d; border: 1px solid #c9c0a6;
+  border-radius: 14px; padding: 26px 22px; box-shadow: 0 6px 22px rgba(0,0,0,.12);
+}
+:root[data-theme="light"] .lockup-frame { margin-bottom: 26px; }
 .brandhero .tagline {
   font-family: "Press Start 2P", monospace; font-size: 14px; color: var(--ink);
   line-height: 1.7; margin: 0 auto 14px; max-width: 640px;

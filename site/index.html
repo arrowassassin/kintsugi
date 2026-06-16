@@ -28,6 +28,7 @@
       <a href="features.html">FEATURES</a>
       <a href="install.html">INSTALL</a>
       <a href="assurance.html">SECURITY</a>
+      <a href="enterprise.html">ENTERPRISE</a>
       <a href="https://github.com/arrowassassin/kintsugi">GITHUB</a>
       <button id="theme" class="themebtn" aria-label="toggle light or dark theme">☀ light</button>
     </nav>
@@ -36,11 +37,16 @@
 
 <main class="wrap">
 
-  <section class="hero" style="border-top:none">
-    <h1>KINTSUGI</h1>
+  <section class="brandhero">
+    <span class="lockup-frame">
+      <img class="lockup" src="logo.svg" width="430" height="80"
+           alt="Kintsugi — a local-first safety layer for AI coding agents" />
+    </span>
+    <p class="tagline">The dangerous command, caught <b>before</b> it runs.</p>
     <p class="sub">Let AI coding agents move fast — <b>without letting them wreck
-      your machine.</b> Kintsugi catches the dangerous command <b>before</b> it runs,
-      makes it reversible, and logs everything. Local-first.</p>
+      your machine.</b> Kintsugi catches the catastrophic command before it executes,
+      makes it reversible, and keeps a tamper-evident log of everything every agent
+      did. Local-first.</p>
     <div class="cta">
       <a class="btn" href="install.html">GET STARTED</a>
       <a class="btn alt" href="features.html">SEE FEATURES</a>
@@ -48,8 +54,9 @@
     </div>
     <p class="note">macOS · Linux · Windows &middot; works with every agent &middot; nothing leaves your machine</p>
     <p class="note">★ if Kintsugi is useful to you, <a href="https://github.com/arrowassassin/kintsugi">leave a star</a> — it helps others find it.</p>
+    <hr class="seam" />
 
-    <figure style="margin:26px auto 0; max-width:900px">
+    <figure style="margin:34px auto 0; max-width:900px">
       <img src="cast.svg" alt="Kintsugi: an agent's destructive command is held before it runs, denied, and lands on the tamper-evident timeline; then the live TUI"
            style="width:100%; height:auto; border-radius:10px" loading="lazy" />
       <figcaption class="note" style="margin-top:10px">↑ real Kintsugi output — hold card → denied timeline → live TUI (looping)</figcaption>
@@ -167,7 +174,7 @@
       <span class="k">control-room TUI</span> with Timeline / Audit / Recorder views.
       Honest scope: this defeats an agent or non-root user and makes a forced shutdown
       logged + recoverable — it does not stop root. Full detail →
-      <a href="features.html">features</a>.</p>
+      <a href="enterprise.html">enterprise</a>.</p>
   </section>
 
 </main>

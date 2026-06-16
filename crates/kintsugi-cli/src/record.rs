@@ -100,9 +100,8 @@ pub fn status() -> Result<()> {
 
 /// `kintsugi ingest` — record one already-run command. Fire-and-forget: it must
 /// never fail the caller's shell, so every error path is swallowed and it always
-/// returns `Ok`. When the daemon is reachable it first drains any spool (so the
-/// audit trail is replayed in order) and then records this command live;
-/// otherwise it appends to the spool.
+/// returns `Ok`. Records the command live; on success it also drains any spooled
+/// backlog. If the daemon is down it appends to the spool for later.
 pub fn ingest(command: &str, cwd: Option<PathBuf>) -> Result<()> {
     let command = command.trim();
     if command.is_empty() {
