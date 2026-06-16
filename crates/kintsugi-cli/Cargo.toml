@@ -1,6 +1,6 @@
 [package]
 name = "kintsugi"
-description = "The `kintsugi` binary: a local-first safety layer for AI coding agents — intercept, classify, hold, undo, audit, and a live TUI."
+description = "Kintsugi — a local-first safety layer for AI coding agents. Installs all binaries: kintsugi, kintsugi-daemon, kintsugi-hook, kintsugi-shim, kintsugi-exec."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -16,10 +16,27 @@ rust-version.workspace = true
 name = "kintsugi"
 path = "src/main.rs"
 
+[[bin]]
+name = "kintsugi-daemon"
+path = "src/bin/kintsugi-daemon.rs"
+
+[[bin]]
+name = "kintsugi-hook"
+path = "src/bin/kintsugi-hook.rs"
+
+[[bin]]
+name = "kintsugi-shim"
+path = "src/bin/kintsugi-shim.rs"
+
+[[bin]]
+name = "kintsugi-exec"
+path = "src/bin/kintsugi-exec.rs"
+
 [dependencies]
 kintsugi-core.workspace = true
 kintsugi-daemon.workspace = true
 kintsugi-intercept.workspace = true
+kintsugi-model.workspace = true
 kintsugi-tui.workspace = true
 serde.workspace = true
 serde_json.workspace = true
