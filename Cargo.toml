@@ -15,15 +15,20 @@ edition = "2021"
 license = "MIT"
 authors = ["arrowassassin"]
 repository = "https://github.com/arrowassassin/kintsugi"
+homepage = "https://arrowassassin.github.io/kintsugi/"
+readme = "README.md"
+keywords = ["ai", "agent", "safety", "security", "audit"]
+categories = ["command-line-utilities", "development-tools"]
 rust-version = "1.96"
 
 [workspace.dependencies]
-# Internal crates
-kintsugi-core = { path = "crates/kintsugi-core" }
-kintsugi-daemon = { path = "crates/kintsugi-daemon" }
-kintsugi-intercept = { path = "crates/kintsugi-intercept" }
-kintsugi-model = { path = "crates/kintsugi-model" }
-kintsugi-tui = { path = "crates/kintsugi-tui" }
+# Internal crates. A `version` alongside `path` is required to publish to
+# crates.io (the path is used in-workspace; the version is used from the registry).
+kintsugi-core = { path = "crates/kintsugi-core", version = "0.1.0" }
+kintsugi-daemon = { path = "crates/kintsugi-daemon", version = "0.1.0" }
+kintsugi-intercept = { path = "crates/kintsugi-intercept", version = "0.1.0" }
+kintsugi-model = { path = "crates/kintsugi-model", version = "0.1.0" }
+kintsugi-tui = { path = "crates/kintsugi-tui", version = "0.1.0" }
 
 # Serialization / data
 serde = { version = "1.0.228", features = ["derive"] }

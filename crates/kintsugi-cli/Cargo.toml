@@ -1,11 +1,15 @@
 [package]
 name = "kintsugi-cli"
-description = "The shipped `kintsugi` binary: init, status, log, approve, and undo (stub)."
+description = "The `kintsugi` binary: a local-first safety layer for AI coding agents — intercept, classify, hold, undo, audit, and a live TUI."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 rust-version.workspace = true
 
 [[bin]]

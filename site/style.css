@@ -1,4 +1,6 @@
-/* Kintsugi — 8-bit product site. Calm, dark, one danger accent; pixel chrome. */
+/* Kintsugi — product site, built around the brand mark.
+   One brand accent: kintsugi gold. Green is kept only as the "safe/ok" signal.
+   Red is the single danger/catastrophe accent. Calm until it must shout. */
 :root {
   --bg: #0b0e16;
   --bg2: #0e1320;
@@ -6,12 +8,18 @@
   --line: #283557;
   --ink: #e8ecf5;
   --dim: #8b95ad;
-  --green: #5af78e;
+  /* Brand: kintsugi gold (the molten seam). Primary accent everywhere. */
+  --gold: #D4AF37;
+  --gold-bright: #EBC65A;
+  --gold-deep: #9C6F1C;
+  --gold-shadow: #4a3608;   /* drop-shadow for gold pixel text on dark */
+  /* Signal colors — meaning, not decoration. */
+  --green: #5af78e;         /* "safe / ok" only (✓, running, intact) */
   --amber: #ffd866;
   --cyan: #6bd6ff;
   --magenta: #ff6ac1;
-  --red: #ff5d5d;
-  --accent: var(--green);
+  --red: #ff5d5d;           /* the one danger accent */
+  --accent: var(--gold);
   --term-bg: #070a11;
 }
 
@@ -54,7 +62,7 @@ h1, h2, h3, .pix, nav a, .btn, .tag, .kbd {
 }
 
 a { color: var(--cyan); text-decoration: none; }
-a:hover { color: var(--green); }
+a:hover { color: var(--gold-bright); }
 
 .wrap { max-width: 1000px; margin: 0 auto; padding: 0 20px; }
 
@@ -66,53 +74,79 @@ header.nav {
   backdrop-filter: blur(4px);
 }
 .nav .wrap { display: flex; align-items: center; gap: 18px; height: 64px; }
-.brand { font-family: "Press Start 2P"; font-size: 16px; color: var(--green);
-  text-shadow: 2px 2px 0 #0a3a1f; display: inline-flex; align-items: center;
+.brand { font-family: "Press Start 2P"; font-size: 16px; color: var(--gold);
+  text-shadow: 2px 2px 0 var(--gold-shadow); display: inline-flex; align-items: center;
   line-height: 1; }
-.brand .blink { color: var(--amber); }
+.brand .blink { color: var(--gold-bright); }
 .brand img { margin-right: 7px; flex: none; }
 .nav nav { margin-left: auto; display: flex; align-items: center; gap: 18px; }
 .nav nav a { font-size: 9px; color: var(--dim); line-height: 1; }
-.nav nav a:hover, .nav nav a.active { color: var(--green); }
+.nav nav a:hover, .nav nav a.active { color: var(--gold); }
 
 /* landing highlight cards */
 .cards { display:grid; grid-template-columns:1fr; gap:16px; margin-top:18px; }
 @media (min-width:760px){ .cards{grid-template-columns:1fr 1fr 1fr} }
 .card { border:3px solid var(--line); background:var(--panel); padding:16px; }
-.card h3 { font-family:"Press Start 2P"; font-size:10px; color:var(--cyan); margin:0 0 10px; }
+.card h3 { font-family:"Press Start 2P"; font-size:10px; color:var(--gold); margin:0 0 10px; }
 .card p { margin:0; font-size:19px; color:var(--dim); }
-.card .k { color:var(--green); }
+.card .k { color:var(--gold-bright); }
 
 /* ---- buttons / chrome ---- */
 .btn {
-  display: inline-block; font-size: 10px; color: #07150c;
-  background: var(--green); border: none; padding: 14px 18px;
-  box-shadow: 4px 4px 0 #0a3a1f; cursor: pointer;
+  display: inline-block; font-size: 10px; color: #1a1206;
+  background: var(--gold); border: none; padding: 14px 18px;
+  box-shadow: 4px 4px 0 var(--gold-deep); cursor: pointer;
   transition: transform .05s ease, box-shadow .05s ease;
 }
-.btn:hover { transform: translate(-1px,-1px); box-shadow: 6px 6px 0 #0a3a1f; color:#07150c; }
-.btn:active { transform: translate(2px,2px); box-shadow: 2px 2px 0 #0a3a1f; }
+.btn:hover { transform: translate(-1px,-1px); box-shadow: 6px 6px 0 var(--gold-deep); color:#1a1206; }
+.btn:active { transform: translate(2px,2px); box-shadow: 2px 2px 0 var(--gold-deep); }
 .btn.alt { background: var(--panel); color: var(--ink); box-shadow: 4px 4px 0 var(--line); }
-.btn.alt:hover { color: var(--green); }
+.btn.alt:hover { color: var(--gold-bright); }
 
-.tag { display:inline-block; font-size:8px; color:var(--amber); border:2px solid var(--line);
+.tag { display:inline-block; font-size:8px; color:var(--gold); border:2px solid var(--line);
   padding:6px 8px; margin:2px; }
 
 /* ---- hero ---- */
 .hero { padding: 70px 0 30px; text-align: center; }
 .hero h1 {
-  font-size: 56px; margin: 0 0 6px; color: var(--green); line-height: 1.1;
-  text-shadow: 4px 4px 0 #0a3a1f, 8px 8px 0 #06250f;
+  font-size: 56px; margin: 0 0 6px; color: var(--gold); line-height: 1.1;
+  text-shadow: 4px 4px 0 var(--gold-shadow), 8px 8px 0 #1f1604;
 }
 .hero .sub { font-size: 26px; color: var(--ink); margin: 0 auto 8px; max-width: 760px; }
-.hero .sub b { color: var(--amber); }
+.hero .sub b { color: var(--gold-bright); }
 .hero .cta { margin: 22px 0 6px; display:flex; gap:14px; justify-content:center; flex-wrap:wrap; }
 .hero .note { color: var(--dim); font-size: 18px; }
 
+/* ---- the brand hero: the logo lockup is the centerpiece ---- */
+.brandhero { padding: 64px 0 34px; text-align: center; border-top: none; }
+.brandhero .lockup {
+  display: block; width: 100%; max-width: 560px; height: auto; margin: 0 auto 28px;
+  /* a faint molten glow so the gold seam reads as the focal point */
+  filter: drop-shadow(0 6px 26px rgba(212,175,55,.22));
+}
+.brandhero .tagline {
+  font-family: "Press Start 2P", monospace; font-size: 14px; color: var(--ink);
+  line-height: 1.7; margin: 0 auto 14px; max-width: 640px;
+}
+.brandhero .tagline b { color: var(--gold-bright); }
+.brandhero .sub { font-size: 24px; color: var(--dim); margin: 0 auto 10px; max-width: 720px; }
+.brandhero .sub b { color: var(--ink); }
+.brandhero .cta { margin: 26px 0 8px; display:flex; gap:14px; justify-content:center; flex-wrap:wrap; }
+.brandhero .note { color: var(--dim); font-size: 18px; }
+/* a hairline gold rule under the hero — the single seam motif */
+.seam { height: 0; border: none; border-top: 2px solid var(--gold);
+  opacity: .5; max-width: 220px; margin: 30px auto 0; }
+@media (max-width: 640px) {
+  .brandhero { padding: 30px 0 22px; }
+  .brandhero .lockup { max-width: 92%; margin-bottom: 20px; }
+  .brandhero .tagline { font-size: 11px; }
+  .brandhero .sub { font-size: 19px; }
+}
+
 /* ---- sections ---- */
 section { padding: 46px 0; border-top: 3px dashed var(--line); }
-section h2 { font-size: 20px; color: var(--amber); text-shadow: 3px 3px 0 #3a2b06; }
-section h2 .n { color: var(--green); }
+section h2 { font-size: 20px; color: var(--gold); text-shadow: 3px 3px 0 var(--gold-shadow); }
+section h2 .n { color: var(--gold-bright); }
 .lead { font-size: 23px; color: var(--ink); max-width: 800px; }
 .muted { color: var(--dim); }
 
