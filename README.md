@@ -181,7 +181,7 @@ your platform has none), then walks you through wiring your agents and an
 curl -fsSL https://github.com/arrowassassin/kintsugi/releases/latest/download/install.sh | sh
 ```
 
-Prefer Cargo? `cargo install kintsugi kintsugi-daemon kintsugi-intercept`
+Prefer Cargo? `cargo install kintsugi` — installs all binaries in one shot.
 
 That's it — Kintsugi works immediately with **no model** (an offline heuristic
 scorer). The optional model just sharpens the plain-English summary and risk
