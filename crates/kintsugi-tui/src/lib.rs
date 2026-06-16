@@ -41,7 +41,6 @@ pub fn run(db_path: &Path, snapshot_dir: &Path) -> Result<()> {
         app.set_vault(Some(*v));
     }
     app.start_on_splash();
-    reload(&mut app, db_path);
 
     let mut terminal = ratatui::init(); // installs the panic-safe teardown hook
     let result = event_loop(&mut terminal, &mut app, db_path, snapshot_dir);
@@ -55,6 +54,12 @@ fn event_loop(
     db_path: &Path,
     snapshot_dir: &Path,
 ) -> Result<()> {
+    // Open the event log once and reuse it across polls — re-opening a SQLite
+    // connection every 250ms (4×/sec) was needless syscalls + parsing on the hot
+    // path. The connection is opened lazily (the daemon may create the db after
+    // the TUI starts) and held for the session.
+    let mut log: Option<EventLog> = None;
+    reload(app, db_path, &mut log);
     loop {
         // Page step = timeline data-rows on screen: total height minus the 1-row
         // header, 2-row footer, and the table's 2 borders + 1 header row.
@@ -73,7 +78,7 @@ fn event_loop(
             match event::read()? {
                 Event::Key(key) if key.kind == KeyEventKind::Press => match app.on_key(key.code) {
                     Action::Quit => break,
-                    Action::Undo => undo(app, db_path, snapshot_dir),
+                    Action::Undo => undo(app, db_path, snapshot_dir, &mut log),
                     Action::Approve(id) => resolve(app, &id, true),
                     Action::Deny(id) => resolve(app, &id, false),
                     Action::None => {}
@@ -84,7 +89,7 @@ fn event_loop(
         } else if app.screen == Screen::Splash {
             app.tick_splash();
         } else {
-            reload(app, db_path);
+            reload(app, db_path, &mut log);
         }
     }
     Ok(())
@@ -105,8 +110,10 @@ fn resolve(app: &mut App, id: &str, approve: bool) {
 }
 
 /// Load the most recent events into the app (live refresh), and refresh the
-/// daemon vitals (up/down + active scorer) for the header strip.
-fn reload(app: &mut App, db_path: &Path) {
+/// daemon vitals (up/down + active scorer) for the header strip. `log` is the
+/// reused connection (opened lazily once the db exists), avoiding a per-poll
+/// re-open on the hot path.
+fn reload(app: &mut App, db_path: &Path, log: &mut Option<EventLog>) {
     // Cheap liveness ping + scorer id; both fail-soft so the TUI works headless.
     app.daemon_up = kintsugi_daemon::Client::is_daemon_running();
     app.scorer = if app.daemon_up {
@@ -114,11 +121,11 @@ fn reload(app: &mut App, db_path: &Path) {
     } else {
         None
     };
-    if !db_path.exists() {
-        return;
+    if log.is_none() && db_path.exists() {
+        *log = EventLog::open(db_path).ok();
     }
-    if let Ok(log) = EventLog::open(db_path) {
-        if let Ok(mut events) = log.tail(TAIL) {
+    if let Some(l) = log.as_ref() {
+        if let Ok(mut events) = l.tail(TAIL) {
             // `tail` is chronological (oldest-first); show newest at the top.
             events.reverse();
             app.set_events(events);
@@ -128,13 +135,13 @@ fn reload(app: &mut App, db_path: &Path) {
 
 /// Undo the most recent not-yet-reverted snapshot, surfacing the result as a
 /// transient status line.
-fn undo(app: &mut App, db_path: &Path, snapshot_dir: &Path) {
+fn undo(app: &mut App, db_path: &Path, snapshot_dir: &Path, log: &mut Option<EventLog>) {
     app.status = Some(match try_undo(db_path, snapshot_dir) {
         Ok(Some(cmd)) => format!("undid `{cmd}`"),
         Ok(None) => "nothing to undo".to_string(),
         Err(e) => format!("undo failed: {e}"),
     });
-    reload(app, db_path);
+    reload(app, db_path, log);
 }
 
 fn try_undo(db_path: &Path, snapshot_dir: &Path) -> Result<Option<String>> {
@@ -170,8 +177,10 @@ mod tests {
             .unwrap();
         }
         let mut app = App::new(false);
-        reload(&mut app, &db);
+        let mut log = None;
+        reload(&mut app, &db, &mut log);
         assert_eq!(app.visible().len(), 1);
+        assert!(log.is_some(), "the connection is opened once and reused");
     }
 
     #[test]
@@ -180,7 +189,7 @@ mod tests {
         let db = tmp.path().join("e.db");
         EventLog::open(&db).unwrap();
         let mut app = App::new(false);
-        undo(&mut app, &db, &tmp.path().join("snapshots"));
+        undo(&mut app, &db, &tmp.path().join("snapshots"), &mut None);
         assert_eq!(app.status.as_deref(), Some("nothing to undo"));
     }
 
@@ -206,7 +215,7 @@ mod tests {
         std::fs::write(&file, b"changed").unwrap();
 
         let mut app = App::new(false);
-        undo(&mut app, &db, &snaps);
+        undo(&mut app, &db, &snaps, &mut None);
         assert!(app.status.as_deref().unwrap().contains("undid"));
         assert_eq!(std::fs::read(&file).unwrap(), b"orig");
     }
