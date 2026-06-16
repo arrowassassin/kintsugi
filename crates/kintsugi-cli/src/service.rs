@@ -19,6 +19,7 @@ use anyhow::{Context, Result};
 const LAUNCHD_LABEL: &str = "com.kintsugi.daemon";
 
 /// The systemd unit text (auto-restart). Pure so it can be unit-tested.
+#[allow(dead_code)] // used on Linux + in tests; dead in the macOS/Windows bin build
 pub fn systemd_unit(daemon_exe: &Path) -> String {
     format!(
         "[Unit]\n\
@@ -96,6 +97,7 @@ fn unit_path() -> Result<PathBuf> {
 }
 
 /// `kintsugi service install` — write the auto-restart unit and enable it.
+#[allow(unreachable_code)] // the unsupported-OS arm `bail!`s, making the tail unreachable there
 pub fn install() -> Result<()> {
     let exe = daemon_exe()?;
     let path = unit_path()?;
