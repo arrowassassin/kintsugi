@@ -5,6 +5,41 @@ All notable changes to Kintsugi are documented here. The format loosely follows
 
 ## [Unreleased]
 
+### Enterprise TUI overhaul + brand (phase A4)
+- **Tabbed views** — `Timeline` (everything), `Audit` (destructive-only lens), and
+  `Recorder` (passively-recorded human shell sessions), switched with `Tab`/`1`/`2`/`3`;
+  each is the same live log sliced a different way. A header **vitals strip** shows
+  global counts (events / held / catastrophic) and daemon+scorer health, all worded so
+  nothing depends on color.
+- **Animated launch splash** — the `KINTSUGI` wordmark fills left-to-right with kintsugi
+  gold (a `░`→`█` glyph sweep without color, so the motion never depends on the palette),
+  under a Unicode rendition of the brand mark. Any key skips it.
+- **Password login gate** — when the settings vault is locked, the TUI requires the admin
+  password (masked, constant-time verified) before showing the app; the password is held
+  zeroized for the session.
+- **In-app settings panel** — `s` opens a control panel that lists the locked settings and
+  toggles them (re-sealing the vault under the held password, persisted atomically). Every
+  row is a *tightening* control — none can loosen the catastrophic floor.
+- **Brand mark** — a dark tile rejoined by a golden kintsugi seam (`site/logo.svg`,
+  `site/logo-mark.svg`), the repair-as-beauty metaphor, used on the web, the README, and
+  (as Unicode) the TUI splash.
+
+### Passive session recorder (phase A3)
+- **`kintsugi record install`** prints a bash/zsh preexec hook; **`kintsugi ingest`** records
+  each command a human runs (no AI-agent hook) onto the same tamper-evident chain — classified
+  so a destructive command is flagged, but always `Allow` (it already ran; the recorder never
+  holds/denies/snapshots). For DBA/operator audit + compliance.
+- Ingest is **fire-and-forget** (never fails the shell) and **spools** to disk when the daemon
+  is down, draining on the next ingest so a brief outage doesn't punch a hole in the trail.
+- **`kintsugi report`** surfaces the destructive commands (catastrophic + ambiguous) for review.
+- Recorded commands pass through **redact-before-hash**, so a `mysql -p…` a DBA types never
+  enters the audit log in the clear.
+
+### Admin settings management (phase A4, CLI)
+- **`kintsugi admin settings`** / **`kintsugi admin set <key> <value>`** view and change the
+  sealed settings (password-gated; `--password-file` for config management). Toggling
+  `autostart` installs/removes the OS supervisor, so the flag drives a real action.
+
 ### Admin settings + audit recorder (phase A2)
 - **`kintsugi admin`** provisions a password-locked, sealed settings vault;
   **`kintsugi stop` now requires the admin password** when locked (Unprovisioned

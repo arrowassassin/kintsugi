@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/img/logo.svg" alt="Kintsugi" width="420" />
+</p>
+
 # Kintsugi
 
 ### Let AI coding agents move fast — without letting them wreck your machine.
@@ -109,6 +113,36 @@ All build phases are implemented (see
   (`kintsugi tui`).
 - **Phase 5 — Launch:** the panic kill-switch (`kintsugi panic` / `kintsugi resume`),
   `kintsugi init` polish, and a cross-platform release workflow.
+
+## Enterprise: admin lock, passive recorder, and the control-room TUI
+
+Beyond guarding agents, Kintsugi can be run as a managed, audited control on a
+shared or production host:
+
+- **Password-locked settings + "password to stop."** `kintsugi admin provision`
+  seals the settings behind an admin password (argon2id verifier +
+  XChaCha20-Poly1305, with a one-time recovery key). Once locked, **stopping,
+  unhooking, or disabling Kintsugi requires the password** — an AI agent or a
+  normal user can't quietly turn it off. `kintsugi admin set <key> <value>` and the
+  TUI manage `recording`, `autostart`, `enforcement`, `fail-closed`, and
+  `require-password-to-stop`. Every setting is a *tightening* control; none can
+  loosen the catastrophic floor. Honest scope: this defeats an agent/non-root user
+  and turns a forced shutdown into a logged, recoverable event — it does **not**
+  stop root (see the threat matrix in
+  [`kintsugi-admin-recorder-design.md`](kintsugi-admin-recorder-design.md)).
+- **Auto-restart watchdog.** `kintsugi service install` runs the daemon under
+  systemd / launchd with restart-always, so a `kill`/`pkill` relaunches it within
+  seconds; disabling the watchdog is itself password-gated.
+- **Passive session recording (no AI agent).** `kintsugi record install` adds a
+  bash/zsh preexec hook so **every command a human runs** lands on the same
+  tamper-evident, classified audit log — for DBA/operator compliance. It blocks
+  nothing (it records after the fact), spools across daemon restarts, and
+  redacts command-line secrets before hashing. `kintsugi report` lists the
+  destructive commands for review.
+- **A real control-room TUI.** `kintsugi tui` opens an animated, branded terminal
+  app: tabbed **Timeline / Audit / Recorder** views over the live log, a vitals
+  strip, one-key approve/deny/undo, a password login when locked, and an in-app
+  settings panel — everything managed from one screen.
 
 ## Crates
 

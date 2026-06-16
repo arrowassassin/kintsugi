@@ -376,3 +376,21 @@ the locked product decisions this build implements.
   recovery key dies. Chose RustCrypto argon2+chacha20poly1305 over `age` to get
   argon2id (age's passphrase mode is scrypt) with explicit nonce/AAD control.
   Honest scope unchanged: protects vs non-root user/agent + disk thief, not root.
+- Passive recorder (P-A3): a new IPC `Record(ProposedCommand)` + daemon `record_shell`
+  classifies but records `Allow` (the command already ran) so the audit timeline flags a
+  destructive human command without lying that it was held. `kintsugi ingest` is fail-open
+  and spools to a local newline-delimited file when the daemon is down, draining (with an
+  atomic rename-claim so concurrent ingests don't double-record) on the next ingest — the
+  honest reading of the "tamper-evident record of EVERYTHING" guarantee across daemon
+  restarts. Recorded commands ride the same redact-before-hash path as agent commands.
+- In-TUI control surface (P-A4): the TUI gained a screen state machine (splash → optional
+  login → main/settings). The login gate reuses the vault's constant-time `verify_password`;
+  the session password is held in `Zeroizing<String>` only to re-seal on settings changes.
+  Settings edits go through `update_settings` + atomic `save_vault` — the SAME core paths as
+  `kintsugi admin set`, so the TUI is a view/controller over one source of truth, never a
+  second policy engine (spine #1 unchanged). Vault-path resolution centralized in
+  `kintsugi_core::admin::default_vault_path` so CLI and TUI read one location.
+- Brand: chose the kintsugi golden-seam-on-a-dark-tile mark (gold #D4AF37) as the single
+  brand across web + terminal. The TUI splash animation renders the wordmark "filling with
+  gold", and falls back to a `░`→`█` glyph sweep under NO_COLOR so the motion is never
+  color-dependent (the design-system rule applies to the splash too).
