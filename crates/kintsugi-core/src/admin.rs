@@ -359,6 +359,19 @@ impl VaultState {
     }
 }
 
+/// The default on-disk location of the sealed admin vault. Overridable with
+/// `KINTSUGI_VAULT` (tests, or a root-owned `/etc/kintsugi/` path in the locked
+/// system posture). Shared by the CLI and the TUI so both read the same vault.
+pub fn default_vault_path() -> std::path::PathBuf {
+    if let Ok(p) = std::env::var("KINTSUGI_VAULT") {
+        return std::path::PathBuf::from(p);
+    }
+    if let Some(dirs) = directories::ProjectDirs::from("", "", "kintsugi") {
+        return dirs.data_dir().join("admin-vault.json");
+    }
+    std::env::temp_dir().join("kintsugi-admin-vault.json")
+}
+
 /// Load the vault state from `path`. Distinguishes "absent" (genuinely
 /// unprovisioned) from "present but unreadable" (Degraded → stay locked).
 pub fn load_vault(path: &std::path::Path) -> VaultState {

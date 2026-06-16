@@ -14,16 +14,9 @@ use std::path::PathBuf;
 use anyhow::{bail, Context, Result};
 use kintsugi_core::admin::{self, Enforcement, LockedSettings, VaultState};
 
-/// Where the sealed admin vault lives. Overridable via `KINTSUGI_VAULT` (tests /
-/// a root-owned `/etc/kintsugi/` path in the locked system posture).
+/// Where the sealed admin vault lives (see [`admin::default_vault_path`]).
 pub fn vault_path() -> PathBuf {
-    if let Ok(p) = std::env::var("KINTSUGI_VAULT") {
-        return PathBuf::from(p);
-    }
-    if let Some(dirs) = directories::ProjectDirs::from("", "", "kintsugi") {
-        return dirs.data_dir().join("admin-vault.json");
-    }
-    std::env::temp_dir().join("kintsugi-admin-vault.json")
+    admin::default_vault_path()
 }
 
 const MIN_PASSWORD_LEN: usize = 8;

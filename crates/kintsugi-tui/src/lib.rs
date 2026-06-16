@@ -34,6 +34,12 @@ const SPLASH_TICK: Duration = Duration::from_millis(60);
 pub fn run(db_path: &Path, snapshot_dir: &Path) -> Result<()> {
     let color = std::env::var_os("NO_COLOR").is_none();
     let mut app = App::new(color);
+    // A locked settings vault gates the app behind the admin password.
+    if let kintsugi_core::admin::VaultState::Locked(v) =
+        kintsugi_core::admin::load_vault(&kintsugi_core::admin::default_vault_path())
+    {
+        app.set_vault(Some(*v));
+    }
     app.start_on_splash();
     reload(&mut app, db_path);
 

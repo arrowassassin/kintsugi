@@ -24,9 +24,13 @@ const SPLIT_WIDTH: u16 = 100;
 /// Render the whole UI for the current frame.
 pub fn render(f: &mut Frame, app: &App) {
     let area = f.area();
-    // The splash owns the whole screen and renders at any size.
+    // The splash and login own the whole screen and render at any size.
     if app.screen == Screen::Splash {
         crate::splash::render(f, area, app.splash_frame, app.color);
+        return;
+    }
+    if app.screen == Screen::Login {
+        render_login(f, app, area);
         return;
     }
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
@@ -71,6 +75,55 @@ fn accent_fg(app: &App, c: Color) -> Style {
     } else {
         Style::default()
     }
+}
+
+/// The admin password gate. Centered card, masked input, error under the field.
+fn render_login(f: &mut Frame, app: &App, area: Rect) {
+    // Mask the password with bullets — its length is the only thing on screen.
+    let masked: String = "•".repeat(app.login_input.chars().count());
+    let mut lines = vec![
+        Line::from(Span::styled(
+            "▦ Kintsugi",
+            accent_fg(app, ACCENT).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled("admin-locked", dim(app))),
+        Line::from(""),
+        Line::from("Enter the admin password to manage Kintsugi."),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("password ", dim(app)),
+            Span::raw(masked),
+            Span::styled("▏", dim(app)),
+        ]),
+    ];
+    if let Some(err) = &app.login_error {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            format!("✗ {err}"),
+            accent_fg(app, DANGER).add_modifier(Modifier::BOLD),
+        )));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "enter unlock · esc quit",
+        dim(app),
+    )));
+
+    // A bordered card, centered, sized to the content.
+    let h = (lines.len() as u16 + 2).min(area.height);
+    let w = 52.min(area.width);
+    let card = Rect {
+        x: area.x + (area.width.saturating_sub(w)) / 2,
+        y: area.y + (area.height.saturating_sub(h)) / 2,
+        width: w,
+        height: h,
+    };
+    f.render_widget(
+        Paragraph::new(lines)
+            .block(panel(app, " login "))
+            .alignment(Alignment::Center),
+        card,
+    );
 }
 
 fn render_too_small(f: &mut Frame, area: Rect) {
@@ -579,6 +632,21 @@ mod tests {
         assert!(wide.contains("risk"));
         let narrow = buffer_text(&app, 80, 24); // list only
         assert!(narrow.contains("held"));
+    }
+
+    #[test]
+    fn login_screen_masks_input_and_shows_errors() {
+        let mut app = App::new(false);
+        // Force the login screen without a real vault by setting state directly.
+        app.screen = crate::app::Screen::Login;
+        app.login_input = "secret".into();
+        app.login_error = Some("incorrect password".into());
+        let text = buffer_text(&app, 80, 24);
+        assert!(text.contains("admin-locked"));
+        assert!(text.contains("••••••"), "password must be masked");
+        assert!(!text.contains("secret"), "raw password must never render");
+        assert!(text.contains("incorrect password"));
+        assert!(text.contains("esc quit"));
     }
 
     #[test]
