@@ -1,4 +1,4 @@
-# Aegis — Security Stress & Vulnerability Assessment
+# Kintsugi — Security Stress & Vulnerability Assessment
 
 **Scope:** the Tier-1 deterministic classifier and its dependencies — the security
 spine that decides whether an AI agent's shell command is hard-blocked, held, or
@@ -7,7 +7,7 @@ adversarial testing run in-repo; every figure below is reproduced by a command i
 this report — nothing is asserted without a measurement.
 
 > **Honesty note (read first).** This is an *internal, automated* assessment, not a
-> third-party penetration test or formal audit. Aegis's guarantee is deliberately
+> third-party penetration test or formal audit. Kintsugi's guarantee is deliberately
 > *"nothing is unrecoverable"* (detective + reversible), **not** *"nothing runs
 > un-warned."* Hooks can be bypassed by an agent in auto-approve/"yolo" mode or a
 > process invoking a binary by absolute path; the filesystem-watcher backstop, not
@@ -38,7 +38,7 @@ exhaustion denial-of-service in the bundled shell parser (see §3).
 
 ## 1. Security correctness & evasion resistance
 
-A 176-command adversarial corpus (`crates/aegis-core/tests/security_stress.rs`)
+A 176-command adversarial corpus (`crates/kintsugi-core/tests/security_stress.rs`)
 maps attack classes to **MITRE ATT&CK** (T1485 Data Destruction, T1561 Disk Wipe,
 T1552 Unsecured Credentials, T1059 Command Execution, T1499 resource exhaustion)
 and the **GTFOBins** "benign binary, harmful use" catalog. The one zero-tolerance
@@ -70,12 +70,12 @@ catastrophic — variable indirection (`X=rm; $X -rf /`), `eval`, language
 interpreters (`python -c …`). These are **held/denied, never run silently**, and
 are exactly the band the Tier-2 model is designed to score.
 
-**Reproduce:** `cargo test -p aegis-core --test security_stress -- --nocapture`
+**Reproduce:** `cargo test -p kintsugi-core --test security_stress -- --nocapture`
 
 ## 2. Robustness fuzzing (1.4M inputs, zero crashes)
 
 No `cargo-fuzz`/libFuzzer on stable Rust, so the campaign uses a deterministic,
-seeded, in-process fuzzer (`crates/aegis-core/tests/robustness_fuzz.rs`) across
+seeded, in-process fuzzer (`crates/kintsugi-core/tests/robustness_fuzz.rs`) across
 three generators. A real parser stack-overflow is an *uncatchable abort* that
 kills the process, so reaching the end of each run is the proof of survival.
 
@@ -84,7 +84,7 @@ kills the process, so reaching the end of each run is the proof of survival.
 | Arbitrary Unicode (ASCII + control + multibyte + emoji + NUL) | 600,000 | no panic/abort |
 | Shell-metacharacter soup (operators, quotes, subs, here-ops, keywords) | 800,000 | no panic/abort |
 
-**Reproduce:** `cargo test -p aegis-core --release --test robustness_fuzz -- --ignored --nocapture`
+**Reproduce:** `cargo test -p kintsugi-core --release --test robustness_fuzz -- --ignored --nocapture`
 
 ## 3. Denial-of-service resistance — one vulnerability found & fixed
 
@@ -99,7 +99,7 @@ abort the process. Minimal reproducer:
 Root cause: `brush-parser`'s here-doc / here-string tokenizer over-allocates on
 *malformed* here-operator input (operator pileups like `<<<<<`, empty delimiters
 like `<< ''`, here-ops mixed with command substitution). **Impact:** an agent — or
-a prompt-injected instruction — emitting such a command would OOM-crash the Aegis
+a prompt-injected instruction — emitting such a command would OOM-crash the Kintsugi
 daemon, disabling the safety layer (a fail-open DoS).
 
 **Fix (shipped in this branch):** here-operators are *neutralized* before the line
@@ -121,12 +121,12 @@ Pre-existing guards verified by the same suite: deeply nested `$(…)` (stack-
 overflow class, found in the earlier classifier roundtable) and 64 KB+/256-operator
 floods are refused before parsing and fail toward caution (never Safe).
 
-**Reproduce:** `cargo test -p aegis-core --release --test robustness_fuzz dos_pathological_inputs_are_bounded_and_never_abort -- --nocapture`
+**Reproduce:** `cargo test -p kintsugi-core --release --test robustness_fuzz dos_pathological_inputs_are_bounded_and_never_abort -- --nocapture`
 
 ## 4. Performance (hot path on every agent command)
 
 Release build, 320,000 classifications over a representative safe/held/complex mix
-(`crates/aegis-core/tests/perf_report.rs`):
+(`crates/kintsugi-core/tests/perf_report.rs`):
 
 ```
 mean 4.1 µs · p50 2.2 µs · p90 11.6 µs · p99 18.1 µs · p99.9 41.6 µs · max 95.6 µs
@@ -136,13 +136,13 @@ throughput: ~239,700 classifications/s (single core)
 Safe commands — the common case — clear in low microseconds; the cost ceiling is
 bounded by the §3 complexity caps. The classifier does no I/O and is deterministic.
 
-**Reproduce:** `cargo test -p aegis-core --release --test perf_report -- --ignored --nocapture`
+**Reproduce:** `cargo test -p kintsugi-core --release --test perf_report -- --ignored --nocapture`
 
 ## 5. Supply-chain & memory safety
 
 - **Known vulnerabilities:** `cargo audit` against the RustSec advisory database
   (1,132 advisories) over **436 dependencies → 0 vulnerabilities, 0 warnings.**
-- **Memory safety:** **0 `unsafe` blocks** in any first-party crate (`aegis-core`,
+- **Memory safety:** **0 `unsafe` blocks** in any first-party crate (`kintsugi-core`,
   `-daemon`, `-intercept`, `-cli`, `-model`, `-tui`). Combined with the 1.4M-input
   fuzz (no abort), the trusted computing base is memory-safe Rust.
 - **Licensing:** 322 resolved packages, all effective licenses permissive
@@ -161,11 +161,11 @@ bounded by the §3 complexity caps. The classifier does no I/O and is determinis
 To stay honest for an enterprise reviewer:
 
 - **Not a third-party pen-test or formal audit.** Independent review recommended
-  before relying on Aegis as a compliance control.
+  before relying on Kintsugi as a compliance control.
 - **Fuzzing is stable-Rust in-process**, not coverage-guided (libFuzzer/AFL++) — a
   longer guided campaign and `cargo-fuzz` targets are recommended follow-ups.
 - **Interception is not a sandbox.** The threat model (and §0 note) is explicit:
-  Aegis guards mistakes and makes them reversible; it is not an unbypassable
+  Kintsugi guards mistakes and makes them reversible; it is not an unbypassable
   firewall against a determined same-machine process.
 - **Tier-2 model** scoring is out of scope here (it can only *add* caution and never
   unblocks a rule decision; the spine holds regardless of the model).
@@ -174,11 +174,11 @@ To stay honest for an enterprise reviewer:
 
 ```sh
 # correctness + zero-leak gate (fast)
-cargo test -p aegis-core --test security_stress -- --nocapture
+cargo test -p kintsugi-core --test security_stress -- --nocapture
 # robustness fuzz (1.4M inputs) + DoS bounds
-cargo test -p aegis-core --release --test robustness_fuzz -- --ignored --nocapture
+cargo test -p kintsugi-core --release --test robustness_fuzz -- --ignored --nocapture
 # performance
-cargo test -p aegis-core --release --test perf_report -- --ignored --nocapture
+cargo test -p kintsugi-core --release --test perf_report -- --ignored --nocapture
 # supply chain + coverage
 cargo audit
 cargo llvm-cov --workspace --summary-only --fail-under-lines 88

@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Aegis — security assessment</title>
-<meta name="description" content="Aegis security stress & vulnerability assessment: zero dangerous-as-safe leaks across a MITRE/GTFOBins corpus, 1.4M fuzz inputs with no crash, a real heap-DoS found and fixed, 0 CVEs, 0 unsafe." />
-<meta property="og:title" content="Aegis — security assessment" />
+<title>Kintsugi — security assessment</title>
+<meta name="description" content="Kintsugi security stress & vulnerability assessment: zero dangerous-as-safe leaks across a MITRE/GTFOBins corpus, 1.4M fuzz inputs with no crash, a real heap-DoS found and fixed, 0 CVEs, 0 unsafe." />
+<meta property="og:title" content="Kintsugi — security assessment" />
 <meta property="og:description" content="Measured assurance: 0 leaks, 1.4M fuzz inputs clean, a DoS found & fixed, 0 CVEs, 0 unsafe." />
 <meta property="og:type" content="website" />
-<meta property="og:image" content="https://arrowassassin.github.io/aegis/og.svg" />
+<meta property="og:image" content="https://arrowassassin.github.io/kintsugi/og.svg" />
 <meta name="twitter:card" content="summary_large_image" />
 <link rel="icon" href="data:image/svg+xml,&lt;svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'&gt;&lt;rect width='16' height='16' fill='%230b0e16'/&gt;&lt;text x='8' y='13' font-size='13' text-anchor='middle' fill='%235af78e'&gt;▦&lt;/text&gt;&lt;/svg&gt;" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -20,7 +20,7 @@
 
 <header class="nav">
   <div class="wrap">
-    <a class="brand" href="index.html">&#9638; AEGIS<span class="blink">_</span></a>
+    <a class="brand" href="index.html">&#9638; KINTSUGI<span class="blink">_</span></a>
     <button id="navtoggle" class="navtoggle" aria-label="open menu" aria-expanded="false" aria-controls="primarynav">&#9776;</button>
     <nav id="primarynav">
       <a href="index.html">HOME</a>
@@ -28,7 +28,7 @@
       <a href="features.html">FEATURES</a>
       <a href="install.html">INSTALL</a>
       <a class="active" href="assurance.html">SECURITY</a>
-      <a href="https://github.com/arrowassassin/aegis">GITHUB</a>
+      <a href="https://github.com/arrowassassin/kintsugi">GITHUB</a>
       <button id="theme" class="themebtn" aria-label="toggle light or dark theme">☀ light</button>
     </nav>
   </div>
@@ -43,7 +43,7 @@
       command is allowed to do. Every number below is measured by a test in the
       repo — and reproducible.</p>
     <p class="note">Honest framing: this is an <strong>internal, automated</strong>
-      assessment, not a third-party pen-test. Aegis is detective + reversible
+      assessment, not a third-party pen-test. Kintsugi is detective + reversible
       (&ldquo;nothing unrecoverable&rdquo;), not an unbypassable firewall. The figures
       characterize correctness, robustness, performance, and supply-chain hygiene.</p>
   </section>
@@ -94,7 +94,7 @@ safe commands tested      :  37
     <h2><span class="n">2 &gt;</span> a real vulnerability — found by fuzzing, fixed</h2>
     <p class="lead">A 23-byte input made the bundled bash parser attempt a 1.75&nbsp;GB
       allocation and abort the process. An agent (or a prompt-injected instruction)
-      emitting it would crash the Aegis daemon and disable the safety layer.</p>
+      emitting it would crash the Kintsugi daemon and disable the safety layer.</p>
     <div class="term">
       <div class="bar"><i class="dot r"></i><i class="dot y"></i><i class="dot g"></i><span class="ttl">heredoc heap-exhaustion DoS</span></div>
 <pre>
@@ -143,23 +143,23 @@ max   95.6 µs
     <div class="term">
       <div class="bar"><i class="dot r"></i><i class="dot y"></i><i class="dot g"></i><span class="ttl">the whole campaign</span></div>
 <pre>
-<span class="t-grn">cargo test</span> -p aegis-core --test security_stress -- --nocapture
-<span class="t-grn">cargo test</span> -p aegis-core --release --test robustness_fuzz -- --ignored --nocapture
-<span class="t-grn">cargo test</span> -p aegis-core --release --test perf_report -- --ignored --nocapture
+<span class="t-grn">cargo test</span> -p kintsugi-core --test security_stress -- --nocapture
+<span class="t-grn">cargo test</span> -p kintsugi-core --release --test robustness_fuzz -- --ignored --nocapture
+<span class="t-grn">cargo test</span> -p kintsugi-core --release --test perf_report -- --ignored --nocapture
 <span class="t-grn">cargo audit</span>
 <span class="t-grn">cargo llvm-cov</span> --workspace --summary-only --fail-under-lines 88
 </pre>
     </div>
     <p class="muted" style="margin-top:18px">Full write-up, methodology, and the
       &ldquo;what this does not cover&rdquo; section:
-      <a href="https://github.com/arrowassassin/aegis/blob/main/docs/security-assessment.md">docs/security-assessment.md</a>.</p>
+      <a href="https://github.com/arrowassassin/kintsugi/blob/main/docs/security-assessment.md">docs/security-assessment.md</a>.</p>
   </section>
 
 </main>
 
 <footer>
   <div class="wrap">
-    <p>MIT licensed · <a href="https://github.com/arrowassassin/aegis">github.com/arrowassassin/aegis</a>
+    <p>MIT licensed · <a href="https://github.com/arrowassassin/kintsugi">github.com/arrowassassin/kintsugi</a>
       · every figure on this page is measured by a test in the repo.</p>
   </div>
 </footer>

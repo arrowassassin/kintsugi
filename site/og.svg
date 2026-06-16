@@ -15,7 +15,7 @@
     <rect width="4" height="2" fill="#000"/>
   </pattern>
 
-  <text x="80" y="150" font-size="92" font-weight="bold" fill="#5af78e">▦ AEGIS</text>
+  <text x="80" y="150" font-size="92" font-weight="bold" fill="#5af78e">▦ KINTSUGI</text>
   <text x="84" y="210" font-size="34" fill="#e8ecf5">A safety layer for AI coding agents.</text>
   <text x="84" y="256" font-size="30" fill="#ffd866">It catches the dangerous command before it runs.</text>
 
@@ -28,11 +28,11 @@
     <rect x="42" y="14" width="13" height="13" fill="#ffd866"/>
     <rect x="64" y="14" width="13" height="13" fill="#5af78e"/>
     <text x="92" y="26" font-size="15" fill="#8b95ad">agent proposes: rm -rf src</text>
-    <text x="28" y="86"  font-size="22" fill="#ff5d5d">⚠ Aegis hold — catastrophic, cannot be undone.</text>
+    <text x="28" y="86"  font-size="22" fill="#ff5d5d">⚠ Kintsugi hold — catastrophic, cannot be undone.</text>
     <text x="28" y="132" font-size="22" fill="#ffffff" font-weight="bold">    rm -rf src</text>
     <text x="28" y="182" font-size="22" fill="#ffd866">  [a] allow once   [d] deny   [r] always allow here</text>
     <text x="28" y="222" font-size="18" fill="#8b95ad">rules block · model explains · append-only hash-chained log</text>
   </g>
 
-  <text x="80" y="600" font-size="22" fill="#6bd6ff">github.com/arrowassassin/aegis</text>
+  <text x="80" y="600" font-size="22" fill="#6bd6ff">github.com/arrowassassin/kintsugi</text>
 </svg>

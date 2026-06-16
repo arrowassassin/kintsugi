@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Aegis — install &amp; plugin</title>
-<meta name="description" content="Install Aegis, wire it to your agent, add the Claude Code plugin, and configure per-repo policy." />
-<meta property="og:title" content="Aegis — install & plugin" />
-<meta property="og:description" content="Install Aegis, wire your agent, add the Claude Code plugin." />
+<title>Kintsugi — install &amp; plugin</title>
+<meta name="description" content="Install Kintsugi, wire it to your agent, add the Claude Code plugin, and configure per-repo policy." />
+<meta property="og:title" content="Kintsugi — install & plugin" />
+<meta property="og:description" content="Install Kintsugi, wire your agent, add the Claude Code plugin." />
 <meta property="og:type" content="website" />
-<meta property="og:image" content="https://arrowassassin.github.io/aegis/og.svg" />
+<meta property="og:image" content="https://arrowassassin.github.io/kintsugi/og.svg" />
 <meta name="twitter:card" content="summary_large_image" />
 <link rel="icon" href="data:image/svg+xml,&lt;svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'&gt;&lt;rect width='16' height='16' fill='%230b0e16'/&gt;&lt;text x='8' y='13' font-size='13' text-anchor='middle' fill='%235af78e'&gt;▦&lt;/text&gt;&lt;/svg&gt;" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -20,7 +20,7 @@
 
 <header class="nav">
   <div class="wrap">
-    <a class="brand" href="index.html">&#9638; AEGIS<span class="blink">_</span></a>
+    <a class="brand" href="index.html">&#9638; KINTSUGI<span class="blink">_</span></a>
     <button id="navtoggle" class="navtoggle" aria-label="open menu" aria-expanded="false" aria-controls="primarynav">&#9776;</button>
     <nav id="primarynav">
       <a href="index.html">HOME</a>
@@ -28,7 +28,7 @@
       <a href="features.html">FEATURES</a>
       <a class="active" href="install.html">INSTALL</a>
       <a href="assurance.html">SECURITY</a>
-      <a href="https://github.com/arrowassassin/aegis">GITHUB</a>
+      <a href="https://github.com/arrowassassin/kintsugi">GITHUB</a>
       <button id="theme" class="themebtn" aria-label="toggle light or dark theme">☀ light</button>
     </nav>
   </div>
@@ -48,82 +48,82 @@
       (checksum-verified) or builds from source if your platform has no prebuilt:</p>
     <div class="cmd">
       <button class="copy">copy</button>
-<pre>curl -fsSL https://github.com/arrowassassin/aegis/releases/latest/download/install.sh | sh</pre>
+<pre>curl -fsSL https://github.com/arrowassassin/kintsugi/releases/latest/download/install.sh | sh</pre>
     </div>
     <p class="muted">Or straight from source with Cargo (also no clone):</p>
     <div class="cmd">
       <button class="copy">copy</button>
-<pre>cargo install --git https://github.com/arrowassassin/aegis aegis-cli aegis-daemon aegis-intercept</pre>
+<pre>cargo install --git https://github.com/arrowassassin/kintsugi kintsugi-cli kintsugi-daemon kintsugi-intercept</pre>
     </div>
     <p class="muted">The installer then walks you through a short setup: wiring your
-      agents (<span class="t-grn">aegis init</span>) and an <em>optional</em> local
-      model. You can skip anything — Aegis works immediately with no model. To wire
+      agents (<span class="t-grn">kintsugi init</span>) and an <em>optional</em> local
+      model. You can skip anything — Kintsugi works immediately with no model. To wire
       later or re-run it yourself:</p>
     <div class="cmd">
       <button class="copy">copy</button>
-<pre>aegis init     # wire agents + start daemon      aegis stop   # stop it</pre>
+<pre>kintsugi init     # wire agents + start daemon      kintsugi stop   # stop it</pre>
     </div>
     <p class="muted">Then run a command through any wired agent — or a raw shell with
-      the shim dir on your PATH — and watch <span class="t-grn">aegis log</span> /
-      <span class="t-grn">aegis tui</span>.</p>
-    <p class="muted"><strong>Works with any agent.</strong> <span class="t-grn">aegis init</span>
+      the shim dir on your PATH — and watch <span class="t-grn">kintsugi log</span> /
+      <span class="t-grn">kintsugi tui</span>.</p>
+    <p class="muted"><strong>Works with any agent.</strong> <span class="t-grn">kintsugi init</span>
       detects Claude Code (<span class="muted">~/.claude</span>), Cursor CLI
       (<span class="muted">~/.cursor</span>), Codex CLI (<span class="muted">~/.codex</span>),
       Qwen Code (<span class="muted">~/.qwen</span>), and Gemini CLI
       (<span class="muted">~/.gemini</span>): it wires Claude's native hook, prints the
-      <span class="t-grn">aegis-exec</span> MCP server line for the rest, and the
+      <span class="t-grn">kintsugi-exec</span> MCP server line for the rest, and the
       $PATH shim covers every other tool or raw shell-out
       (Aider, Continue, a Makefile, you). See
-      <a href="https://github.com/arrowassassin/aegis/blob/main/docs/mcp.md">docs/mcp.md</a>.</p>
+      <a href="https://github.com/arrowassassin/kintsugi/blob/main/docs/mcp.md">docs/mcp.md</a>.</p>
     <ul class="checks">
       <li>Sub-second warnings; SAFE commands add negligible overhead.</li>
       <li>Fail-open by default (a down daemon never blocks you);
-        <span class="muted">AEGIS_FAIL_CLOSED=1</span> to flip.</li>
-      <li>Panic kill-switch: <span class="t-grn">aegis panic</span> halts everything,
-        <span class="t-grn">aegis resume</span> clears it.</li>
+        <span class="muted">KINTSUGI_FAIL_CLOSED=1</span> to flip.</li>
+      <li>Panic kill-switch: <span class="t-grn">kintsugi panic</span> halts everything,
+        <span class="t-grn">kintsugi resume</span> clears it.</li>
     </ul>
   </section>
 
   <section id="model">
     <h2><span class="n">&gt;</span> 1b · optional — pick a local model</h2>
-    <p class="lead">Aegis works with <strong>no model</strong> (the offline heuristic
+    <p class="lead">Kintsugi works with <strong>no model</strong> (the offline heuristic
       scorer is always on). To also get a plain-English summary + risk score, the
       picker fetches a short, RAM-appropriate list of small instruct GGUF models,
       downloads your choice, and prints the one env var to set:</p>
     <div class="cmd">
       <button class="copy">copy</button>
-<pre>curl -fsSL https://github.com/arrowassassin/aegis/releases/latest/download/pick-model.sh | sh</pre>
+<pre>curl -fsSL https://github.com/arrowassassin/kintsugi/releases/latest/download/pick-model.sh | sh</pre>
     </div>
     <p class="muted">Or fold it into the install above with
       <span class="t-grn">| sh -s -- --with-model</span>. The query is constrained
       (<span class="muted">filter=gguf</span>, text-generation, sized to your RAM)
       so only viable options appear. Already have a GGUF? Skip the picker and set
-      <span class="t-grn">AEGIS_MODEL_FILE=/path/to/model.gguf</span> — any local
+      <span class="t-grn">KINTSUGI_MODEL_FILE=/path/to/model.gguf</span> — any local
       model, no recompile.</p>
   </section>
 
   <section id="plugin">
     <h2><span class="n">&gt;</span> 2 · claude code plugin</h2>
-    <p class="lead">Aegis ships as a Claude Code plugin + marketplace. The plugin is a
+    <p class="lead">Kintsugi ships as a Claude Code plugin + marketplace. The plugin is a
       thin wiring layer; install the binaries with the one-liner above.</p>
     <div class="cmd">
       <button class="copy">copy</button>
-<pre>/plugin marketplace add arrowassassin/aegis
-/plugin install aegis@aegis</pre>
+<pre>/plugin marketplace add arrowassassin/kintsugi
+/plugin install kintsugi@kintsugi</pre>
     </div>
     <p class="muted">It registers a <span class="t-grn">PreToolUse</span> hook
-      (→&nbsp;aegis-hook) and the <span class="t-grn">aegis-exec</span> MCP server
-      (→&nbsp;aegis-mcp). Ships disabled until you trust it.</p>
+      (→&nbsp;kintsugi-hook) and the <span class="t-grn">kintsugi-exec</span> MCP server
+      (→&nbsp;kintsugi-mcp). Ships disabled until you trust it.</p>
   </section>
 
   <section id="policy">
     <h2><span class="n">&gt;</span> 3 · per-repo policy</h2>
-    <p class="lead">Commit an <span class="muted">.aegis.toml</span> to tune Aegis per
+    <p class="lead">Commit an <span class="muted">.kintsugi.toml</span> to tune Kintsugi per
       project: set the mode, pre-allow known-safe patterns, force-deny others, and
       set the unattended risk threshold.</p>
     <div class="cmd">
       <button class="copy">copy</button>
-<pre># .aegis.toml
+<pre># .kintsugi.toml
 mode = "attended"      # attended · unattended · notify
 
 [rules]
@@ -139,20 +139,20 @@ deny  = ["git push * --force", "kubectl * --context=prod"]</pre>
   <section id="commands">
     <h2><span class="n">&gt;</span> 4 · command cheat-sheet</h2>
     <div class="term">
-      <div class="bar"><i class="dot r"></i><i class="dot y"></i><i class="dot g"></i><span class="ttl">aegis --help</span></div>
+      <div class="bar"><i class="dot r"></i><i class="dot y"></i><i class="dot g"></i><span class="ttl">kintsugi --help</span></div>
 <pre>
-<span class="t-grn">aegis init</span>           detect agents, wire interception, start daemon
-<span class="t-grn">aegis stop</span>           stop the background daemon (inverse of init)
-<span class="t-grn">aegis status</span>         daemon / socket / log / chain / scorer / kill-switch
-<span class="t-grn">aegis update</span>         check GitHub for a newer release &amp; install in place
-<span class="t-grn">aegis log</span> [-n N]     recent command timeline
-<span class="t-grn">aegis tui</span>            live, interactive timeline (filter: agent: session: since:)
-<span class="t-grn">aegis queue</span>          commands held for approval
-<span class="t-grn">aegis approve</span> &lt;id&gt;   release a held command (agent proceeds)
-<span class="t-grn">aegis deny</span> &lt;id&gt;      reject a held command
-<span class="t-grn">aegis undo</span> [--session] restore snapshotted files
-<span class="t-grn">aegis watch</span> &lt;path&gt;   FS-watcher backstop for un-intercepted changes
-<span class="t-grn">aegis panic</span> / <span class="t-grn">resume</span>  kill-switch on / off
+<span class="t-grn">kintsugi init</span>           detect agents, wire interception, start daemon
+<span class="t-grn">kintsugi stop</span>           stop the background daemon (inverse of init)
+<span class="t-grn">kintsugi status</span>         daemon / socket / log / chain / scorer / kill-switch
+<span class="t-grn">kintsugi update</span>         check GitHub for a newer release &amp; install in place
+<span class="t-grn">kintsugi log</span> [-n N]     recent command timeline
+<span class="t-grn">kintsugi tui</span>            live, interactive timeline (filter: agent: session: since:)
+<span class="t-grn">kintsugi queue</span>          commands held for approval
+<span class="t-grn">kintsugi approve</span> &lt;id&gt;   release a held command (agent proceeds)
+<span class="t-grn">kintsugi deny</span> &lt;id&gt;      reject a held command
+<span class="t-grn">kintsugi undo</span> [--session] restore snapshotted files
+<span class="t-grn">kintsugi watch</span> &lt;path&gt;   FS-watcher backstop for un-intercepted changes
+<span class="t-grn">kintsugi panic</span> / <span class="t-grn">resume</span>  kill-switch on / off
 </pre>
     </div>
   </section>
@@ -161,14 +161,14 @@ deny  = ["git push * --force", "kubectl * --context=prod"]</pre>
     <h2><span class="n">&gt;</span> docs</h2>
     <div class="cols two">
       <ul class="checks">
-        <li><a href="https://github.com/arrowassassin/aegis/blob/main/README.md">README &amp; quick start</a></li>
-        <li><a href="https://github.com/arrowassassin/aegis/blob/main/docs/queue.md">Approval queue</a></li>
-        <li><a href="https://github.com/arrowassassin/aegis/blob/main/docs/model.md">The Tier-2 model</a></li>
+        <li><a href="https://github.com/arrowassassin/kintsugi/blob/main/README.md">README &amp; quick start</a></li>
+        <li><a href="https://github.com/arrowassassin/kintsugi/blob/main/docs/queue.md">Approval queue</a></li>
+        <li><a href="https://github.com/arrowassassin/kintsugi/blob/main/docs/model.md">The Tier-2 model</a></li>
       </ul>
       <ul class="checks">
-        <li><a href="https://github.com/arrowassassin/aegis/blob/main/docs/policy.md">Policy (.aegis.toml)</a></li>
-        <li><a href="https://github.com/arrowassassin/aegis/blob/main/docs/mcp.md">MCP / aegis-exec</a></li>
-        <li><a href="https://github.com/arrowassassin/aegis/blob/main/docs/demo.md">The 30-second demo</a></li>
+        <li><a href="https://github.com/arrowassassin/kintsugi/blob/main/docs/policy.md">Policy (.kintsugi.toml)</a></li>
+        <li><a href="https://github.com/arrowassassin/kintsugi/blob/main/docs/mcp.md">MCP / kintsugi-exec</a></li>
+        <li><a href="https://github.com/arrowassassin/kintsugi/blob/main/docs/demo.md">The 30-second demo</a></li>
       </ul>
     </div>
   </section>
@@ -185,7 +185,7 @@ deny  = ["git push * --force", "kubectl * --context=prod"]</pre>
 
 <footer>
   <div class="wrap">
-    <p>MIT licensed · <a href="https://github.com/arrowassassin/aegis">github.com/arrowassassin/aegis</a></p>
+    <p>MIT licensed · <a href="https://github.com/arrowassassin/kintsugi">github.com/arrowassassin/kintsugi</a></p>
   </div>
 </footer>
 

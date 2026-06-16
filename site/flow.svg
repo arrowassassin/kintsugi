@@ -17,17 +17,17 @@
   <rect x="18" y="12" width="11" height="11" fill="#ff5d5d"/>
   <rect x="36" y="12" width="11" height="11" fill="#ffd866"/>
   <rect x="54" y="12" width="11" height="11" fill="#5af78e"/>
-  <text x="78" y="22" font-size="11" class="dim">aegis — live</text>
+  <text x="78" y="22" font-size="11" class="dim">kintsugi — live</text>
 
   <!-- step 1: agent proposes -->
   <g class="f f1">
     <text x="20" y="80" class="dim">$ <tspan fill="#cdd6e6">rm -rf src</tspan>  <tspan class="dim">(proposed by claude-code)</tspan></text>
-    <text x="20" y="110" class="dim">aegis is checking…<tspan class="cur"> ▮</tspan></text>
+    <text x="20" y="110" class="dim">kintsugi is checking…<tspan class="cur"> ▮</tspan></text>
   </g>
 
   <!-- step 2: held -->
   <g class="f f2">
-    <text x="20" y="70" class="red">⚠ Aegis hold — catastrophic, cannot be undone.</text>
+    <text x="20" y="70" class="red">⚠ Kintsugi hold — catastrophic, cannot be undone.</text>
     <text x="20" y="120" class="b">    rm -rf src</text>
     <text x="20" y="160" class="amb">  [a] allow once   [d] deny   [r] always allow here</text>
   </g>
@@ -43,6 +43,6 @@
     <text x="20" y="64" class="dim">time      agent         outcome  command</text>
     <text x="20" y="92">02:31:27  shim          <tspan class="amb">held</tspan>     <tspan class="red">[catastrophic]</tspan> rm -rf src</text>
     <text x="20" y="120">02:31:27  shim          <tspan class="red">denied   [catastrophic]</tspan> rm -rf src</text>
-    <text x="20" y="160" class="dim">append-only · hash-chained · aegis undo brings files back</text>
+    <text x="20" y="160" class="dim">append-only · hash-chained · kintsugi undo brings files back</text>
   </g>
 </svg>

@@ -1,14 +1,14 @@
-# Policy (`.aegis.toml`)
+# Policy (`.kintsugi.toml`)
 
 ![The timeline reflects policy decisions](img/log.svg)
 
-Aegis reads two policy files and merges them, with the repo file overriding the
+Kintsugi reads two policy files and merges them, with the repo file overriding the
 global one:
 
 1. **Global defaults** — `config.toml` under your config dir
-   (`~/.config/aegis/config.toml` on Linux). Override the path with
-   `AEGIS_CONFIG`.
-2. **Per-project** — `.aegis.toml` at (or above) the working directory, committed
+   (`~/.config/kintsugi/config.toml` on Linux). Override the path with
+   `KINTSUGI_CONFIG`.
+2. **Per-project** — `.kintsugi.toml` at (or above) the working directory, committed
    to the repo.
 
 ## Format

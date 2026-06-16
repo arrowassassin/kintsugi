@@ -2,7 +2,7 @@
 
 ![The hold card shows the model summary and a risk meter](img/holdcard.svg)
 
-Aegis's decision to **block** a catastrophic command is always deterministic
+Kintsugi's decision to **block** a catastrophic command is always deterministic
 rules. The model never makes that call. Its only jobs are to **explain** (a
 one-sentence summary for the hold card) and to **score** the *ambiguous band*
 (a `risk` 0–100) for the human reviewing the queue. Its influence is
@@ -17,7 +17,7 @@ decision, and `Safe` commands stay on a model-free fast path.
 | `LlamaScorer` | `--features llama` | a C/C++ toolchain to build `llama.cpp` |
 
 The heuristic backend is also the graceful-degradation path: if the real model
-can't load, Aegis keeps working with rules + heuristic scoring.
+can't load, Kintsugi keeps working with rules + heuristic scoring.
 
 > **The installer does NOT download a model.** `curl … | sh` and `cargo install`
 > ship the default (heuristic) build — small, offline, no weights. The GGUF model
@@ -39,18 +39,18 @@ GGUF builds at the sizes we want, and best-in-class small-model
 instruction-following. The 1.7B fallback is same-family so RAM-based selection
 behaves identically at the low end.
 
-### Future-proof: bring your own model (`AEGIS_MODEL_FILE`)
+### Future-proof: bring your own model (`KINTSUGI_MODEL_FILE`)
 
-Models move fast, so the durable answer isn't the pinned constant. Point Aegis at
+Models move fast, so the durable answer isn't the pinned constant. Point Kintsugi at
 **any** local GGUF and it loads that one — no recompile, no pinned spec:
 
 ```sh
-export AEGIS_MODEL_FILE="/path/to/your-model.gguf"
+export KINTSUGI_MODEL_FILE="/path/to/your-model.gguf"
 ```
 
 This is a deliberate bring-your-own-weights trust path (you chose the file), so
 it bypasses the checksum pin — which only guards the daemon's own `download`
-fetch. `AEGIS_MODEL_DIR` still overrides where pinned weights are cached.
+fetch. `KINTSUGI_MODEL_DIR` still overrides where pinned weights are cached.
 
 ### Pick a model interactively
 
@@ -59,14 +59,14 @@ instruct GGUF models from the Hugging Face API, downloads your choice, prints it
 SHA-256, and tells you the one env var to set:
 
 ```sh
-curl -fsSL https://github.com/arrowassassin/aegis/releases/latest/download/pick-model.sh | sh
+curl -fsSL https://github.com/arrowassassin/kintsugi/releases/latest/download/pick-model.sh | sh
 # or during install:
-curl -fsSL https://github.com/arrowassassin/aegis/releases/latest/download/install.sh | sh -s -- --with-model
+curl -fsSL https://github.com/arrowassassin/kintsugi/releases/latest/download/install.sh | sh -s -- --with-model
 ```
 
 It constrains the query (`filter=gguf`, `pipeline_tag=text-generation`, sized to
 your RAM) so only viable options come back, and picks the single-file Q4_K_M
-build in the repo. Like `AEGIS_MODEL_FILE`, a picked model is your choice and is
+build in the repo. Like `KINTSUGI_MODEL_FILE`, a picked model is your choice and is
 not checksum-pinned; the printed SHA-256 lets you record/pin it yourself.
 
 > Research sources (2026-06): Qwen3/Qwen3.x model cards and GGUF repos on
@@ -78,14 +78,14 @@ not checksum-pinned; the printed SHA-256 lets you record/pin it yourself.
 ## Running with the real model
 
 ```sh
-# 1) Pin the weights in crates/aegis-model/src/manage.rs (set url + sha256).
+# 1) Pin the weights in crates/kintsugi-model/src/manage.rs (set url + sha256).
 # 2) Build with inference + download enabled:
-cargo build --release -p aegis-daemon --features "aegis-model/llama aegis-model/download"
+cargo build --release -p kintsugi-daemon --features "kintsugi-model/llama kintsugi-model/download"
 # 3) Weights auto-select by RAM (4B if >= ~6 GB, else the 1.7B fallback),
 #    download once (checksum-verified), and stay warm in the daemon.
 ```
 
-Override the weights directory with `AEGIS_MODEL_DIR`. Weights are **pinned by
+Override the weights directory with `KINTSUGI_MODEL_DIR`. Weights are **pinned by
 SHA-256**; an unpinned spec is refused rather than loading an unverified blob.
 
 ## How it affects decisions
@@ -101,7 +101,7 @@ SHA-256**; an unpinned spec is refused rather than loading an unverified blob.
   (held in attended, denied in unattended) **regardless of the score**.
 
 > **Auto-proceeding unattended** is done with explicit, human-authored rules, not
-> the model: pre-allow known-safe commands in `.aegis.toml` (`[rules] allow = […]`)
+> the model: pre-allow known-safe commands in `.kintsugi.toml` (`[rules] allow = […]`)
 > or with `[r]` decision memory. Those are *your* decisions; the model can't make
 > them for you. (Earlier builds had a `risk < threshold → allow` "graduated"
 > path; it was removed because it let the model downgrade a rules Deny.)

@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Aegis — a safety layer for AI coding agents</title>
-<meta name="description" content="Aegis intercepts the commands an AI coding agent is about to run, warns you before they execute, makes destructive actions reversible, and keeps a tamper-evident log. Local-first, agent-agnostic, deterministic." />
-<meta property="og:title" content="Aegis — a safety layer for AI coding agents" />
+<title>Kintsugi — a safety layer for AI coding agents</title>
+<meta name="description" content="Kintsugi intercepts the commands an AI coding agent is about to run, warns you before they execute, makes destructive actions reversible, and keeps a tamper-evident log. Local-first, agent-agnostic, deterministic." />
+<meta property="og:title" content="Kintsugi — a safety layer for AI coding agents" />
 <meta property="og:description" content="Catches the dangerous command before it runs. Local-first, agent-agnostic, deterministic." />
 <meta property="og:type" content="website" />
-<meta property="og:image" content="https://arrowassassin.github.io/aegis/og.svg" />
+<meta property="og:image" content="https://arrowassassin.github.io/kintsugi/og.svg" />
 <meta name="twitter:card" content="summary_large_image" />
 <link rel="icon" href="data:image/svg+xml,&lt;svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'&gt;&lt;rect width='16' height='16' fill='%230b0e16'/&gt;&lt;text x='8' y='13' font-size='13' text-anchor='middle' fill='%235af78e'&gt;▦&lt;/text&gt;&lt;/svg&gt;" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -20,7 +20,7 @@
 
 <header class="nav">
   <div class="wrap">
-    <a class="brand" href="index.html">&#9638; AEGIS<span class="blink">_</span></a>
+    <a class="brand" href="index.html">&#9638; KINTSUGI<span class="blink">_</span></a>
     <button id="navtoggle" class="navtoggle" aria-label="open menu" aria-expanded="false" aria-controls="primarynav">&#9776;</button>
     <nav id="primarynav">
       <a class="active" href="index.html">HOME</a>
@@ -28,7 +28,7 @@
       <a href="features.html">FEATURES</a>
       <a href="install.html">INSTALL</a>
       <a href="assurance.html">SECURITY</a>
-      <a href="https://github.com/arrowassassin/aegis">GITHUB</a>
+      <a href="https://github.com/arrowassassin/kintsugi">GITHUB</a>
       <button id="theme" class="themebtn" aria-label="toggle light or dark theme">☀ light</button>
     </nav>
   </div>
@@ -37,22 +37,22 @@
 <main class="wrap">
 
   <section class="hero" style="border-top:none">
-    <h1>AEGIS</h1>
+    <h1>KINTSUGI</h1>
     <p class="sub">Let AI coding agents move fast — <b>without letting them wreck
-      your machine.</b> Aegis catches the dangerous command <b>before</b> it runs,
+      your machine.</b> Kintsugi catches the dangerous command <b>before</b> it runs,
       makes it reversible, and logs everything. Local-first.</p>
     <div class="cta">
       <a class="btn" href="install.html">GET STARTED</a>
       <a class="btn alt" href="features.html">SEE FEATURES</a>
-      <a class="btn alt" href="https://github.com/arrowassassin/aegis">★ STAR ON GITHUB</a>
+      <a class="btn alt" href="https://github.com/arrowassassin/kintsugi">★ STAR ON GITHUB</a>
     </div>
     <p class="note">macOS · Linux · Windows &middot; works with every agent &middot; nothing leaves your machine</p>
-    <p class="note">★ if Aegis is useful to you, <a href="https://github.com/arrowassassin/aegis">leave a star</a> — it helps others find it.</p>
+    <p class="note">★ if Kintsugi is useful to you, <a href="https://github.com/arrowassassin/kintsugi">leave a star</a> — it helps others find it.</p>
 
     <figure style="margin:26px auto 0; max-width:900px">
-      <img src="cast.svg" alt="Aegis: an agent's destructive command is held before it runs, denied, and lands on the tamper-evident timeline; then the live TUI"
+      <img src="cast.svg" alt="Kintsugi: an agent's destructive command is held before it runs, denied, and lands on the tamper-evident timeline; then the live TUI"
            style="width:100%; height:auto; border-radius:10px" loading="lazy" />
-      <figcaption class="note" style="margin-top:10px">↑ real Aegis output — hold card → denied timeline → live TUI (looping)</figcaption>
+      <figcaption class="note" style="margin-top:10px">↑ real Kintsugi output — hold card → denied timeline → live TUI (looping)</figcaption>
     </figure>
   </section>
 
@@ -60,7 +60,7 @@
     <h2><span class="n">&gt;</span> what is it</h2>
     <p class="lead">AI coding agents now run real commands on real machines —
       <span class="muted">rm&nbsp;-rf, git&nbsp;push&nbsp;--force, terraform&nbsp;destroy, drop&nbsp;table</span> —
-      faster than you can read a confirmation. Aegis sits on that one chokepoint: the
+      faster than you can read a confirmation. Kintsugi sits on that one chokepoint: the
       command line. It warns in plain English before execution, holds the dangerous
       ones for a one-key decision, makes destructive actions reversible, and keeps a
       tamper-evident record of everything <em>every</em> agent did.</p>
@@ -74,7 +74,7 @@
     <p class="muted">Agent-agnostic from day one, with a <em>native pre-tool hook</em>
       for each: Claude Code, Qwen Code, Gemini CLI, GitHub Copilot CLI, Cursor CLI,
       Codex CLI, and OpenCode — plus any custom/MCP agent and <em>any raw shell</em>
-      via the $PATH shim. <code>aegis init</code> detects what you have and wires
+      via the $PATH shim. <code>kintsugi init</code> detects what you have and wires
       each one. Protection lives at the process layer, not inside any one tool.</p>
   </section>
 
@@ -96,9 +96,9 @@
 
   <section id="cast">
     <h2><span class="n">&gt;</span> watch the flow</h2>
-    <p class="lead">Agent proposes <span class="muted">rm -rf src</span> → Aegis holds
+    <p class="lead">Agent proposes <span class="muted">rm -rf src</span> → Kintsugi holds
       it → you deny → it's on the timeline. (Animated; pure SVG, no JS.)</p>
-    <img class="cast" src="flow.svg" alt="Aegis flow: propose, hold, deny, timeline"
+    <img class="cast" src="flow.svg" alt="Kintsugi flow: propose, hold, deny, timeline"
          width="760" height="300" loading="lazy" />
   </section>
 
@@ -109,7 +109,7 @@
       Navigate, filter, open detail, approve/deny a held action, undo — all without
       leaving the terminal.</p>
     <figure style="margin:0">
-      <img src="tui.svg" alt="The Aegis TUI: a bordered timeline of agent commands with a detail pane and a risk gauge"
+      <img src="tui.svg" alt="The Kintsugi TUI: a bordered timeline of agent commands with a detail pane and a risk gauge"
            style="width:100%; height:auto; border-radius:10px" loading="lazy" />
     </figure>
     <p class="note">Real rendered output. Calm by default; the one danger accent
@@ -127,19 +127,19 @@
       <div class="card"><h3>Works with every agent</h3>
         <p><span class="k">Native hooks</span> for Claude Code, Cursor, Codex, Qwen,
           Gemini, Copilot &amp; OpenCode — <span class="k">or any raw shell</span>.
-          One layer at the process level, wired in a single <span class="k">aegis init</span>.</p></div>
+          One layer at the process level, wired in a single <span class="k">kintsugi init</span>.</p></div>
       <div class="card"><h3>Reversible by default</h3>
-        <p>Snapshots before destructive ops (reflink CoW). <span class="k">aegis undo</span>
+        <p>Snapshots before destructive ops (reflink CoW). <span class="k">kintsugi undo</span>
           brings files back; a filesystem backstop catches what slips past.</p></div>
       <div class="card"><h3>Private &amp; auditable</h3>
         <p>No cloud, no account, no telemetry. Every command lands on one
           <span class="k">hash-chained</span>, tamper-evident log you own.</p></div>
       <div class="card"><h3>Calm, then loud</h3>
         <p>Safe commands fly through in <span class="k">sub-millisecond</span> time;
-          Aegis only interrupts for the ones that can actually hurt you.</p></div>
+          Kintsugi only interrupts for the ones that can actually hurt you.</p></div>
     </div>
-    <p class="muted" style="margin-top:22px">When Aegis blocks a catastrophic
-      command, the agent stops and you decide — <span class="k">aegis run &lt;id&gt;</span>
+    <p class="muted" style="margin-top:22px">When Kintsugi blocks a catastrophic
+      command, the agent stops and you decide — <span class="k">kintsugi run &lt;id&gt;</span>
       runs it yourself, reversibly. See that and every feature, each with a real
       captured frame → <a href="features.html">features</a>.</p>
   </section>
@@ -148,9 +148,9 @@
 
 <footer>
   <div class="wrap">
-    <p><span class="brand" style="font-size:11px">&#9638; AEGIS</span> &nbsp; honest
+    <p><span class="brand" style="font-size:11px">&#9638; KINTSUGI</span> &nbsp; honest
       guarantee: <em>nothing is unrecoverable</em> — not "nothing runs un-warned".</p>
-    <p>MIT licensed · <a href="https://github.com/arrowassassin/aegis">github.com/arrowassassin/aegis</a>
+    <p>MIT licensed · <a href="https://github.com/arrowassassin/kintsugi">github.com/arrowassassin/kintsugi</a>
       · every terminal frame on this site is real captured output.</p>
   </div>
 </footer>

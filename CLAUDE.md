@@ -1,12 +1,12 @@
-# CLAUDE.md — Aegis build rules (read this first, every session)
+# CLAUDE.md — Kintsugi build rules (read this first, every session)
 
-You are building **Aegis**, a local-first safety layer for AI coding agents. Full spec is in
-`aegis-design-doc.md`; the current work is in `aegis-phase0-1-tasklist.md`. This file is the
+You are building **Kintsugi**, a local-first safety layer for AI coding agents. Full spec is in
+`kintsugi-design-doc.md`; the current work is in `kintsugi-phase0-1-tasklist.md`. This file is the
 short, non-negotiable rulebook. If anything you're about to do conflicts with this file, STOP
 and ask the human.
 
-## What Aegis is (one paragraph)
-Aegis intercepts the commands an AI coding agent is about to run, warns the user in plain
+## What Kintsugi is (one paragraph)
+Kintsugi intercepts the commands an AI coding agent is about to run, warns the user in plain
 English BEFORE they execute, makes destructive actions reversible via snapshots, and keeps a
 tamper-evident log of everything every agent did. No kernel code, no OS-vendor approvals, no
 code leaves the machine. Cross-platform: macOS, Linux, Windows.
@@ -24,16 +24,16 @@ code leaves the machine. Cross-platform: macOS, Linux, Windows.
 6. **No secret values in logs.** Detect access to `.env`, `~/.ssh`, keychains; never read their
    contents into the log in plaintext.
 7. **Honest guarantee:** "nothing is unrecoverable" (via the filesystem watcher backstop), NOT
-   "nothing runs un-warned." Do not describe Aegis as an unbypassable firewall.
+   "nothing runs un-warned." Do not describe Kintsugi as an unbypassable firewall.
 
 ## Architecture (build to this)
-- Rust workspace. Single `aegis` binary + a resident daemon that keeps the model warm.
+- Rust workspace. Single `kintsugi` binary + a resident daemon that keeps the model warm.
 - Interception adapter layer normalizes three sources to one `ProposedCommand`: native hook
-  (e.g. Claude Code), MCP server `aegis-exec`, and a `$PATH` shim for raw shell-outs.
+  (e.g. Claude Code), MCP server `kintsugi-exec`, and a `$PATH` shim for raw shell-outs.
 - Daemon decision loop: Tier-1 rules classify SAFE | CATASTROPHIC | AMBIGUOUS; Tier-2 model
   summarizes + scores the ambiguous band only.
 - Snapshot before destructive ops (predicted paths, reflink CoW + copy fallback); one-command undo.
-- Crates: `aegis-core`, `aegis-daemon`, `aegis-intercept`, `aegis-cli`, `aegis-model`, `aegis-tui`.
+- Crates: `kintsugi-core`, `kintsugi-daemon`, `kintsugi-intercept`, `kintsugi-cli`, `kintsugi-model`, `kintsugi-tui`.
 
 ## How to work (process)
 - One task-list segment per branch + PR. **Never commit to `main`.** Small, reviewable diffs.
@@ -69,18 +69,18 @@ Phase 0 Recorder -> Phase 1 Gate -> Phase 2 Explain+score -> Phase 3 Undo -> Pha
 -> Phase 5 Launch. Tag last-known-good after each phase. Do not start the next phase unprompted.
 
 ## Dogfooding
-Once Phase 1's gate works, run yourself (the build agent) THROUGH Aegis so your own destructive
+Once Phase 1's gate works, run yourself (the build agent) THROUGH Kintsugi so your own destructive
 actions during the build are guarded by the tool you are building.
 
 ## Start here
-Read `aegis-phase0-1-tasklist.md`. Begin with task **P0.1** on a branch named `phase0/p0.1-scaffold`.
+Read `kintsugi-phase0-1-tasklist.md`. Begin with task **P0.1** on a branch named `phase0/p0.1-scaffold`.
 Before writing code for the `$PATH` shim (P0.4), build it as a small standalone spike first — it
 is the riskiest cross-platform primitive; prove capture-then-exec with correct exit codes and
 signal forwarding before integrating it.
 
 ## TUI requirements (Phase 4) — build a real, working terminal UI, not a static mockup
 
-The `aegis-tui` crate must be a fully functional `ratatui` application driven by live data
+The `kintsugi-tui` crate must be a fully functional `ratatui` application driven by live data
 from the daemon and event log. Do NOT hardcode the rows or screens from the design mockups —
 those mockups show layout and information only. Treat them as a spec to implement, not pixels
 to reproduce. A screen that merely paints the example text and ignores input is a FAIL.

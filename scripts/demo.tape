@@ -1,4 +1,4 @@
-# VHS tape for the Aegis 30-second demo → docs/aegis-demo.gif
+# VHS tape for the Kintsugi 30-second demo → docs/kintsugi-demo.gif
 #
 # Install VHS (https://github.com/charmbracelet/vhs), then:
 #     vhs scripts/demo.tape
@@ -6,7 +6,7 @@
 # Produces a GIF of: a safe command passing, `rm -rf` being HELD before it runs,
 # you pressing `d` to deny, and the tamper-evident timeline.
 
-Output docs/aegis-demo.gif
+Output docs/kintsugi-demo.gif
 
 Set Shell "bash"
 Set FontSize 18

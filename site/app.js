@@ -1,7 +1,7 @@
 // Dark/light theme toggle — persisted, defaults to the OS preference.
 (function () {
   const root = document.documentElement;
-  const saved = localStorage.getItem("aegis-theme");
+  const saved = localStorage.getItem("kintsugi-theme");
   const prefersLight = window.matchMedia("(prefers-color-scheme: light)").matches;
   const initial = saved || (prefersLight ? "light" : "dark");
   if (initial === "light") root.setAttribute("data-theme", "light");
@@ -15,7 +15,7 @@
       const light = root.getAttribute("data-theme") === "light";
       if (light) root.removeAttribute("data-theme");
       else root.setAttribute("data-theme", "light");
-      localStorage.setItem("aegis-theme", light ? "dark" : "light");
+      localStorage.setItem("kintsugi-theme", light ? "dark" : "light");
       sync();
     });
   }

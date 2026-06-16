@@ -2,7 +2,7 @@
 """Render a captured terminal frame (plain text) into a styled 8-bit SVG.
 
 Deterministic, dependency-free. Each SVG is a "terminal window" card matching the
-Aegis site theme, so docs and the website show real captured output as images.
+Kintsugi site theme, so docs and the website show real captured output as images.
 
 Usage: gen_svg.py <in.txt> <out.svg> "<title>" [tokenrule ...]
   tokenrule = SUBSTRING=COLORKEY   (colorkey: red|amber|green|cyan|dim|bold)
