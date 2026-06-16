@@ -149,7 +149,9 @@ fn secret_commands_are_redacted_before_hashing_and_chain_stays_intact() {
     assert!(log.verify_chain().unwrap().is_intact());
 
     // A command with no secret is stored byte-identically (no behavior change).
-    let e2 = log.log_event(&sample("git status"), &allow(), None).unwrap();
+    let e2 = log
+        .log_event(&sample("git status"), &allow(), None)
+        .unwrap();
     assert_eq!(e2.command, "git status");
     assert_eq!(e2.argv, vec!["git".to_string(), "status".to_string()]);
     assert!(log.verify_chain().unwrap().is_intact());
