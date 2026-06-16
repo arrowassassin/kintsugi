@@ -10,7 +10,7 @@
 <meta property="og:type" content="website" />
 <meta property="og:image" content="https://arrowassassin.github.io/kintsugi/og.svg" />
 <meta name="twitter:card" content="summary_large_image" />
-<link rel="icon" href="data:image/svg+xml,&lt;svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'&gt;&lt;rect width='16' height='16' fill='%230b0e16'/&gt;&lt;text x='8' y='13' font-size='13' text-anchor='middle' fill='%235af78e'&gt;▦&lt;/text&gt;&lt;/svg&gt;" />
+<link rel="icon" href="logo-mark.svg" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap" rel="stylesheet">
@@ -20,7 +20,7 @@
 
 <header class="nav">
   <div class="wrap">
-    <a class="brand" href="index.html">&#9638; KINTSUGI<span class="blink">_</span></a>
+    <a class="brand" href="index.html"><img src="logo-mark.svg" alt="" width="22" height="22" style="vertical-align:-5px" /> KINTSUGI<span class="blink">_</span></a>
     <button id="navtoggle" class="navtoggle" aria-label="open menu" aria-expanded="false" aria-controls="primarynav">&#9776;</button>
     <nav id="primarynav">
       <a href="index.html">HOME</a>
@@ -246,6 +246,46 @@ Dry run: nothing was executed, logged, or sent anywhere.
     <p class="note"><span class="t-grn">kintsugi test "&lt;command&gt;"</span> shows the
       class, the rule that fired, what would happen, and the exact commands Kintsugi
       parses out of your line — a safe way to explore the rules.</p>
+  </section>
+
+  <section>
+    <h2><span class="n">10 &gt;</span> enterprise — a managed, audited control</h2>
+    <p class="lead">On a shared or production host, Kintsugi can run as a locked,
+      self-healing control: settings sealed behind an admin password, a watchdog that
+      relaunches it if it's killed, and a passive recorder that logs what every human
+      types — all on the same tamper-evident chain.</p>
+    <div class="grid">
+      <div class="feat"><h3>Password-locked settings · password to stop</h3>
+        <p><span class="muted">kintsugi admin provision</span> seals settings behind an
+          admin password — argon2id verifier + XChaCha20-Poly1305, with a one-time
+          recovery key. Once locked, <span class="k">stopping, unhooking, or disabling
+          Kintsugi needs the password</span>; <span class="muted">admin set</span> /
+          <span class="muted">admin settings</span> manage it. Every setting only
+          <em>tightens</em> — none can loosen the catastrophic floor.</p></div>
+      <div class="feat"><h3>Auto-restart watchdog</h3>
+        <p><span class="muted">kintsugi service install</span> runs the daemon under
+          systemd / launchd with <span class="k">restart-always</span>, so a
+          <span class="muted">kill</span> / <span class="muted">pkill</span> relaunches
+          it within seconds. Disabling the watchdog is itself password-gated.</p></div>
+      <div class="feat"><h3>Passive session recorder</h3>
+        <p><span class="muted">kintsugi record install</span> adds a bash/zsh preexec
+          hook so <span class="k">every command a human runs</span> — no AI agent —
+          lands on the same classified, hash-chained audit log for DBA/operator
+          compliance. <span class="muted">kintsugi report</span> surfaces the
+          destructive ones. It blocks nothing, spools across daemon restarts, and
+          <span class="k">redacts command-line secrets before hashing</span>.</p></div>
+      <div class="feat"><h3>Control-room TUI</h3>
+        <p><span class="muted">kintsugi tui</span> opens an animated, branded terminal
+          app: tabbed <span class="k">Timeline / Audit / Recorder</span> views over the
+          live log, a vitals strip, one-key approve/deny/undo, a password login when
+          locked, and an in-app settings panel — everything from one screen.</p></div>
+    </div>
+    <p class="note" style="margin-top:14px">Honest scope: the lock defeats an AI agent
+      or a normal (non-root) user and turns a forced shutdown into a
+      <strong>logged, recoverable</strong> event. It does <strong>not</strong> stop
+      root — a system account + the watchdog is what makes it real against
+      <span class="muted">pkill</span>. The recorder records <em>after</em> the fact;
+      it never holds, denies, or snapshots.</p>
   </section>
 
 </main>

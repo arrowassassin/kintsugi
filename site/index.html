@@ -10,7 +10,7 @@
 <meta property="og:type" content="website" />
 <meta property="og:image" content="https://arrowassassin.github.io/kintsugi/og.svg" />
 <meta name="twitter:card" content="summary_large_image" />
-<link rel="icon" href="data:image/svg+xml,&lt;svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'&gt;&lt;rect width='16' height='16' fill='%230b0e16'/&gt;&lt;text x='8' y='13' font-size='13' text-anchor='middle' fill='%235af78e'&gt;▦&lt;/text&gt;&lt;/svg&gt;" />
+<link rel="icon" href="logo-mark.svg" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap" rel="stylesheet">
@@ -20,7 +20,7 @@
 
 <header class="nav">
   <div class="wrap">
-    <a class="brand" href="index.html">&#9638; KINTSUGI<span class="blink">_</span></a>
+    <a class="brand" href="index.html"><img src="logo-mark.svg" alt="" width="22" height="22" style="vertical-align:-5px" /> KINTSUGI<span class="blink">_</span></a>
     <button id="navtoggle" class="navtoggle" aria-label="open menu" aria-expanded="false" aria-controls="primarynav">&#9776;</button>
     <nav id="primarynav">
       <a class="active" href="index.html">HOME</a>
@@ -144,11 +144,37 @@
       captured frame → <a href="features.html">features</a>.</p>
   </section>
 
+  <section id="enterprise">
+    <h2><span class="n">&gt;</span> for shared &amp; production hosts</h2>
+    <p class="lead">Run Kintsugi as a managed, audited control — not just an agent
+      guard.</p>
+    <div class="cards">
+      <div class="card"><h3>Password to stop</h3>
+        <p>Settings sealed behind an admin password (<span class="k">argon2id +
+          XChaCha20-Poly1305</span>, one-time recovery key). Once locked, stopping or
+          disabling Kintsugi needs the password — an agent or normal user
+          <span class="k">can't quietly turn it off</span>.</p></div>
+      <div class="card"><h3>Auto-restart watchdog</h3>
+        <p>Runs under <span class="k">systemd / launchd</span> with restart-always, so
+          a <span class="k">kill</span> / <span class="k">pkill</span> relaunches it
+          within seconds.</p></div>
+      <div class="card"><h3>Passive session recorder</h3>
+        <p>Logs <span class="k">every human shell command</span> — no AI agent — onto
+          the same tamper-evident audit chain for compliance. Redacts command-line
+          secrets before hashing; blocks nothing.</p></div>
+    </div>
+    <p class="muted" style="margin-top:22px">Plus a branded
+      <span class="k">control-room TUI</span> with Timeline / Audit / Recorder views.
+      Honest scope: this defeats an agent or non-root user and makes a forced shutdown
+      logged + recoverable — it does not stop root. Full detail →
+      <a href="features.html">features</a>.</p>
+  </section>
+
 </main>
 
 <footer>
   <div class="wrap">
-    <p><span class="brand" style="font-size:11px">&#9638; KINTSUGI</span> &nbsp; honest
+    <p><span class="brand" style="font-size:11px"><img src="logo-mark.svg" alt="" width="14" height="14" style="vertical-align:-3px" /> KINTSUGI</span> &nbsp; honest
       guarantee: <em>nothing is unrecoverable</em> — not "nothing runs un-warned".</p>
     <p>MIT licensed · <a href="https://github.com/arrowassassin/kintsugi">github.com/arrowassassin/kintsugi</a>
       · every terminal frame on this site is real captured output.</p>

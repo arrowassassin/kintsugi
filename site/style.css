@@ -70,6 +70,7 @@ header.nav {
   text-shadow: 2px 2px 0 #0a3a1f; display: inline-flex; align-items: center;
   line-height: 1; }
 .brand .blink { color: var(--amber); }
+.brand img { margin-right: 7px; flex: none; }
 .nav nav { margin-left: auto; display: flex; align-items: center; gap: 18px; }
 .nav nav a { font-size: 9px; color: var(--dim); line-height: 1; }
 .nav nav a:hover, .nav nav a.active { color: var(--green); }
