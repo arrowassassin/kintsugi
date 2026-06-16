@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/img/logo.svg" alt="Kintsugi" width="420" />
+  <img src="https://raw.githubusercontent.com/arrowassassin/kintsugi/main/docs/img/logo.svg" alt="Kintsugi" width="420" />
 </p>
 
 # Kintsugi
@@ -22,7 +22,7 @@ every agent did. Local-first: no cloud, no account, nothing leaves your machine.
 
 **Website:** https://arrowassassin.github.io/kintsugi/ · **Docs:** [`docs/`](docs/)
 
-![Kintsugi: a destructive command is held before it runs, denied, and lands on the tamper-evident timeline; then the live TUI](docs/img/cast.svg)
+![Kintsugi: a destructive command is held before it runs, denied, and lands on the tamper-evident timeline; then the live TUI](https://raw.githubusercontent.com/arrowassassin/kintsugi/main/docs/img/cast.svg)
 
 *Real Kintsugi output, looping: hold card → denied timeline → live TUI. (Static
 frames in [`docs/img/`](docs/img/) if the animation doesn't play.)*
