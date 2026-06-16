@@ -70,9 +70,43 @@ fn parse_program(raw: &str) -> Option<ast::Program> {
     if exceeds_nesting(raw) {
         return None;
     }
-    let tokens = brush_parser::tokenize_str(raw).ok()?;
+    // `brush_parser`'s here-doc / here-string tokenizer can attempt a multi-
+    // gigabyte allocation (heap-exhaustion DoS) on short *malformed* here-operator
+    // input (`)x<< .env$(…`, `<< ''`, `<<<<<`, …). Neutralize the here-operators
+    // *before* tokenizing so the parser never enters that reader — see
+    // `neutralize_here_operators`. Substitutions and other structure are
+    // preserved, so nothing is hidden from classification.
+    let prepared = neutralize_here_operators(raw);
+    let tokens = brush_parser::tokenize_str(&prepared).ok()?;
     let opts = brush_parser::ParserOptions::default();
     brush_parser::parse_tokens(&tokens, &opts).ok()
+}
+
+/// Rewrite every here-operator run (`<<`, `<<<`, `<<<<…`) to a single space so
+/// `brush_parser` never enters its heredoc reader (which can heap-exhaust on
+/// malformed input — a DoS the fuzzer found). Substitutions and other structure
+/// are preserved, so a `$(…)`-hidden catastrophe is still parsed (no leak); a
+/// here-doc body sits on its own newline-separated line and is still parsed as
+/// command(s). Here-strings (`bash <<< 'rm -rf /'`) are caught by the tokenizer
+/// pass instead (see `wrapped_commands`). A lone `<` (normal redirect) is left
+/// untouched.
+fn neutralize_here_operators(raw: &str) -> std::borrow::Cow<'_, str> {
+    if !raw.contains("<<") {
+        return std::borrow::Cow::Borrowed(raw);
+    }
+    let mut out = String::with_capacity(raw.len());
+    let mut chars = raw.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '<' && chars.peek() == Some(&'<') {
+            while chars.peek() == Some(&'<') {
+                chars.next();
+            }
+            out.push(' ');
+        } else {
+            out.push(c);
+        }
+    }
+    std::borrow::Cow::Owned(out)
 }
 
 /// Hard ceiling on parser-recursion-driving nesting, well under the depth that
@@ -450,14 +484,15 @@ mod tests {
     }
 
     #[test]
-    fn heredoc_to_non_shell_is_not_treated_as_script() {
-        // A here-doc fed to a non-shell (e.g. `cat`) is data, not a script — its
-        // body must NOT be parsed as commands.
+    fn heredoc_bodies_are_conservatively_surfaced() {
+        // To stay DoS-safe, here-operators are neutralized before parsing, so a
+        // here-doc body is conservatively parsed as command(s) rather than data.
+        // This can over-flag (a heredoc to `cat` whose body reads like a command),
+        // which is recoverable — the point is a dangerous body is never hidden.
         let p = progs("cat <<EOF\nrm -rf /\nEOF\n");
-        assert!(p.contains(&"cat".to_string()));
         assert!(
-            !p.contains(&"rm".to_string()),
-            "heredoc to cat is data: {p:?}"
+            p.contains(&"rm".to_string()),
+            "body must be surfaced: {p:?}"
         );
     }
 

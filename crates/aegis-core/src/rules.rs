@@ -508,16 +508,25 @@ fn classify_segment_depth(seg: &str, depth: u8) -> RuleMatch {
 fn wrapped_commands(prog: &str, args: &[&str]) -> Vec<String> {
     match prog {
         "sh" | "bash" | "zsh" | "dash" | "ash" | "ksh" => {
+            let mut out = Vec::new();
             // The token after `-c` (or `-lc`, `-ec`, …) is the script string.
             if let Some(pos) = args
                 .iter()
                 .position(|a| a.starts_with('-') && a.contains('c'))
             {
                 if let Some(script) = args.get(pos + 1) {
-                    return vec![(*script).to_string()];
+                    out.push((*script).to_string());
                 }
             }
-            Vec::new()
+            // A here-string `bash <<< '<script>'` feeds the next token as stdin —
+            // a script for a shell. (The AST pass neutralizes here-operators to
+            // stay DoS-safe, so this tokenizer path is what catches here-strings.)
+            if let Some(pos) = args.iter().position(|a| *a == "<<<") {
+                if let Some(script) = args.get(pos + 1) {
+                    out.push((*script).to_string());
+                }
+            }
+            out
         }
         "find" => {
             let mut out = Vec::new();
@@ -811,8 +820,17 @@ fn is_secret_path(arg: &str) -> bool {
         || base == "id_ed25519"
         || base.ends_with(".pem")
         || base.ends_with(".key")
+        // The secret *directories* themselves (e.g. `tar czf x ~/.ssh`), not just
+        // files within them — archiving/copying the dir exfiltrates every key.
+        || base == ".ssh"
+        || base == ".aws"
+        || base == ".gnupg"
+        || lower.ends_with("/.ssh")
+        || lower.ends_with("/.aws")
+        || lower.ends_with("/.gnupg")
         || lower.contains("/.ssh/")
-        || lower.contains("/.aws/credentials")
+        || lower.contains("/.aws/")
+        || lower.contains("/.gnupg/")
         || lower.contains("/.config/gcloud")
         || lower.ends_with(".ssh/id_rsa")
 }

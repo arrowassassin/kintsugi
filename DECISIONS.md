@@ -338,3 +338,15 @@ the locked product decisions this build implements.
   armed-vs-consumed state for a future "agent re-runs after human arm" feature,
   and nonce-bound socket auth for catastrophic — each is a protocol change that
   warrants its own review rather than riding this PR.
+- Enterprise security assessment is reproducible-by-construction. Every figure in
+  docs/security-assessment.md comes from a committed test (security_stress,
+  robustness_fuzz, perf_report) + cargo audit/llvm-cov — no hand-written numbers.
+  The heavy fuzz/perf are `#[ignore]` (campaign-only) so CI/coverage stay fast;
+  the fast `dos_pathological` test (incl. the heredoc-DoS reproducer) runs always.
+- Parser DoS mitigation is input-neutralization, not best-effort catching. The
+  fuzzer found brush-parser heap-exhausting (~1.75GB) on malformed here-operators;
+  an allocation abort is uncatchable, so we *prevent* it by rewriting here-operator
+  runs (`<<`/`<<<`/…) to spaces before parsing. This keeps substitution/structure
+  detection (no catastrophic-as-Safe leak) and moves here-string detection to the
+  tokenizer pass. Chosen over refusing such lines (which risked a substitution-
+  hidden leak) and over a bounded allocator (heavy, still aborts on the limit).

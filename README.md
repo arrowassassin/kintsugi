@@ -24,6 +24,12 @@ frames in [`docs/img/`](docs/img/) if the animation doesn't play.)*
 > the model only explains. The event log is append-only and hash-chained, and
 > nothing leaves your machine. See [`CLAUDE.md`](CLAUDE.md) for the full rules.
 
+> **Assurance:** an adversarial stress + vulnerability assessment
+> ([`docs/security-assessment.md`](docs/security-assessment.md)) measures it —
+> **0 / 176** dangerous commands leak to Safe across a MITRE ATT&CK + GTFOBins
+> corpus, **1.4M** fuzz inputs with no crash (a real heap-DoS was found and fixed),
+> **0** known CVEs, **0** `unsafe`. Every figure is reproduced by a committed test.
+
 ## Why Aegis
 
 - **It stops the mistake before it happens** — not a post-mortem. A deterministic

@@ -5,6 +5,24 @@ All notable changes to Aegis are documented here. The format loosely follows
 
 ## [Unreleased]
 
+### Security assessment + hardening
+- **Enterprise stress & vulnerability assessment** ([`docs/security-assessment.md`](docs/security-assessment.md),
+  published at the site's *Security* page). Measured, reproducible: 0 / 176
+  dangerous commands leak to Safe across a MITRE ATT&CK + GTFOBins corpus, 1.4M
+  fuzz inputs with no panic/abort, 0 known CVEs (`cargo audit`, 436 deps), 0
+  `unsafe` in first-party crates, 88.6% line coverage. New campaign suites:
+  `security_stress`, `robustness_fuzz`, `perf_report`.
+- **Fixed a heap-exhaustion DoS** the fuzzer found: a 23-byte malformed
+  here-operator line (`)x<< .env$( (.envfiEOF`) made `brush-parser` attempt a
+  ~1.75 GB allocation and abort the process — a daemon-crashing denial of service.
+  Here-operators (`<<`, `<<<`, …) are now neutralized before parsing so the parser
+  never enters the vulnerable reader; substitution detection is preserved (a
+  `$(…)`-hidden catastrophe is still caught), and here-strings are caught by the
+  tokenizer pass. Ten pathological inputs are regression-locked and bounded.
+- **Broader secret-directory coverage:** reads/copies/archives of the secret
+  *directories* themselves (`tar czf x ~/.ssh`, `sort ~/.aws/credentials`) are now
+  caught, not just files within them.
+
 ### Classifier — AST-backed danger detection
 - **Real bash AST analysis, not substring matching.** The Tier-1 classifier now
   runs two passes worst-wins: the existing hand-rolled tokenizer **and** a true
