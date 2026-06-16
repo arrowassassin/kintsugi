@@ -183,3 +183,55 @@ cargo test -p kintsugi-core --release --test perf_report -- --ignored --nocaptur
 cargo audit
 cargo llvm-cov --workspace --summary-only --fail-under-lines 88
 ```
+
+---
+
+# Round 2 — admin lock, recorder, redaction & TUI surface
+
+**Scope of this round:** the new enterprise surface — the password-locked admin
+vault and "password to stop", the auto-restart watchdog, the passive session
+recorder + spool, command-line secret redaction, and the control-room TUI
+(splash / login / settings). **Method:** a simulated six-role panel (2 testers,
+1 infosec/applied-crypto, 1 DBA, 1 performance engineer) read the diff and
+attacked it; every confirmed finding was fixed and covered by a test. This is an
+internal review, not a third-party audit (same honesty note as above applies).
+
+## Findings and dispositions
+
+| # | Severity | Finding | Disposition |
+|---|---|---|---|
+| 1 | **High** | `KINTSUGI_VAULT` let a caller point the *CLI* stop-gate at an empty vault and bypass the password. | **Fixed** — enforcement moved to the **daemon**, which loads the vault at its own startup and authenticates shutdown via challenge-response (`AuthBegin`/`Shutdown`); the caller's env can't redirect it. The CLI gate remains only as the daemon-unreachable fallback. |
+| 2 | **High** | A command wrapper (`sudo`/`env`/`nice`/`timeout` …) hid a DB client's `-p`/`-a`/`-u` secret from redaction → cleartext credential in the immutable log. | **Fixed** — a credential client is recognized anywhere on the line (over-redact, the safe direction). |
+| 3 | **High** | The recorder spool wrote the **raw** (un-redacted) command to disk while the daemon was down. | **Fixed** — `ingest` redacts **before** spooling and creates the spool `0600` atomically (no world-readable window). |
+| 4 | **High** | `kintsugi report` capped a single query, so a flood of Safe commands could push destructive rows out of the window (silent audit hole). | **Fixed** — each destructive class is queried with its own SQL `LIMIT`, then merged. |
+| 5 | **Medium** | A `Record` IPC could forge an AI-agent/watcher provenance label. | **Fixed** — `record_shell` forces `agent="shell"`. |
+| 6 | **Medium** | The bash hook recorded its own `ingest` calls and prompt-hook noise. | **Fixed** — self-exclusion guard + a prompt-window sentinel. |
+| 7 | **Medium** | `read_password_tty` could prompt with echo still on (leak to screen/scrollback/recorder) and truncated at 512 bytes. | **Fixed** — refuses to read if echo can't be disabled; reads the whole line; zeroizes the buffer. |
+| 8 | **Low/Med** | A crash mid-spool-drain orphaned a `.draining.*` file (events not lost, but not re-ingested; `status` falsely read "empty"). | **Fixed** — stale orphans (>60s) are re-adopted on the next drain and counted by `status`. |
+| 9 | **Low** | TUI login buffer / wrong-guess left in freed heap. | **Fixed** — `login_input` is `Zeroizing`; the taken buffer is zeroized on failure. |
+| 10 | **Low** | `require_password_to_stop` / `enforcement` / `fail-closed` are persisted but not yet read at decision time. | **Documented** as a known limitation; the lock is currently unconditional-when-provisioned (the *more* restrictive direction). |
+| 11 | **Perf** | `ingest` made two socket connects per command; `redact` did a full-line lowercase allocation on every event. | **Fixed** — one connect per command; the lowercase pass is gated to `docker` only. |
+
+## Residual / deployment notes (honest scope)
+
+- **DBA — SQL vs shell:** Kintsugi classifies the *shell* command, not SQL inside
+  it. `psql -c '…destructive SQL…'` is recorded verbatim but may classify as Safe,
+  so in-database DML/DDL auditing (pgAudit, MySQL audit plugin) remains the system
+  of record. Documented, not silently implied.
+- **DBA — bash heredocs:** the bash `DEBUG`-trap hook captures one `BASH_COMMAND`
+  at a time, so a heredoc body isn't captured line-for-line; zsh `preexec`
+  captures the full line. Recommend zsh for full fidelity.
+- **Separation of duties:** absent an OS-level append-only/WORM mount and a
+  dedicated audit user, a local operator can still `purge`/redact or remove the
+  hook — Kintsugi is tamper-**evident**, not tamper-**proof**. Deploy the event DB
+  on an append-only mount owned by a separate audit account for compliance.
+- **Root still wins** (unchanged): the daemon auth + watchdog make a forced stop
+  harder, logged, and recoverable; they do not stop root, who can disable the
+  supervisor unit. Stated, never hidden.
+
+## New tests added this round
+
+`redact` wrapper-bypass cases; recorder spool-redaction + provenance + spool
+across-restart; `admin` auth-proof round-trip (valid/invalid/replay/op-binding);
+daemon authenticated-shutdown (valid proof / wrong password / replay rejected /
+unprovisioned); TUI login gate + settings re-seal + zeroized buffer.
