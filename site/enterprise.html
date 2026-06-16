@@ -259,10 +259,18 @@ $ <span class="t-grn">kintsugi report</span> --since 24h
           append to your rc file — Kintsugi never edits it. It captures the command
           verbatim plus its working directory and timestamp, onto the same hash-chained
           log as agent commands.</p></div>
-      <div class="feat"><h3>Fire-and-forget, never blocks the shell</h3>
-        <p>Each command backgrounds a one-shot <span class="muted">kintsugi ingest</span>.
-          It already ran — the recorder only ever records <span class="muted">Allow</span>;
-          it never holds, denies, or snapshots.</p></div>
+      <div class="feat"><h3>Records, never blocks the shell</h3>
+        <p>Each command fires a one-shot <span class="muted">kintsugi ingest</span>.
+          The recorder is an audit/undo trail, not a gate — it only ever records
+          <span class="muted">Allow</span> and never holds or denies a human's command.</p></div>
+      <div class="feat"><h3>Undo a human's mistake — the recoverer</h3>
+        <p>The hook fires <em>before</em> the command runs, so Kintsugi
+          <strong>snapshots destructive human commands just-in-time</strong> (reflink
+          copy-on-write, predicted paths only). When a DBA fat-fingers
+          <span class="muted">rm -rf</span> or <span class="muted">DROP</span>,
+          <span class="muted">kintsugi undo</span> rolls it back — the same recovery
+          agents get. Best-effort by design (the filesystem-watcher backstop catches
+          what a race misses); recoverable, not a hard transaction.</p></div>
       <div class="feat"><h3>Redact before hash</h3>
         <p>Secrets are redacted at the source, before IPC and before hashing — DB URIs
           (<span class="muted">scheme://user:****@host</span>),
