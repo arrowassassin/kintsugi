@@ -394,3 +394,15 @@ the locked product decisions this build implements.
   brand across web + terminal. The TUI splash animation renders the wordmark "filling with
   gold", and falls back to a `░`→`█` glyph sweep under NO_COLOR so the motion is never
   color-dependent (the design-system rule applies to the splash too).
+- Daemon-side authenticated shutdown (F5): "password to stop" enforcement moved
+  from the CLI into the daemon, closing the KINTSUGI_VAULT env-override bypass.
+  The daemon loads the vault at its OWN startup (admin/systemd-controlled env),
+  and stopping is a challenge-response: daemon issues a fresh 24-byte nonce, the
+  CLI derives a one-time proof from the admin password, the daemon verifies it
+  against the verifier and exits. Password never crosses the socket; the proof is
+  nonce- and op-bound (not replayable); the one-shot challenge is consumed on use.
+  The proof MAC reuses the XChaCha20-Poly1305 AEAD (tag over an empty message,
+  nonce+op as AAD) rather than adding an hmac dependency (sha2 0.11 made the hmac
+  version dance awkward; the AEAD-tag-as-MAC is a standard construction we already
+  ship). Every shutdown attempt — success or failure — is a hash-chained audit
+  event. The CLI gate remains only for the daemon-unreachable fallback.
