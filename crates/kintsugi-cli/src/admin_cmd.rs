@@ -12,7 +12,7 @@ use std::io::{Read, Write};
 use std::path::PathBuf;
 
 use anyhow::{bail, Context, Result};
-use kintsugi_core::admin::{self, LockedSettings, VaultState};
+use kintsugi_core::admin::{self, Enforcement, LockedSettings, VaultState};
 
 /// Where the sealed admin vault lives. Overridable via `KINTSUGI_VAULT` (tests /
 /// a root-owned `/etc/kintsugi/` path in the locked system posture).
@@ -113,6 +113,121 @@ pub fn change_password() -> Result<()> {
     println!("    {}", prov.recovery_key);
     println!();
     Ok(())
+}
+
+/// `kintsugi admin settings` — show the locked settings. Sealed, so it needs the
+/// admin password to decrypt (confidentiality is part of the lock).
+pub fn settings(password_file: Option<PathBuf>) -> Result<()> {
+    let vault = match admin::load_vault(&vault_path()) {
+        VaultState::Locked(v) => *v,
+        VaultState::Unprovisioned => {
+            println!("Not provisioned — settings are at their defaults (unlocked).");
+            print_settings(&LockedSettings::default());
+            return Ok(());
+        }
+        VaultState::Degraded(r) => bail!("vault is degraded ({r}); restore or re-provision first"),
+    };
+    let pw = read_password("Admin password to read settings: ", &password_file)?;
+    let s = vault
+        .unseal(&pw)
+        .map_err(|e| anyhow::anyhow!("{e}"))
+        .context("decrypt settings")?;
+    print_settings(&s);
+    Ok(())
+}
+
+/// `kintsugi admin set <key> <value>` — change one locked setting (password-gated).
+///
+/// Spine #1/#2: every setting is a *tightening* control, so changing one can only
+/// add caution — there is deliberately no key that unlocks the catastrophic floor.
+pub fn set(key: &str, value: &str, password_file: Option<PathBuf>) -> Result<()> {
+    let path = vault_path();
+    let vault = match admin::load_vault(&path) {
+        VaultState::Locked(v) => *v,
+        VaultState::Unprovisioned => {
+            bail!(
+                "not provisioned — run `kintsugi admin provision` before changing locked settings"
+            )
+        }
+        VaultState::Degraded(r) => bail!("vault is degraded ({r}); restore or re-provision first"),
+    };
+    let pw = read_password("Admin password to change settings: ", &password_file)?;
+    let mut s = vault
+        .unseal(&pw)
+        .map_err(|e| anyhow::anyhow!("{e}"))
+        .context("decrypt settings")?;
+
+    apply_setting(&mut s, key, value)?;
+
+    let updated = vault
+        .update_settings(&pw, &s)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    admin::save_vault(&path, &updated)?;
+    println!("✓ {key} updated.");
+    print_settings(&s);
+
+    // The autostart flag drives a real action: install/remove the OS supervisor
+    // so the setting isn't a dead toggle. Best-effort + logged by `service`.
+    if key.eq_ignore_ascii_case("autostart") {
+        let _ = if s.autostart {
+            crate::service::install_unattended()
+        } else {
+            crate::service::uninstall_unattended()
+        };
+    }
+    Ok(())
+}
+
+/// Mutate one field of `LockedSettings` from a `key`/`value` pair.
+fn apply_setting(s: &mut LockedSettings, key: &str, value: &str) -> Result<()> {
+    let on = parse_bool(value);
+    match key.to_ascii_lowercase().replace('_', "-").as_str() {
+        "recording" => s.recording = on?,
+        "autostart" => s.autostart = on?,
+        "require-password-to-stop" => s.require_password_to_stop = on?,
+        "fail-closed" => s.fail_closed = on?,
+        "enforcement" => {
+            s.enforcement = match value.to_ascii_lowercase().as_str() {
+                "attended" => Enforcement::Attended,
+                "unattended" => Enforcement::Unattended,
+                "notify" => Enforcement::Notify,
+                other => bail!("invalid enforcement '{other}' (attended|unattended|notify)"),
+            }
+        }
+        other => bail!(
+            "unknown setting '{other}'\n  keys: recording, autostart, require-password-to-stop, \
+             fail-closed (on|off); enforcement (attended|unattended|notify)"
+        ),
+    }
+    Ok(())
+}
+
+/// Parse a boolean toggle: on/off, true/false, yes/no, 1/0.
+fn parse_bool(value: &str) -> Result<bool> {
+    match value.to_ascii_lowercase().as_str() {
+        "on" | "true" | "yes" | "1" | "enable" | "enabled" => Ok(true),
+        "off" | "false" | "no" | "0" | "disable" | "disabled" => Ok(false),
+        other => bail!("expected on|off (got '{other}')"),
+    }
+}
+
+/// Render the settings as a labelled block (text, never color-only).
+fn print_settings(s: &LockedSettings) {
+    let yn = |b: bool| if b { "on" } else { "off" };
+    let mode = match s.enforcement {
+        Enforcement::Attended => "attended (holds for approval)",
+        Enforcement::Unattended => "unattended (denies / queues)",
+        Enforcement::Notify => "notify (records, doesn't block)",
+    };
+    println!("locked settings:");
+    println!("  recording                 {}", yn(s.recording));
+    println!("  autostart                 {}", yn(s.autostart));
+    println!(
+        "  require-password-to-stop  {}",
+        yn(s.require_password_to_stop)
+    );
+    println!("  fail-closed               {}", yn(s.fail_closed));
+    println!("  enforcement               {mode}");
 }
 
 /// Whether `kintsugi stop` is allowed to proceed. Unprovisioned → yes; Locked →

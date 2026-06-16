@@ -143,6 +143,23 @@ pub fn uninstall() -> Result<()> {
     if !crate::admin_cmd::allow_stop() {
         return Ok(());
     }
+    do_uninstall()
+}
+
+/// Install without prompting — used by `admin set autostart on`, where the caller
+/// has already authenticated with the admin password.
+pub fn install_unattended() -> Result<()> {
+    install()
+}
+
+/// Uninstall without the password gate — used by `admin set autostart off`, where
+/// the caller has already authenticated. (The gate exists to stop an *unauthed*
+/// disable; here we are past it.)
+pub fn uninstall_unattended() -> Result<()> {
+    do_uninstall()
+}
+
+fn do_uninstall() -> Result<()> {
     let path = unit_path()?;
     #[cfg(target_os = "linux")]
     {

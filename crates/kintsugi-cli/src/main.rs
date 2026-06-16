@@ -211,6 +211,24 @@ enum AdminCmd {
     Status,
     /// Change the admin password (and rotate the recovery key).
     ChangePassword,
+    /// Show the locked settings (requires the admin password to decrypt).
+    Settings {
+        /// Read the password from a file instead of prompting (config management).
+        #[arg(long)]
+        password_file: Option<std::path::PathBuf>,
+    },
+    /// Change one locked setting (requires the admin password). Keys: recording,
+    /// autostart, require-password-to-stop, fail-closed (on|off); enforcement
+    /// (attended|unattended|notify).
+    Set {
+        /// The setting name.
+        key: String,
+        /// The new value.
+        value: String,
+        /// Read the password from a file instead of prompting (config management).
+        #[arg(long)]
+        password_file: Option<std::path::PathBuf>,
+    },
 }
 
 /// `kintsugi service` subcommands.
@@ -347,6 +365,12 @@ fn main() -> Result<()> {
             } => admin_cmd::provision(password_file, force),
             AdminCmd::Status => admin_cmd::status(),
             AdminCmd::ChangePassword => admin_cmd::change_password(),
+            AdminCmd::Settings { password_file } => admin_cmd::settings(password_file),
+            AdminCmd::Set {
+                key,
+                value,
+                password_file,
+            } => admin_cmd::set(&key, &value, password_file),
         },
         Some(Command::Service { cmd }) => match cmd {
             ServiceCmd::Install => service::install(),
