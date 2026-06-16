@@ -25,6 +25,7 @@ time.workspace = true
 clap.workspace = true
 directories.workspace = true
 interprocess.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

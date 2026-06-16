@@ -729,7 +729,7 @@ mod tests {
         let mut app = App::new(false);
         // Force the login screen without a real vault by setting state directly.
         app.screen = crate::app::Screen::Login;
-        app.login_input = "secret".into();
+        app.login_input = zeroize::Zeroizing::new("secret".to_string());
         app.login_error = Some("incorrect password".into());
         let text = buffer_text(&app, 80, 24);
         assert!(text.contains("admin-locked"));

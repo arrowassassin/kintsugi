@@ -314,7 +314,9 @@ pub struct App {
     /// Whether the admin password has been entered this session.
     pub authed: bool,
     /// The password being typed on the login screen (never echoed verbatim).
-    pub login_input: String,
+    /// Zeroized on drop and on a failed attempt so a wrong guess isn't left in
+    /// freed heap.
+    pub login_input: zeroize::Zeroizing<String>,
     /// The last login error, shown under the prompt.
     pub login_error: Option<String>,
     /// The verified admin password, held for the session so settings changes can
@@ -347,7 +349,7 @@ impl App {
             splash_frame: 0,
             vault: None,
             authed: false,
-            login_input: String::new(),
+            login_input: zeroize::Zeroizing::new(String::new()),
             login_error: None,
             password: None,
             settings: None,
@@ -441,11 +443,12 @@ impl App {
     /// on failure, clear the field and show an error. The password never appears
     /// on the wire or in a log — only a constant-time verify against the vault.
     pub fn submit_login(&mut self) {
+        // Move the typed buffer out (zeroized when dropped on the failure path).
         let input = std::mem::take(&mut self.login_input);
         match &self.vault {
-            Some(v) if v.verify_password(&input) => {
+            Some(v) if v.verify_password(input.as_str()) => {
                 self.authed = true;
-                self.password = Some(zeroize::Zeroizing::new(input));
+                self.password = Some(input);
                 self.login_error = None;
                 self.screen = Screen::Main;
             }

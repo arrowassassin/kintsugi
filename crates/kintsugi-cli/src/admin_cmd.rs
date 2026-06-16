@@ -7,6 +7,16 @@
 //! directly; the watchdog (relaunch) and daemon-side IPC enforcement are the
 //! stronger follow-on tiers. We make a forced stop harder and (later) visible,
 //! never claim it's impossible.
+//!
+//! Known limitation of this CLI tier: the vault location honors `KINTSUGI_VAULT`,
+//! so an actor that controls the *environment* of the `kintsugi` process it
+//! spawns can point the gate at an empty vault and bypass the prompt. This is the
+//! same class of power as `kill`, and it is mitigated the same way: with the
+//! auto-restart **watchdog** installed, the daemon a bypassed `stop` kills simply
+//! relaunches — turning a forced stop into a logged, recoverable event rather than
+//! a silent kill. The real fix (deferred) is daemon-side IPC authentication, where
+//! the *daemon* — started by the admin/systemd, not the agent — owns the vault
+//! path and the agent's environment is irrelevant.
 
 use std::io::{Read, Write};
 use std::path::PathBuf;
@@ -262,7 +272,13 @@ fn read_password(prompt: &str, file: &Option<PathBuf>) -> Result<String> {
 /// Read a line from the real terminal with echo disabled. Reads `/dev/tty`, not
 /// stdin, so an agent with piped stdio can't feed the password and a recorder
 /// can't capture it from the command line.
+///
+/// If echo cannot be disabled we **refuse to read** rather than prompt with echo
+/// on (which would leak the password to the screen, scrollback, and any session
+/// recorder). The whole line is read (no 512-byte truncation), and the byte
+/// buffer is zeroized.
 fn read_password_tty(prompt: &str) -> Result<String> {
+    use zeroize::Zeroizing;
     let mut tty = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
@@ -270,24 +286,55 @@ fn read_password_tty(prompt: &str) -> Result<String> {
         .context("no terminal for password entry — use --password-file")?;
     write!(tty, "{prompt}")?;
     tty.flush()?;
-    set_echo(false);
-    let mut buf = [0u8; 512];
-    let n = tty.read(&mut buf).unwrap_or(0);
+
+    if !set_echo(false) {
+        let _ = writeln!(tty);
+        bail!("could not disable terminal echo for password entry — use --password-file");
+    }
+
+    let mut buf: Zeroizing<Vec<u8>> = Zeroizing::new(Vec::new());
+    let mut chunk = [0u8; 256];
+    let read_result = loop {
+        match tty.read(&mut chunk) {
+            Ok(0) => break Ok(()),
+            Ok(n) => {
+                if let Some(pos) = chunk[..n].iter().position(|&b| b == b'\n') {
+                    buf.extend_from_slice(&chunk[..pos]);
+                    break Ok(());
+                }
+                buf.extend_from_slice(&chunk[..n]);
+                if buf.len() > 4096 {
+                    break Ok(()); // sane bound; a password this long is enough
+                }
+            }
+            Err(e) => break Err(e),
+        }
+    };
+    // Always restore echo, whatever happened.
     set_echo(true);
     let _ = writeln!(tty);
-    let line = String::from_utf8_lossy(&buf[..n]);
+    read_result.context("read password from terminal")?;
+
+    let line = String::from_utf8_lossy(&buf);
     Ok(line.trim_end_matches(['\n', '\r']).to_string())
 }
 
 /// Toggle terminal echo on the controlling tty (so the password isn't shown).
+/// Returns whether the change was applied — the caller must NOT read a password
+/// when disabling echo failed.
 #[cfg(unix)]
-fn set_echo(on: bool) {
-    if let Ok(tty) = std::fs::File::open("/dev/tty") {
-        let _ = std::process::Command::new("stty")
-            .arg(if on { "echo" } else { "-echo" })
-            .stdin(tty)
-            .status();
-    }
+fn set_echo(on: bool) -> bool {
+    let Ok(tty) = std::fs::File::open("/dev/tty") else {
+        return false;
+    };
+    std::process::Command::new("stty")
+        .arg(if on { "echo" } else { "-echo" })
+        .stdin(tty)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 #[cfg(not(unix))]
-fn set_echo(_on: bool) {}
+fn set_echo(_on: bool) -> bool {
+    false
+}

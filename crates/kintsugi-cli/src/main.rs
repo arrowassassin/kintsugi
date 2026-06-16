@@ -1389,7 +1389,7 @@ fn cmd_report(catastrophic_only: bool, number: usize, filter: &FilterArgs) -> Re
         events.extend(log.query(&f)?);
     }
     // Merge the per-class results newest-first by sequence, then cap.
-    events.sort_by(|a, b| b.seq.cmp(&a.seq));
+    events.sort_by_key(|e| std::cmp::Reverse(e.seq));
     events.truncate(n);
 
     if events.is_empty() {
