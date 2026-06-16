@@ -5,6 +5,14 @@ All notable changes to Kintsugi are documented here. The format loosely follows
 
 ## [Unreleased]
 
+### Admin settings + audit recorder (phase A1)
+- **Locked-settings crypto core** (`kintsugi_core::admin`): argon2id password
+  verifier + XChaCha20-Poly1305 sealed settings with a one-time recovery key, the
+  foundation for password-locked admin config and "password to stop". Verifier and
+  sealing key are domain-separated; KDF params are pinned + versioned; AEAD uses a
+  random 192-bit nonce per seal with context-bound AAD; derived keys are zeroized.
+  `change_password` rotates everything (an exposed old recovery key dies). 8 tests.
+
 ### Admin settings + audit recorder (design + phase 1)
 - **Design doc** ([`kintsugi-admin-recorder-design.md`](kintsugi-admin-recorder-design.md)) for two
   upcoming capabilities — password-locked encrypted settings (admin-provisioned; stopping/

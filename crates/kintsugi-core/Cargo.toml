@@ -22,6 +22,10 @@ rusqlite.workspace = true
 directories.workspace = true
 brush-parser.workspace = true
 reflink-copy = "0.1.29"
+argon2.workspace = true
+chacha20poly1305.workspace = true
+zeroize.workspace = true
+getrandom.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

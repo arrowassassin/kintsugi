@@ -366,3 +366,13 @@ the locked product decisions this build implements.
   code"; auditd `-e 2`/eBPF is the root-backed floor we integrate with, not reimplement.
   Recorder is fail-open for availability (never halt a DB host like auditd's disk-full
   default) and records a signed gap-marker rather than silently dropping events.
+- Admin-settings crypto core (P-A1): argon2id verifier + XChaCha20-Poly1305 AEAD
+  sealed settings, in kintsugi-core::admin. Per the infosec panel: the password
+  VERIFIER and the SEALING KEY are domain-separated (independent argon2id salts),
+  KDF params are pinned + versioned in the vault, the AEAD nonce is random-192-bit
+  per seal with the version/context bound as AAD, derived keys are Zeroizing, and
+  a one-time recovery key wraps the sealing key in its own slot (no Kintsugi-held
+  escrow). change_password rotates salts/nonces/recovery so an exposed old
+  recovery key dies. Chose RustCrypto argon2+chacha20poly1305 over `age` to get
+  argon2id (age's passphrase mode is scrypt) with explicit nonce/AAD control.
+  Honest scope unchanged: protects vs non-root user/agent + disk thief, not root.
