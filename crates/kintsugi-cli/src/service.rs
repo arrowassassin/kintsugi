@@ -244,4 +244,51 @@ mod tests {
         assert!(p.contains(LAUNCHD_LABEL));
         assert!(p.starts_with("<?xml"));
     }
+
+    // These tests mutate process-global env (XDG_CONFIG_HOME / HOME / KINTSUGI_VAULT)
+    // so they must not run concurrently with each other.
+    fn serial() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+    }
+
+    #[test]
+    fn daemon_exe_resolves_a_daemon_name() {
+        let p = daemon_exe().unwrap();
+        let name = p.file_name().unwrap().to_string_lossy();
+        assert!(name.starts_with("kintsugi-daemon"), "got {name}");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn install_status_uninstall_roundtrip() {
+        let _g = serial();
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_var("XDG_CONFIG_HOME", tmp.path());
+        // An absent vault → unprovisioned → uninstall's allow_stop() returns true
+        // without prompting a tty.
+        std::env::set_var("KINTSUGI_VAULT", tmp.path().join("absent.json"));
+
+        let unit = unit_path().unwrap();
+        assert!(!unit.exists(), "not installed yet");
+        status().unwrap(); // "not installed" branch
+
+        // install() writes the unit file; the systemctl calls fail-soft in CI.
+        install().unwrap();
+        assert!(unit.exists(), "install writes the systemd unit");
+        let body = std::fs::read_to_string(&unit).unwrap();
+        assert!(body.contains("Restart=always"));
+        status().unwrap(); // "installed" branch
+
+        // uninstall() removes it (gated allow_stop → true here).
+        uninstall().unwrap();
+        assert!(!unit.exists(), "uninstall removes the unit");
+        // uninstall when already gone is a clean no-op.
+        uninstall().unwrap();
+
+        std::env::remove_var("XDG_CONFIG_HOME");
+        std::env::remove_var("KINTSUGI_VAULT");
+    }
 }

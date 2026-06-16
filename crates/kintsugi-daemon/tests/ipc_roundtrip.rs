@@ -8,7 +8,7 @@ use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::thread;
 
 use kintsugi_core::{Class, Decision, EventLog, ProposedCommand};
-use kintsugi_daemon::ipc::{Resolution, Response};
+use kintsugi_daemon::ipc::{Observation, Resolution, Response};
 use kintsugi_daemon::{Client, Daemon, Server};
 
 /// Tests mutate process-global env vars (`KINTSUGI_SOCKET`/`KINTSUGI_DB`), so they must
@@ -153,6 +153,37 @@ fn client_resolve_errors_on_error_response() {
         remember: false,
     };
     assert!(Client::resolve(&res).is_err());
+    h.join().unwrap();
+}
+
+#[test]
+fn client_methods_surface_daemon_errors() {
+    // Every Client method must surface a daemon-side error rather than silently
+    // swallow it. One Error-returning server answers each request type.
+    let _g = serial_lock();
+    let tmp = tempfile::tempdir().unwrap();
+    std::env::set_var("KINTSUGI_SOCKET", tmp.path().join("k.sock"));
+    let server = Server::bind().unwrap();
+    let h = thread::spawn(move || {
+        server
+            .serve_n(7, |_req| Response::Error {
+                message: "boom".into(),
+            })
+            .unwrap();
+    });
+
+    let cmd = ProposedCommand::new("t", "/tmp", vec!["ls".into()], "ls");
+    assert!(Client::record(&cmd).is_err());
+    assert!(Client::observe(&Observation {
+        kind: "created".into(),
+        path: "/x".into(),
+    })
+    .is_err());
+    assert!(Client::list_pending().is_err());
+    assert!(Client::pending_status("id").is_err());
+    assert!(Client::approve("id").is_err());
+    assert!(Client::deny("id").is_err());
+    assert!(Client::status_scorer().is_err());
     h.join().unwrap();
 }
 
