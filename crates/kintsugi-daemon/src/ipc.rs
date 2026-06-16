@@ -32,6 +32,11 @@ pub enum Request {
     /// it." The backstop sends these so the daemon's single writer keeps the hash
     /// chain intact.
     Observe(Observation),
+    /// "A human (no AI agent) already ran this shell command — record it for the
+    /// audit trail." Passive session recording: the daemon classifies it (so a
+    /// destructive command is flagged in the timeline) but never blocks or
+    /// snapshots, because by the time we hear about it the command has run.
+    Record(ProposedCommand),
     /// "List the commands currently held for approval."
     ListPending,
     /// "What is the status of this queued command?" (`pending`/`approved`/`denied`).
@@ -221,6 +226,11 @@ impl Client {
     /// Record an observed filesystem change (backstop).
     pub fn observe(observation: &Observation) -> Result<()> {
         expect_ack(round_trip(&Request::Observe(observation.clone()))?)
+    }
+
+    /// Record a shell command a human already ran (passive session recording).
+    pub fn record(cmd: &ProposedCommand) -> Result<()> {
+        expect_ack(round_trip(&Request::Record(cmd.clone()))?)
     }
 
     /// List the commands currently held for approval.

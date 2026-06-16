@@ -366,6 +366,27 @@ impl Daemon {
         Ok(())
     }
 
+    /// Record a shell command a human already ran (passive session recording,
+    /// no AI-agent hook). Logged as `agent = "shell"`, decision Allow — it has
+    /// already run, so this never blocks or snapshots. We still **classify** it
+    /// with the Tier-1 rules so the recorded event carries the real class: a
+    /// destructive command a DBA ran shows up flagged in the audit timeline and
+    /// in `kintsugi report --destructive`. The model never runs on this path.
+    ///
+    /// The hard floor stays honest: this is an audit record of the past, not a
+    /// gate. The "nothing un-warned" guarantee never applied to commands a human
+    /// ran outside Kintsugi; the "tamper-evident record of everything" one does,
+    /// which is exactly what this preserves.
+    pub fn record_shell(&self, cmd: &ProposedCommand) -> Result<()> {
+        let m = kintsugi_core::classify(cmd);
+        // Allow, not the rule's gate decision: the command already executed, so
+        // recording a Hold/Deny here would be a lie about what happened. The
+        // class still rides along (verdict.class) so the timeline flags danger.
+        let verdict = Verdict::rules(m.class, Decision::Allow, format!("recorded:{}", m.rule));
+        self.log.log_event(cmd, &verdict, None)?;
+        Ok(())
+    }
+
     /// Dispatch an IPC request to its handler.
     pub fn handle_request(&self, req: ipc::Request) -> ipc::Response {
         match req {
@@ -377,6 +398,12 @@ impl Daemon {
                 },
             },
             ipc::Request::Observe(obs) => match self.observe(&obs) {
+                Ok(()) => ipc::Response::Ack,
+                Err(e) => ipc::Response::Error {
+                    message: e.to_string(),
+                },
+            },
+            ipc::Request::Record(cmd) => match self.record_shell(&cmd) {
                 Ok(()) => ipc::Response::Ack,
                 Err(e) => ipc::Response::Error {
                     message: e.to_string(),

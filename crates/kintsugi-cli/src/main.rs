@@ -7,6 +7,7 @@
 mod admin_cmd;
 mod init;
 mod logview;
+mod record;
 mod service;
 
 use std::io::IsTerminal;
@@ -150,6 +151,47 @@ enum Command {
     Panic,
     /// Clear the kill-switch and resume normal operation.
     Resume,
+    /// Passive session recording (no AI agent): record shell commands a human ran
+    /// for an audit/compliance trail. install / uninstall / status the shell hook.
+    Record {
+        #[command(subcommand)]
+        cmd: RecordCmd,
+    },
+    /// Record a single shell command that already ran. This is the primitive the
+    /// shell hook calls on every command (`kintsugi record install`); it is
+    /// fire-and-forget and never blocks the shell — if the daemon is down the
+    /// command is spooled so the audit trail survives daemon restarts.
+    Ingest {
+        /// The command line that was run (quote it).
+        command: String,
+        /// The working directory it ran in (defaults to the current dir).
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+    },
+    /// Audit report: the destructive commands on the timeline (for compliance /
+    /// DBA review). By default shows catastrophic + ambiguous; filterable.
+    Report {
+        /// Show only catastrophic commands (drop ambiguous).
+        #[arg(long)]
+        catastrophic_only: bool,
+        /// How many to show.
+        #[arg(short = 'n', long, default_value_t = 50)]
+        number: usize,
+        #[command(flatten)]
+        filter: FilterArgs,
+    },
+}
+
+/// `kintsugi record` subcommands (passive session recorder).
+#[derive(Debug, Subcommand)]
+enum RecordCmd {
+    /// Print the shell hook to source from your rc file (bash/zsh). Use as:
+    /// `kintsugi record install >> ~/.bashrc` (or `~/.zshrc`), then restart the shell.
+    Install,
+    /// Print how to remove the shell hook.
+    Uninstall,
+    /// Show whether the daemon is up to receive recordings, and any spooled gap.
+    Status,
 }
 
 /// `kintsugi admin` subcommands.
@@ -334,6 +376,17 @@ fn main() -> Result<()> {
         Some(Command::Run { id }) => cmd_run(id.as_deref()),
         Some(Command::Panic) => cmd_panic(),
         Some(Command::Resume) => cmd_resume(),
+        Some(Command::Record { cmd }) => match cmd {
+            RecordCmd::Install => record::install(),
+            RecordCmd::Uninstall => record::uninstall(),
+            RecordCmd::Status => record::status(),
+        },
+        Some(Command::Ingest { command, cwd }) => record::ingest(&command, cwd),
+        Some(Command::Report {
+            catastrophic_only,
+            number,
+            filter,
+        }) => cmd_report(catastrophic_only, number, &filter),
     }
 }
 
@@ -1278,6 +1331,58 @@ fn cmd_log(number: usize, page: usize, show_redacted: bool, filter: &FilterArgs)
     print!(
         "{}",
         logview::render_page_footer(page, offset, events.len(), total, color)
+    );
+    Ok(())
+}
+
+/// `kintsugi report` — the destructive commands on the timeline, for an
+/// audit/compliance review. Shows catastrophic (and, by default, ambiguous)
+/// events newest-first; honors the same time/agent/session filters as `log`.
+fn cmd_report(catastrophic_only: bool, number: usize, filter: &FilterArgs) -> Result<()> {
+    let db = default_db_path();
+    if !db.exists() {
+        println!("No events recorded yet — nothing to report.");
+        return Ok(());
+    }
+    let log = EventLog::open(&db).with_context(|| format!("open log {}", db.display()))?;
+    let color = logview::use_color(
+        std::env::var_os("NO_COLOR").is_some(),
+        std::io::stdout().is_terminal(),
+    );
+
+    // The core Filter holds a single class; a report spans two. Query without a
+    // class filter and keep the destructive ones in Rust, so one pass covers
+    // both bands. Pull a generous window, then trim to `number` after filtering.
+    let f = filter.to_filter(false, Some(number.max(1) * 50))?;
+    let mut events = log.query(&f)?;
+    events.retain(|e| match e.class {
+        Class::Catastrophic => true,
+        Class::Ambiguous => !catastrophic_only,
+        Class::Safe => false,
+    });
+    events.reverse(); // newest first
+    events.truncate(number.max(1));
+
+    if events.is_empty() {
+        let scope = if catastrophic_only {
+            "catastrophic"
+        } else {
+            "destructive"
+        };
+        println!("No {scope} commands in scope. The timeline is clean for this filter.");
+        return Ok(());
+    }
+
+    let band = if catastrophic_only {
+        "catastrophic"
+    } else {
+        "destructive (catastrophic + ambiguous)"
+    };
+    println!("Audit report — {band} commands, newest first:\n");
+    print!("{}", logview::render_log(&events, color));
+    println!(
+        "\n{} command(s) shown. Full chain integrity: `kintsugi status`.",
+        events.len()
     );
     Ok(())
 }
