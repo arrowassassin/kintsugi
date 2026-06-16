@@ -1,7 +1,7 @@
 {
   "mcpServers": {
-    "aegis-exec": {
-      "command": "aegis-mcp",
+    "kintsugi-exec": {
+      "command": "kintsugi-mcp",
       "args": []
     }
   }

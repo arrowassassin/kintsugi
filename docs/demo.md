@@ -2,7 +2,7 @@
 
 ![The gate: rm -rf held before it runs](img/holdcard.svg)
 
-> An AI agent proposes `rm -rf` → **Aegis holds it before it runs** → you press
+> An AI agent proposes `rm -rf` → **Kintsugi holds it before it runs** → you press
 > `d` → it's blocked and on the tamper-evident timeline.
 
 ## Run it
@@ -28,10 +28,10 @@ DEMO_KEY=d bash scripts/demo.sh   # or DEMO_KEY=a
 
 ```
 ▸ the agent now runs:  rm -rf .../project/src
-  Aegis intercepts it BEFORE it executes and holds it.
+  Kintsugi intercepts it BEFORE it executes and holds it.
 
 ────────────────────────────────────────────────────────────
-⚠ Aegis hold — This command is catastrophic and cannot be undone.
+⚠ Kintsugi hold — This command is catastrophic and cannot be undone.
   Recursively deletes files and directories.
 
     rm -rf src
@@ -56,7 +56,7 @@ execution.
 Using [VHS](https://github.com/charmbracelet/vhs):
 
 ```sh
-vhs scripts/demo.tape      # writes docs/aegis-demo.gif
+vhs scripts/demo.tape      # writes docs/kintsugi-demo.gif
 ```
 
 Or record any terminal session with
@@ -64,5 +64,5 @@ Or record any terminal session with
 
 ```sh
 asciinema rec demo.cast -c "bash scripts/demo.sh"
-agg demo.cast docs/aegis-demo.gif
+agg demo.cast docs/kintsugi-demo.gif
 ```

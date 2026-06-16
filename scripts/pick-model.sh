@@ -1,15 +1,15 @@
 #!/bin/sh
-# Aegis model picker — fetch *compatible* GGUF options and install one.
+# Kintsugi model picker — fetch *compatible* GGUF options and install one.
 #
-#   curl -fsSL https://github.com/arrowassassin/aegis/releases/latest/download/pick-model.sh | sh
+#   curl -fsSL https://github.com/arrowassassin/kintsugi/releases/latest/download/pick-model.sh | sh
 #
-# Aegis runs fine with no model (the default heuristic scorer is offline and
+# Kintsugi runs fine with no model (the default heuristic scorer is offline and
 # always available). This optional helper fetches a short, RAM-appropriate list
 # of small instruct GGUF models from the Hugging Face API, lets you pick one,
 # downloads it, prints its SHA-256, and tells you the one env var that points
-# Aegis at it. Nothing here runs automatically and the daemon never calls it.
+# Kintsugi at it. Nothing here runs automatically and the daemon never calls it.
 #
-# Security note: a model you pick here is *your* choice — like AEGIS_MODEL_FILE,
+# Security note: a model you pick here is *your* choice — like KINTSUGI_MODEL_FILE,
 # it is trusted because you selected it, and it bypasses the built-in checksum
 # pin (which only guards the daemon's own `download` path). The SHA-256 is shown
 # so you can record/pin it yourself.
@@ -18,7 +18,7 @@
 #   --auto              pick the top match for your RAM, no prompt
 #   --query "<text>"    override the search (default: RAM-based, instruct GGUF)
 #   --limit <N>         how many options to list (default: 12)
-#   --dir <DIR>         where to save weights (default: $AEGIS_MODEL_DIR or data dir)
+#   --dir <DIR>         where to save weights (default: $KINTSUGI_MODEL_DIR or data dir)
 set -eu
 
 HF="https://huggingface.co"
@@ -26,10 +26,10 @@ API="$HF/api"
 LIMIT=12
 AUTO=0
 QUERY=""
-DIR="${AEGIS_MODEL_DIR:-${AEGIS_DATA_DIR:-$HOME/.local/share/aegis}/models}"
+DIR="${KINTSUGI_MODEL_DIR:-${KINTSUGI_DATA_DIR:-$HOME/.local/share/kintsugi}/models}"
 
 # Curated "known good" GGUF repos — small, instruct-tuned, well-quantised, from
-# publishers we've actually used. Listed in preference order; we pin Aegis's
+# publishers we've actually used. Listed in preference order; we pin Kintsugi's
 # recommended model first and surface these at the top of the picker. When the
 # Hugging Face search returns one of these IDs, it gets a ★ marker and (with
 # --auto / no TTY) is selected ahead of the popularity ranking.
@@ -45,9 +45,9 @@ bartowski/Qwen2.5-1.5B-Instruct-GGUF
 Qwen/Qwen2.5-1.5B-Instruct-GGUF
 bartowski/Llama-3.2-1B-Instruct-GGUF"
 
-say()  { printf '\033[1;32maegis\033[0m %s\n' "$*"; }
-warn() { printf '\033[1;33maegis\033[0m %s\n' "$*" >&2; }
-die()  { printf '\033[1;31maegis: %s\033[0m\n' "$*" >&2; exit 1; }
+say()  { printf '\033[1;32mkintsugi\033[0m %s\n' "$*"; }
+warn() { printf '\033[1;33mkintsugi\033[0m %s\n' "$*" >&2; }
+die()  { printf '\033[1;31mkintsugi: %s\033[0m\n' "$*" >&2; exit 1; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
 while [ $# -gt 0 ]; do
@@ -72,7 +72,7 @@ sha256() {
   else echo ""; fi
 }
 
-# --- RAM → size budget. Mirrors select_spec() in crates/aegis-model. ----------
+# --- RAM → size budget. Mirrors select_spec() in crates/kintsugi-model. ----------
 detect_ram_mb() {
   if [ -r /proc/meminfo ]; then
     awk '/^MemTotal:/ {print int($2/1024); exit}' /proc/meminfo
@@ -151,7 +151,7 @@ else
   printf 'pick a number [1-%s] (default 1, q to quit): ' "$N"
   read -r CHOICE </dev/tty || CHOICE=""
   [ -z "$CHOICE" ] && CHOICE=1
-  case "$CHOICE" in q|Q) say "no model installed (Aegis still runs on the heuristic scorer)."; exit 0 ;; esac
+  case "$CHOICE" in q|Q) say "no model installed (Kintsugi still runs on the heuristic scorer)."; exit 0 ;; esac
   case "$CHOICE" in *[!0-9]*) die "not a number: $CHOICE" ;; esac
   { [ "$CHOICE" -ge 1 ] && [ "$CHOICE" -le "$N" ]; } || die "out of range: $CHOICE"
 fi
@@ -185,6 +185,6 @@ SUM="$(sha256 "$DEST")"
 [ -n "$SUM" ] && say "sha256  $SUM"
 
 echo
-say "done. point Aegis at it (add to your shell profile):"
-printf '   export AEGIS_MODEL_FILE="%s"\n' "$DEST"
+say "done. point Kintsugi at it (add to your shell profile):"
+printf '   export KINTSUGI_MODEL_FILE="%s"\n' "$DEST"
 echo "  then rebuild/run the daemon with --features llama, or restart it if already built."

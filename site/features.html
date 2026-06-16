@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Aegis — features</title>
-<meta name="description" content="Every Aegis feature with a real captured terminal frame: the gate, the timeline, the live TUI, the approval queue, undo, and setup." />
-<meta property="og:title" content="Aegis — features" />
+<title>Kintsugi — features</title>
+<meta name="description" content="Every Kintsugi feature with a real captured terminal frame: the gate, the timeline, the live TUI, the approval queue, undo, and setup." />
+<meta property="og:title" content="Kintsugi — features" />
 <meta property="og:description" content="Every feature with a real captured terminal frame." />
 <meta property="og:type" content="website" />
-<meta property="og:image" content="https://arrowassassin.github.io/aegis/og.svg" />
+<meta property="og:image" content="https://arrowassassin.github.io/kintsugi/og.svg" />
 <meta name="twitter:card" content="summary_large_image" />
 <link rel="icon" href="data:image/svg+xml,&lt;svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'&gt;&lt;rect width='16' height='16' fill='%230b0e16'/&gt;&lt;text x='8' y='13' font-size='13' text-anchor='middle' fill='%235af78e'&gt;▦&lt;/text&gt;&lt;/svg&gt;" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -20,7 +20,7 @@
 
 <header class="nav">
   <div class="wrap">
-    <a class="brand" href="index.html">&#9638; AEGIS<span class="blink">_</span></a>
+    <a class="brand" href="index.html">&#9638; KINTSUGI<span class="blink">_</span></a>
     <button id="navtoggle" class="navtoggle" aria-label="open menu" aria-expanded="false" aria-controls="primarynav">&#9776;</button>
     <nav id="primarynav">
       <a href="index.html">HOME</a>
@@ -28,7 +28,7 @@
       <a class="active" href="features.html">FEATURES</a>
       <a href="install.html">INSTALL</a>
       <a href="assurance.html">SECURITY</a>
-      <a href="https://github.com/arrowassassin/aegis">GITHUB</a>
+      <a href="https://github.com/arrowassassin/kintsugi">GITHUB</a>
       <button id="theme" class="themebtn" aria-label="toggle light or dark theme">☀ light</button>
     </nav>
   </div>
@@ -52,7 +52,7 @@
       <div class="bar"><i class="dot r"></i><i class="dot y"></i><i class="dot g"></i><span class="ttl">PATH=…/shims rm -rf src</span></div>
 <pre>
 <span class="t-dim">────────────────────────────────────────────────────────────</span>
-<span class="t-red">⚠ Aegis hold — This command is catastrophic and cannot be undone.</span>
+<span class="t-red">⚠ Kintsugi hold — This command is catastrophic and cannot be undone.</span>
 <span class="t-dim">  recursively deletes files and directories. This is hard or impossible to undo.</span>
 
     <span class="t-b">rm -rf src</span>
@@ -66,10 +66,10 @@
   <section>
     <h2><span class="n">2 &gt;</span> the timeline — one cross-agent log</h2>
     <p class="lead">Every command from every wired agent on a tamper-evident,
-      hash-chained record. <span class="muted">aegis log</span> for a quick scroll;
+      hash-chained record. <span class="muted">kintsugi log</span> for a quick scroll;
       the TUI for live scrubbing.</p>
     <div class="term">
-      <div class="bar"><i class="dot r"></i><i class="dot y"></i><i class="dot g"></i><span class="ttl">aegis log</span></div>
+      <div class="bar"><i class="dot r"></i><i class="dot y"></i><i class="dot g"></i><span class="ttl">kintsugi log</span></div>
 <pre>
 <span class="t-dim">time      agent         outcome  command</span>
 <span class="t-dim">02:31:27  shim          </span><span class="t-amb">held</span>     <span class="t-red">[catastrophic]</span> rm -rf src
@@ -87,7 +87,7 @@
       <span class="muted">a/d</span> approve/deny, <span class="muted">u</span> undo,
       <span class="muted">/</span> filter, <span class="muted">q</span> quit.</p>
     <figure style="margin:0">
-      <img src="tui.svg" alt="The Aegis TUI: a bordered timeline of agent commands with a detail pane and a risk gauge"
+      <img src="tui.svg" alt="The Kintsugi TUI: a bordered timeline of agent commands with a detail pane and a risk gauge"
            style="width:100%; height:auto; border-radius:10px" loading="lazy" />
     </figure>
   </section>
@@ -98,24 +98,24 @@
       TUI, or let the agent wait in-band — once you approve, the command runs and the
       result returns, so the agent keeps going.</p>
     <div class="term">
-      <div class="bar"><i class="dot r"></i><i class="dot y"></i><i class="dot g"></i><span class="ttl">aegis queue</span></div>
+      <div class="bar"><i class="dot r"></i><i class="dot y"></i><i class="dot g"></i><span class="ttl">kintsugi queue</span></div>
 <pre>
 <span class="t-dim">id          class          command</span>
 <span class="t-cy">50d56fd9</span>    <span class="t-red">catastrophic</span>   rm -rf src
 
-<span class="t-dim">Approve with `aegis approve &lt;id&gt;` or deny with `aegis deny &lt;id&gt;`.</span>
+<span class="t-dim">Approve with `kintsugi approve &lt;id&gt;` or deny with `kintsugi deny &lt;id&gt;`.</span>
 </pre>
     </div>
   </section>
 
   <section>
     <h2><span class="n">5 &gt;</span> undo — nothing is unrecoverable</h2>
-    <p class="lead">Before an allowed destructive op, Aegis snapshots the paths it
+    <p class="lead">Before an allowed destructive op, Kintsugi snapshots the paths it
       will touch (reflink copy-on-write, plain-copy fallback).
-      <span class="muted">aegis undo</span> restores the last action;
+      <span class="muted">kintsugi undo</span> restores the last action;
       <span class="muted">--session</span> restores the whole run.</p>
     <div class="term">
-      <div class="bar"><i class="dot r"></i><i class="dot y"></i><i class="dot g"></i><span class="ttl">aegis undo</span></div>
+      <div class="bar"><i class="dot r"></i><i class="dot y"></i><i class="dot g"></i><span class="ttl">kintsugi undo</span></div>
 <pre>
 <span class="t-grn">✓ undid `rm -rf src`</span> (1 path(s) restored)
 
@@ -127,30 +127,30 @@ calls, external APIs, or already-pushed commits.</span>
 
   <section>
     <h2><span class="n">6 &gt;</span> one-command setup + status</h2>
-    <p class="lead"><span class="muted">aegis init</span> detects your agents, wires
+    <p class="lead"><span class="muted">kintsugi init</span> detects your agents, wires
       the hook / MCP / shim, and starts the daemon.
-      <span class="muted">aegis status</span> shows health — including the hash chain
+      <span class="muted">kintsugi status</span> shows health — including the hash chain
       and the panic kill-switch.</p>
     <div class="cols two">
       <div class="term">
-        <div class="bar"><i class="dot r"></i><i class="dot y"></i><i class="dot g"></i><span class="ttl">aegis init</span></div>
+        <div class="bar"><i class="dot r"></i><i class="dot y"></i><i class="dot g"></i><span class="ttl">kintsugi init</span></div>
 <pre>
-aegis init
+kintsugi init
 
-  <span class="t-grn">✓</span> shim: linked 9 commands in ~/.local/share/aegis/shims
+  <span class="t-grn">✓</span> shim: linked 9 commands in ~/.local/share/kintsugi/shims
   <span class="t-dim">• no agent dirs detected (~/.claude, ~/.codex, …)</span>
-  <span class="t-grn">✓</span> daemon started on ~/run/aegis.sock
+  <span class="t-grn">✓</span> daemon started on ~/run/kintsugi.sock
 
-Done. Try: aegis status
+Done. Try: kintsugi status
 </pre>
       </div>
       <div class="term">
-        <div class="bar"><i class="dot r"></i><i class="dot y"></i><i class="dot g"></i><span class="ttl">aegis status</span></div>
+        <div class="bar"><i class="dot r"></i><i class="dot y"></i><i class="dot g"></i><span class="ttl">kintsugi status</span></div>
 <pre>
-aegis 0.1.0
+kintsugi 0.1.0
   daemon:  <span class="t-grn">running</span>
-  socket:  ~/run/aegis.sock
-  log:     ~/.local/share/aegis/events.db
+  socket:  ~/run/kintsugi.sock
+  log:     ~/.local/share/kintsugi/events.db
   events:  3
   chain:   <span class="t-grn">intact</span>
 </pre>
@@ -162,11 +162,11 @@ aegis 0.1.0
 
   <section>
     <h2><span class="n">7 &gt;</span> works with every CLI — one native hook each</h2>
-    <p class="lead">Aegis isn't a plug-in for one tool. Every major agent CLI
-      exposes a <em>pre-tool hook</em>, and <span class="muted">aegis init</span>
+    <p class="lead">Kintsugi isn't a plug-in for one tool. Every major agent CLI
+      exposes a <em>pre-tool hook</em>, and <span class="muted">kintsugi init</span>
       wires each natively, so a held command pauses the agent itself — not just a
       <span class="muted">$PATH</span> shim. One binary,
-      <span class="muted">aegis-hook --agent &lt;id&gt;</span>, speaks every dialect.</p>
+      <span class="muted">kintsugi-hook --agent &lt;id&gt;</span>, speaks every dialect.</p>
     <div class="cards">
       <div class="card"><h3>Claude Code</h3><p><span class="k">PreToolUse</span> · ~/.claude/settings.json</p></div>
       <div class="card"><h3>Qwen Code</h3><p><span class="k">PreToolUse</span> · ~/.qwen/settings.json</p></div>
@@ -175,31 +175,31 @@ aegis 0.1.0
       <div class="card"><h3>Cursor CLI</h3><p><span class="k">beforeShellExecution</span> · ~/.cursor/hooks.json</p></div>
       <div class="card"><h3>Codex CLI</h3><p><span class="k">[[hooks.PreToolUse]]</span> · ~/.codex/config.toml</p></div>
       <div class="card"><h3>OpenCode</h3><p><span class="k">tool.execute.before</span> plugin · bridges to the hook</p></div>
-      <div class="card"><h3>Any other tool / raw shell</h3><p>the <span class="k">$PATH</span> shim, or the <span class="k">aegis-exec</span> MCP server</p></div>
+      <div class="card"><h3>Any other tool / raw shell</h3><p>the <span class="k">$PATH</span> shim, or the <span class="k">kintsugi-exec</span> MCP server</p></div>
     </div>
   </section>
 
   <section>
-    <h2><span class="n">8 &gt;</span> when Aegis blocks something — run it yourself</h2>
+    <h2><span class="n">8 &gt;</span> when Kintsugi blocks something — run it yourself</h2>
     <p class="lead">A <span class="t-red">catastrophic</span> command is denied to
       the agent (an in-agent "allow" would skip the snapshot). The agent stops and
-      you decide. <span class="muted">aegis run &lt;id&gt;</span> runs it yourself,
+      you decide. <span class="muted">kintsugi run &lt;id&gt;</span> runs it yourself,
       reversibly — snapshot first, confirm with a code typed at your terminal, then
-      execute in its original directory. <span class="muted">aegis undo</span>
+      execute in its original directory. <span class="muted">kintsugi undo</span>
       rolls it back.</p>
     <figure style="margin:0">
-      <img src="run.svg" alt="aegis run: a held catastrophic command is shown, confirmed with a typed code, run reversibly, and undoable"
+      <img src="run.svg" alt="kintsugi run: a held catastrophic command is shown, confirmed with a typed code, run reversibly, and undoable"
            style="width:100%; height:auto; border-radius:10px" loading="lazy" />
     </figure>
     <div class="grid" style="margin-top:18px">
-      <div class="feat"><h3>aegis run &lt;id&gt;</h3><p>You run a hook-blocked command, reversibly. Snapshots the files, runs the exact command, undoable. Confirmed at your real terminal — the agent can't self-approve.</p></div>
-      <div class="feat"><h3>aegis approve &lt;id&gt;</h3><p>For shim / MCP holds, the waiting call runs it. (For a hook block, approve only records — use <span class="muted">aegis run</span>.)</p></div>
-      <div class="feat"><h3>aegis deny &lt;id&gt;</h3><p>Drop it. Nothing runs.</p></div>
+      <div class="feat"><h3>kintsugi run &lt;id&gt;</h3><p>You run a hook-blocked command, reversibly. Snapshots the files, runs the exact command, undoable. Confirmed at your real terminal — the agent can't self-approve.</p></div>
+      <div class="feat"><h3>kintsugi approve &lt;id&gt;</h3><p>For shim / MCP holds, the waiting call runs it. (For a hook block, approve only records — use <span class="muted">kintsugi run</span>.)</p></div>
+      <div class="feat"><h3>kintsugi deny &lt;id&gt;</h3><p>Drop it. Nothing runs.</p></div>
     </div>
     <p class="note" style="margin-top:14px">Honest about reversibility: for bounded
-      targets (a directory, named files) <span class="muted">aegis undo</span> fully
+      targets (a directory, named files) <span class="muted">kintsugi undo</span> fully
       restores them; for unbounded ones (globs, <span class="muted">$VARS</span>, the
-      root, devices) a snapshot can't cover everything — Aegis says so before you
+      root, devices) a snapshot can't cover everything — Kintsugi says so before you
       confirm, and the filesystem-watcher backstop is the net. The terminal prompt
       is a strong speed bump, not a sandbox against a malicious local process.</p>
   </section>
@@ -207,19 +207,19 @@ aegis 0.1.0
   <section>
     <h2><span class="n">9 &gt;</span> how it decides — deterministic AST analysis</h2>
     <p class="lead">The block decision is <strong>LLM-free</strong>: fixed rules a
-      human wrote, never a model guessing. What makes it trustworthy is that Aegis
+      human wrote, never a model guessing. What makes it trustworthy is that Kintsugi
       reads the <em>real shell structure</em> of a command, not its raw text.</p>
     <div class="grid">
       <div class="feat"><h3>Two passes, worst-wins</h3>
         <p>A fast tokenizer <em>and</em> a true bash AST parser
-          (<span class="muted">brush-parser</span>, pure-Rust) — Aegis takes the
+          (<span class="muted">brush-parser</span>, pure-Rust) — Kintsugi takes the
           more cautious verdict. The AST sees what substring matching can't.</p></div>
       <div class="feat"><h3>Catches hidden danger</h3>
         <p>Commands buried in substitutions <span class="muted">$(…)</span>, backticks,
           here-docs, subshells, and <span class="muted">if/for/while</span> blocks are
           surfaced — <span class="muted">echo "$(rm -rf /)"</span> is caught, not waved through.</p></div>
       <div class="feat"><h3>Fails toward caution</h3>
-        <p>A line Aegis can't fully parse is <span class="muted">held</span>, never
+        <p>A line Kintsugi can't fully parse is <span class="muted">held</span>, never
           assumed safe. A parse failure can only <em>add</em> caution. The hard rule,
           gated by a golden corpus: <strong>zero catastrophic-classified-as-safe</strong>.</p></div>
       <div class="feat"><h3>Industry-standard basis</h3>
@@ -229,22 +229,22 @@ aegis 0.1.0
     </div>
     <p class="muted" style="margin-top:18px">See it for yourself — this runs nothing:</p>
     <div class="term">
-      <div class="bar"><i class="dot r"></i><i class="dot y"></i><i class="dot g"></i><span class="ttl">aegis test</span></div>
+      <div class="bar"><i class="dot r"></i><i class="dot y"></i><i class="dot g"></i><span class="ttl">kintsugi test</span></div>
 <pre>
-$ <span class="t-grn">aegis test</span> "cd build &amp;&amp; rm -rf ../dist"
+$ <span class="t-grn">kintsugi test</span> "cd build &amp;&amp; rm -rf ../dist"
 command:   cd build &amp;&amp; rm -rf ../dist
 class:     <span class="t-red">⛔ CATASTROPHIC</span>   (rule: rm:recursive)
 with you:  blocked — the agent won't run it; you'd run it yourself, reversibly.
 
-Aegis sees these commands:
+Kintsugi sees these commands:
   • cd build
   • rm -rf ../dist
 
 Dry run: nothing was executed, logged, or sent anywhere.
 </pre>
     </div>
-    <p class="note"><span class="t-grn">aegis test "&lt;command&gt;"</span> shows the
-      class, the rule that fired, what would happen, and the exact commands Aegis
+    <p class="note"><span class="t-grn">kintsugi test "&lt;command&gt;"</span> shows the
+      class, the rule that fired, what would happen, and the exact commands Kintsugi
       parses out of your line — a safe way to explore the rules.</p>
   </section>
 
@@ -252,7 +252,7 @@ Dry run: nothing was executed, logged, or sent anywhere.
 
 <footer>
   <div class="wrap">
-    <p>MIT licensed · <a href="https://github.com/arrowassassin/aegis">github.com/arrowassassin/aegis</a>
+    <p>MIT licensed · <a href="https://github.com/arrowassassin/kintsugi">github.com/arrowassassin/kintsugi</a>
       · every terminal frame on this site is real captured output.</p>
   </div>
 </footer>

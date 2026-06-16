@@ -3,108 +3,6 @@
 version = 4
 
 [[package]]
-name = "aegis-cli"
-version = "0.1.0"
-dependencies = [
- "aegis-core",
- "aegis-daemon",
- "aegis-intercept",
- "aegis-tui",
- "anyhow",
- "clap",
- "directories",
- "interprocess",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.18",
- "time",
-]
-
-[[package]]
-name = "aegis-core"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "brush-parser",
- "directories",
- "hex",
- "proptest",
- "reflink-copy",
- "rusqlite",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "tempfile",
- "thiserror 2.0.18",
- "time",
- "toml",
- "uuid",
-]
-
-[[package]]
-name = "aegis-daemon"
-version = "0.1.0"
-dependencies = [
- "aegis-core",
- "aegis-model",
- "anyhow",
- "directories",
- "interprocess",
- "notify",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.18",
- "time",
- "uuid",
-]
-
-[[package]]
-name = "aegis-intercept"
-version = "0.1.0"
-dependencies = [
- "aegis-core",
- "aegis-daemon",
- "anyhow",
- "interprocess",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.18",
- "time",
- "uuid",
-]
-
-[[package]]
-name = "aegis-model"
-version = "0.1.0"
-dependencies = [
- "aegis-core",
- "anyhow",
- "hex",
- "llama-cpp-2",
- "reqwest",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "tempfile",
-]
-
-[[package]]
-name = "aegis-tui"
-version = "0.1.0"
-dependencies = [
- "aegis-core",
- "aegis-daemon",
- "anyhow",
- "crossterm",
- "ratatui",
- "tempfile",
- "time",
-]
-
-[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1629,6 +1527,108 @@ dependencies = [
  "hashbrown 0.16.1",
  "portable-atomic",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "kintsugi-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "directories",
+ "interprocess",
+ "kintsugi-core",
+ "kintsugi-daemon",
+ "kintsugi-intercept",
+ "kintsugi-tui",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "time",
+]
+
+[[package]]
+name = "kintsugi-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "brush-parser",
+ "directories",
+ "hex",
+ "proptest",
+ "reflink-copy",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tempfile",
+ "thiserror 2.0.18",
+ "time",
+ "toml",
+ "uuid",
+]
+
+[[package]]
+name = "kintsugi-daemon"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "directories",
+ "interprocess",
+ "kintsugi-core",
+ "kintsugi-model",
+ "notify",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "time",
+ "uuid",
+]
+
+[[package]]
+name = "kintsugi-intercept"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "interprocess",
+ "kintsugi-core",
+ "kintsugi-daemon",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "time",
+ "uuid",
+]
+
+[[package]]
+name = "kintsugi-model"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "hex",
+ "kintsugi-core",
+ "llama-cpp-2",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tempfile",
+]
+
+[[package]]
+name = "kintsugi-tui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "crossterm",
+ "kintsugi-core",
+ "kintsugi-daemon",
+ "ratatui",
+ "tempfile",
+ "time",
 ]
 
 [[package]]

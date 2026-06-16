@@ -1,12 +1,12 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/aegis-core",
-    "crates/aegis-daemon",
-    "crates/aegis-intercept",
-    "crates/aegis-cli",
-    "crates/aegis-model",
-    "crates/aegis-tui",
+    "crates/kintsugi-core",
+    "crates/kintsugi-daemon",
+    "crates/kintsugi-intercept",
+    "crates/kintsugi-cli",
+    "crates/kintsugi-model",
+    "crates/kintsugi-tui",
 ]
 
 [workspace.package]
@@ -14,16 +14,16 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 authors = ["arrowassassin"]
-repository = "https://github.com/arrowassassin/aegis"
+repository = "https://github.com/arrowassassin/kintsugi"
 rust-version = "1.96"
 
 [workspace.dependencies]
 # Internal crates
-aegis-core = { path = "crates/aegis-core" }
-aegis-daemon = { path = "crates/aegis-daemon" }
-aegis-intercept = { path = "crates/aegis-intercept" }
-aegis-model = { path = "crates/aegis-model" }
-aegis-tui = { path = "crates/aegis-tui" }
+kintsugi-core = { path = "crates/kintsugi-core" }
+kintsugi-daemon = { path = "crates/kintsugi-daemon" }
+kintsugi-intercept = { path = "crates/kintsugi-intercept" }
+kintsugi-model = { path = "crates/kintsugi-model" }
+kintsugi-tui = { path = "crates/kintsugi-tui" }
 
 # Serialization / data
 serde = { version = "1.0.228", features = ["derive"] }

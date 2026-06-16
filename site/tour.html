@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Aegis — the tour (what it does, in plain English)</title>
-<meta name="description" content="A scrolling 8-bit tour of Aegis: the problem, where it sits, how it decides, snapshots and undo, the tamper-evident log, and why nothing leaves your machine — no Rust knowledge required." />
-<meta property="og:title" content="Aegis — the tour" />
-<meta property="og:description" content="What Aegis actually does, in plain English, with animated 8-bit scenes." />
+<title>Kintsugi — the tour (what it does, in plain English)</title>
+<meta name="description" content="A scrolling 8-bit tour of Kintsugi: the problem, where it sits, how it decides, snapshots and undo, the tamper-evident log, and why nothing leaves your machine — no Rust knowledge required." />
+<meta property="og:title" content="Kintsugi — the tour" />
+<meta property="og:description" content="What Kintsugi actually does, in plain English, with animated 8-bit scenes." />
 <meta property="og:type" content="website" />
-<meta property="og:image" content="https://arrowassassin.github.io/aegis/og.svg" />
+<meta property="og:image" content="https://arrowassassin.github.io/kintsugi/og.svg" />
 <meta name="twitter:card" content="summary_large_image" />
 <link rel="icon" href="data:image/svg+xml,&lt;svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'&gt;&lt;rect width='16' height='16' fill='%230b0e16'/&gt;&lt;text x='8' y='13' font-size='13' text-anchor='middle' fill='%235af78e'&gt;▦&lt;/text&gt;&lt;/svg&gt;" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -20,7 +20,7 @@
 
 <header class="nav">
   <div class="wrap">
-    <a class="brand" href="index.html">&#9638; AEGIS<span class="blink">_</span></a>
+    <a class="brand" href="index.html">&#9638; KINTSUGI<span class="blink">_</span></a>
     <button id="navtoggle" class="navtoggle" aria-label="open menu" aria-expanded="false" aria-controls="primarynav">&#9776;</button>
     <nav id="primarynav">
       <a href="index.html">HOME</a>
@@ -28,7 +28,7 @@
       <a href="features.html">FEATURES</a>
       <a href="install.html">INSTALL</a>
       <a href="assurance.html">SECURITY</a>
-      <a href="https://github.com/arrowassassin/aegis">GITHUB</a>
+      <a href="https://github.com/arrowassassin/kintsugi">GITHUB</a>
       <button id="theme" class="themebtn" aria-label="toggle light or dark theme">☀ light</button>
     </nav>
   </div>
@@ -38,9 +38,9 @@
 
   <section class="hero" style="border-top:none; padding-bottom:18px">
     <h1 style="font-size:42px">THE TOUR</h1>
-    <p class="sub">What Aegis does, in plain English. No Rust knowledge required.
+    <p class="sub">What Kintsugi does, in plain English. No Rust knowledge required.
       Scroll through six scenes — each one is a small thing happening on your
-      computer that Aegis is in the middle of.</p>
+      computer that Kintsugi is in the middle of.</p>
     <p class="note">↓ press any arrow key to skim, or just scroll</p>
   </section>
 
@@ -124,12 +124,12 @@
   </section>
 
   <!-- ============================================================
-       SCENE 02 — where Aegis sits
+       SCENE 02 — where Kintsugi sits
        ============================================================ -->
   <section class="scene">
     <header class="scene-head">
       <span class="scene-num">&gt; 02</span>
-      <h2>Aegis sits between the AI and your machine</h2>
+      <h2>Kintsugi sits between the AI and your machine</h2>
     </header>
     <div class="scene-grid">
       <figure class="scene-svg" aria-hidden="true">
@@ -140,10 +140,10 @@
             <text x="74" y="112" text-anchor="middle" font-family="Press Start 2P" font-size="10" fill="#6bd6ff">AI AGENT</text>
             <text x="74" y="138" text-anchor="middle" font-family="ui-monospace,DejaVu Sans Mono,monospace" font-size="11" fill="#8b95ad">claude · cursor</text>
           </g>
-          <!-- Aegis box (the gate) -->
+          <!-- Kintsugi box (the gate) -->
           <g>
             <rect x="180" y="60" width="120" height="120" fill="#0e1320" stroke="#5af78e" stroke-width="3"/>
-            <text x="240" y="96" text-anchor="middle" font-family="Press Start 2P" font-size="12" fill="#5af78e">AEGIS</text>
+            <text x="240" y="96" text-anchor="middle" font-family="Press Start 2P" font-size="12" fill="#5af78e">KINTSUGI</text>
             <text x="240" y="126" text-anchor="middle" font-family="ui-monospace,DejaVu Sans Mono,monospace" font-size="11" fill="#cdd6e6">read · classify</text>
             <text x="240" y="142" text-anchor="middle" font-family="ui-monospace,DejaVu Sans Mono,monospace" font-size="11" fill="#cdd6e6">hold · snapshot</text>
             <!-- the gate "shield" subtle pulse -->
@@ -193,7 +193,7 @@
         </svg>
       </figure>
       <div class="scene-body">
-        <p class="lead">Aegis isn't a plug-in for one tool. It sits at the
+        <p class="lead">Kintsugi isn't a plug-in for one tool. It sits at the
           <span class="t-grn">process layer</span> — the place every program
           on your computer eventually has to pass through.</p>
         <p>It hooks into the agents that support hooks, an MCP server for the
@@ -280,7 +280,7 @@
         <p class="muted">A local model is allowed to <em>add</em> caution
           (escalate the amber middle) — never to <em>remove</em> it.</p>
         <p>See for yourself — this runs nothing:
-          <br><span class="t-grn">aegis test</span>
+          <br><span class="t-grn">kintsugi test</span>
           <span class="muted">"cd build &amp;&amp; rm -rf ../dist"</span> →
           <span class="t-red">⛔ catastrophic</span>. Try any command;
           <a href="features.html">the features page</a> shows the full output.</p>
@@ -372,12 +372,12 @@
         </svg>
       </figure>
       <div class="scene-body">
-        <p class="lead">Before any destructive command runs, Aegis quietly
+        <p class="lead">Before any destructive command runs, Kintsugi quietly
           takes a <span class="t-grn">copy-on-write snapshot</span> of the
           files it's about to touch. It's nearly free on modern filesystems —
           you don't notice.</p>
         <p>If you don't like what happened, type
-          <span class="t-grn">aegis undo</span>. The files come back. A
+          <span class="t-grn">kintsugi undo</span>. The files come back. A
           filesystem watcher catches things that slipped past the snapshot,
           as a backstop.</p>
         <p class="muted">The honest guarantee is "nothing is unrecoverable"
@@ -441,7 +441,7 @@
                 <animate attributeName="stroke" values="#5af78e;#5af78e;#ff5d5d;#ff5d5d;#5af78e" keyTimes="0;0.4;0.55;0.85;1" dur="5s" repeatCount="indefinite"/>
               </rect>
               <text x="382" y="80" fill="#cdd6e6" font-family="Press Start 2P" font-size="8">EVENT 4</text>
-              <text x="382" y="100" fill="#8b95ad">aegis log</text>
+              <text x="382" y="100" fill="#8b95ad">kintsugi log</text>
               <text x="382" y="116" fill="#8b95ad">allowed</text>
               <text x="382" y="132" fill="#5af78e">hash:7f9c</text>
               <text x="382" y="50" fill="#6bd6ff">
@@ -500,14 +500,14 @@
             <rect x="170" y="180" width="120" height="14" fill="#0e1320" stroke="#283557" stroke-width="3"/>
             <text x="230" y="55" text-anchor="middle" font-family="Press Start 2P" font-size="9" fill="#8b95ad">your machine</text>
 
-            <!-- inside: the agent, aegis, the model. Boxes are 96 wide and the
+            <!-- inside: the agent, kintsugi, the model. Boxes are 96 wide and the
                  labels are sized/trimmed to sit inside them and the frame. -->
             <rect x="68" y="78" width="96" height="74" fill="#121a2b" stroke="#6bd6ff" stroke-width="2"/>
             <text x="116" y="106" text-anchor="middle" font-family="Press Start 2P" font-size="8" fill="#6bd6ff">AGENT</text>
             <text x="116" y="130" text-anchor="middle" font-family="ui-monospace" font-size="11" fill="#8b95ad">claude</text>
 
             <rect x="182" y="78" width="96" height="74" fill="#121a2b" stroke="#5af78e" stroke-width="2"/>
-            <text x="230" y="106" text-anchor="middle" font-family="Press Start 2P" font-size="8" fill="#5af78e">AEGIS</text>
+            <text x="230" y="106" text-anchor="middle" font-family="Press Start 2P" font-size="8" fill="#5af78e">KINTSUGI</text>
             <text x="230" y="130" text-anchor="middle" font-family="ui-monospace" font-size="11" fill="#8b95ad">rules + log</text>
 
             <rect x="296" y="78" width="96" height="74" fill="#121a2b" stroke="#ffd866" stroke-width="2"/>
@@ -535,7 +535,7 @@
         <p class="lead">There's <span class="t-grn">no cloud</span>. No
           account. No telemetry. The decision happens on your computer; the
           log lives on your disk; the optional model runs offline.</p>
-        <p>The only network call Aegis ever makes is the one-time download
+        <p>The only network call Kintsugi ever makes is the one-time download
           of that local model, and it's checksummed before it runs. Your
           source code, your commands, your secrets — never transmitted.</p>
       </div>
@@ -556,7 +556,7 @@
     <div class="cta">
       <a class="btn" href="install.html">GET STARTED</a>
       <a class="btn alt" href="features.html">SEE EVERY FEATURE</a>
-      <a class="btn alt" href="https://github.com/arrowassassin/aegis">★ STAR ON GITHUB</a>
+      <a class="btn alt" href="https://github.com/arrowassassin/kintsugi">★ STAR ON GITHUB</a>
     </div>
     <p class="note">honest guarantee: <em>nothing is unrecoverable</em> — not
       "nothing runs un-warned." that's a harder problem, and we don't claim
@@ -567,9 +567,9 @@
 
 <footer>
   <div class="wrap">
-    <p><span class="brand" style="font-size:11px">&#9638; AEGIS</span> &nbsp; honest
+    <p><span class="brand" style="font-size:11px">&#9638; KINTSUGI</span> &nbsp; honest
       guarantee: <em>nothing is unrecoverable</em> — not "nothing runs un-warned".</p>
-    <p>MIT licensed · <a href="https://github.com/arrowassassin/aegis">github.com/arrowassassin/aegis</a></p>
+    <p>MIT licensed · <a href="https://github.com/arrowassassin/kintsugi">github.com/arrowassassin/kintsugi</a></p>
   </div>
 </footer>
 

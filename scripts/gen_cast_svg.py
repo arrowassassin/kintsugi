@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Compose several real terminal-frame SVGs into one autoplaying "cast".
 
-Each input SVG is already real captured Aegis output (see gen_svg.py). This
+Each input SVG is already real captured Kintsugi output (see gen_svg.py). This
 stacks them on one dark canvas and cycles through them with SMIL `<animate>`
 (calcMode=discrete), so the result loops on its own and animates even when used
 as an <img> (site and GitHub README). No external tools, fully deterministic.
@@ -16,7 +16,7 @@ PAD = 22
 CAPTION_H = 30
 CAP = "#8b95ad"
 FRAMES_CAP = [
-    "an agent proposes a destructive command — Aegis holds it before it runs",
+    "an agent proposes a destructive command — Kintsugi holds it before it runs",
     "you deny it; the attempt lands on the tamper-evident timeline",
     "the live TUI: cross-agent timeline, detail, and a risk meter",
 ]

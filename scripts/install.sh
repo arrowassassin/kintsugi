@@ -1,7 +1,7 @@
 #!/bin/sh
-# Aegis remote installer — no repo clone required.
+# Kintsugi remote installer — no repo clone required.
 #
-#   curl -fsSL https://github.com/arrowassassin/aegis/releases/latest/download/install.sh | sh
+#   curl -fsSL https://github.com/arrowassassin/kintsugi/releases/latest/download/install.sh | sh
 #
 # Downloads the prebuilt release binaries for your OS/arch (verified against
 # SHA256SUMS) and installs them to a bin dir. If no prebuilt build matches (or
@@ -19,28 +19,28 @@
 #   --init / --no-init  wire agents + start the daemon (default: ask)
 #   --yes               assume "yes" to prompts (non-interactive)
 #   --bin-only          just install/replace the binaries; skip the setup stepper
-#                       (used by `aegis update`)
+#                       (used by `kintsugi update`)
 set -eu
 
-REPO="arrowassassin/aegis"
-BINS="aegis aegis-daemon aegis-shim aegis-hook aegis-mcp"
-BIN_DIR="${AEGIS_BIN_DIR:-$HOME/.local/bin}"
+REPO="arrowassassin/kintsugi"
+BINS="kintsugi kintsugi-daemon kintsugi-shim kintsugi-hook kintsugi-mcp"
+BIN_DIR="${KINTSUGI_BIN_DIR:-$HOME/.local/bin}"
 VERSION=""
 FROM_SOURCE=0
 WITH_MODEL=0
 DO_INIT="ask"          # ask | yes | no
 ASSUME_YES=0
 BIN_ONLY=0             # 1 = install binaries only, skip the setup stepper
-PICKER_URL="https://github.com/arrowassassin/aegis/releases/latest/download/pick-model.sh"
+PICKER_URL="https://github.com/arrowassassin/kintsugi/releases/latest/download/pick-model.sh"
 # Use sudo for system package installs when not already root.
 SUDO=""
 if [ "$(id -u 2>/dev/null || echo 1)" != "0" ] && command -v sudo >/dev/null 2>&1; then
   SUDO="sudo"
 fi
 
-say()  { printf '\033[1;32maegis\033[0m %s\n' "$*"; }
-warn() { printf '\033[1;33maegis\033[0m %s\n' "$*" >&2; }
-die()  { printf '\033[1;31maegis: %s\033[0m\n' "$*" >&2; exit 1; }
+say()  { printf '\033[1;32mkintsugi\033[0m %s\n' "$*"; }
+warn() { printf '\033[1;33mkintsugi\033[0m %s\n' "$*" >&2; }
+die()  { printf '\033[1;31mkintsugi: %s\033[0m\n' "$*" >&2; exit 1; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
 while [ $# -gt 0 ]; do
@@ -89,7 +89,7 @@ sha256() { # sha256 of FILE → hex
 # full (verbose) output so nothing is hidden. Quiet while it works, loud if it breaks.
 run_with_progress() {
   label="$1"; shift
-  log="$(mktemp 2>/dev/null || echo /tmp/aegis-build.log)"
+  log="$(mktemp 2>/dev/null || echo /tmp/kintsugi-build.log)"
   "$@" >"$log" 2>&1 &
   pid=$!
   start="$(date +%s 2>/dev/null || echo 0)"
@@ -119,16 +119,16 @@ run_with_progress() {
 }
 
 install_from_source() {
-  have cargo || die "no prebuilt build for your platform and cargo is not installed.\n  Install Rust (https://rustup.rs) then re-run, or: cargo install --git https://github.com/$REPO aegis-cli aegis-daemon aegis-intercept"
+  have cargo || die "no prebuilt build for your platform and cargo is not installed.\n  Install Rust (https://rustup.rs) then re-run, or: cargo install --git https://github.com/$REPO kintsugi-cli kintsugi-daemon kintsugi-intercept"
   if [ -n "$VERSION" ]; then
-    run_with_progress "building Aegis from source (a few minutes)" \
-      cargo install --git "https://github.com/$REPO" aegis-cli aegis-daemon aegis-intercept --tag "$VERSION" || die "source build failed (see output above)"
+    run_with_progress "building Kintsugi from source (a few minutes)" \
+      cargo install --git "https://github.com/$REPO" kintsugi-cli kintsugi-daemon kintsugi-intercept --tag "$VERSION" || die "source build failed (see output above)"
   else
-    run_with_progress "building Aegis from source (a few minutes)" \
-      cargo install --git "https://github.com/$REPO" aegis-cli aegis-daemon aegis-intercept || die "source build failed (see output above)"
+    run_with_progress "building Kintsugi from source (a few minutes)" \
+      cargo install --git "https://github.com/$REPO" kintsugi-cli kintsugi-daemon kintsugi-intercept || die "source build failed (see output above)"
   fi
   say "installed to $HOME/.cargo/bin"
-  [ "$BIN_ONLY" -eq 1 ] && { say "binaries updated. Restart the daemon to run the new build:  aegis stop && aegis init"; return; }
+  [ "$BIN_ONLY" -eq 1 ] && { say "binaries updated. Restart the daemon to run the new build:  kintsugi stop && kintsugi init"; return; }
   stepper "$HOME/.cargo/bin"
 }
 
@@ -212,7 +212,7 @@ persist_env() {
   esac
   if grep -qs "$name=" "$prof" 2>/dev/null; then
     say "already in $prof: $line"
-  elif printf '\n# added by the aegis installer\n%s\n' "$line" >> "$prof" 2>/dev/null; then
+  elif printf '\n# added by the kintsugi installer\n%s\n' "$line" >> "$prof" 2>/dev/null; then
     say "added to $prof: $line"
   else
     warn "add this to your shell profile:  $line"
@@ -226,37 +226,37 @@ setup_model() {
   say "setting up a local model — the in-process llama.cpp engine + a Hugging Face GGUF."
 
   # Skip the (multi-minute) engine compile only if the installed daemon already
-  # has llama built in AT THE SAME VERSION as the freshly-installed `aegis`. An app
+  # has llama built in AT THE SAME VERSION as the freshly-installed `kintsugi`. An app
   # upgrade changes the version, so the engine is rebuilt rather than left stale;
   # a same-version re-run skips it.
-  llama_ver="$([ -x "$dir/aegis-daemon" ] && "$dir/aegis-daemon" --has-llama 2>/dev/null || true)"
-  want_ver="$("$dir/aegis" --version 2>/dev/null | awk '{print $NF}')"
+  llama_ver="$([ -x "$dir/kintsugi-daemon" ] && "$dir/kintsugi-daemon" --has-llama 2>/dev/null || true)"
+  want_ver="$("$dir/kintsugi" --version 2>/dev/null | awk '{print $NF}')"
   if [ -n "$llama_ver" ] && [ "$llama_ver" = "$want_ver" ]; then
     say "llama.cpp engine already built for v$llama_ver — skipping the compile."
   else
     say "this compiles llama.cpp once (a few minutes) and needs a C/C++ toolchain."
-    ensure_build_tools || { warn "toolchain not ready; skipping the model (Aegis still works heuristically)."; return 0; }
+    ensure_build_tools || { warn "toolchain not ready; skipping the model (Kintsugi still works heuristically)."; return 0; }
     ensure_cargo       || { warn "cargo unavailable; skipping the model build."; return 0; }
 
     ok=1
     if [ -n "$VERSION" ]; then
       run_with_progress "compiling the llama.cpp engine (a few minutes)" \
-        cargo install --git "https://github.com/$REPO" aegis-daemon \
-          --features "aegis-model/llama" --root "$(dirname "$dir")" --force --tag "$VERSION" || ok=0
+        cargo install --git "https://github.com/$REPO" kintsugi-daemon \
+          --features "kintsugi-model/llama" --root "$(dirname "$dir")" --force --tag "$VERSION" || ok=0
     else
       run_with_progress "compiling the llama.cpp engine (a few minutes)" \
-        cargo install --git "https://github.com/$REPO" aegis-daemon \
-          --features "aegis-model/llama" --root "$(dirname "$dir")" --force || ok=0
+        cargo install --git "https://github.com/$REPO" kintsugi-daemon \
+          --features "kintsugi-model/llama" --root "$(dirname "$dir")" --force || ok=0
     fi
-    [ "$ok" -eq 1 ] || { warn "model engine build failed; Aegis keeps working on the heuristic scorer."; return 0; }
+    [ "$ok" -eq 1 ] || { warn "model engine build failed; Kintsugi keeps working on the heuristic scorer."; return 0; }
   fi
 
   # If a model is already configured and present, keep it — don't re-pick or
-  # re-download. This is what makes `aegis update` rebuild the engine for the new
+  # re-download. This is what makes `kintsugi update` rebuild the engine for the new
   # version while preserving the user's chosen model.
-  if [ -n "${AEGIS_MODEL_FILE:-}" ] && [ -f "${AEGIS_MODEL_FILE:-}" ]; then
-    say "keeping the configured model: $(basename "$AEGIS_MODEL_FILE")"
-    model="$AEGIS_MODEL_FILE"
+  if [ -n "${KINTSUGI_MODEL_FILE:-}" ] && [ -f "${KINTSUGI_MODEL_FILE:-}" ]; then
+    say "keeping the configured model: $(basename "$KINTSUGI_MODEL_FILE")"
+    model="$KINTSUGI_MODEL_FILE"
   else
     say "choosing a model from Hugging Face…"
     # Show the picker's menu and let the user choose — including the ★ recommended
@@ -270,18 +270,18 @@ setup_model() {
     if have curl; then curl -fsSL "$PICKER_URL" | sh -s -- $pickargs
     elif have wget; then wget -qO- "$PICKER_URL" | sh -s -- $pickargs; fi
 
-    mdir="${AEGIS_MODEL_DIR:-${AEGIS_DATA_DIR:-$HOME/.local/share/aegis}/models}"
+    mdir="${KINTSUGI_MODEL_DIR:-${KINTSUGI_DATA_DIR:-$HOME/.local/share/kintsugi}/models}"
     model="$(ls -t "$mdir"/*.gguf 2>/dev/null | head -n1 || true)"
   fi
   if [ -n "$model" ]; then
-    persist_env "AEGIS_MODEL_FILE" "$model"
-    # Export into this process so the `aegis init` that runs after this (in the
+    persist_env "KINTSUGI_MODEL_FILE" "$model"
+    # Export into this process so the `kintsugi init` that runs after this (in the
     # stepper) spawns the daemon already pointed at the model — no second start,
     # no transient "heuristic fallback" message.
-    export AEGIS_MODEL_FILE="$model"
+    export KINTSUGI_MODEL_FILE="$model"
     say "model ready: $(basename "$model")."
   else
-    warn "no model file found; run the picker again later, then set AEGIS_MODEL_FILE."
+    warn "no model file found; run the picker again later, then set KINTSUGI_MODEL_FILE."
   fi
 }
 
@@ -294,35 +294,35 @@ stepper() {
     *) say "add to your shell profile:  export PATH=\"$dir:\$PATH\"" ;;
   esac
 
-  # Decide on wiring up front, but DEFER running `aegis init` until after the
+  # Decide on wiring up front, but DEFER running `kintsugi init` until after the
   # model is in place. Otherwise init starts the daemon on the heuristic scorer,
   # the model step rebuilds + restarts it, and the user sees a misleading "scoring
   # with: heuristic fallback" line for a daemon that's about to be replaced.
   do_init=0
-  if [ "$DO_INIT" = "yes" ] || { [ "$DO_INIT" = "ask" ] && ask "Wire your agents and start the daemon now? (aegis init)" "Y"; }; then
+  if [ "$DO_INIT" = "yes" ] || { [ "$DO_INIT" = "ask" ] && ask "Wire your agents and start the daemon now? (kintsugi init)" "Y"; }; then
     do_init=1
   fi
 
   # Step 1 — optional local model: build the engine, download a GGUF, and set
-  # AEGIS_MODEL_FILE (exported into this process so the init below inherits it).
+  # KINTSUGI_MODEL_FILE (exported into this process so the init below inherits it).
   if [ "$WITH_MODEL" -eq 1 ] || ask "Set up a local model now? (optional; builds an engine + downloads a Qwen GGUF)" "N"; then
     setup_model "$dir"
   else
-    echo "  later (optional):  curl -fsSL $PICKER_URL | sh   # download a model, then set AEGIS_MODEL_FILE"
+    echo "  later (optional):  curl -fsSL $PICKER_URL | sh   # download a model, then set KINTSUGI_MODEL_FILE"
   fi
 
   # Step 2 — wire agents and start the daemon, now that the model (if any) is set.
   # `stop` first is idempotent and ensures a daemon left over from a prior install
-  # is replaced by one that inherits the freshly-set AEGIS_MODEL_FILE.
+  # is replaced by one that inherits the freshly-set KINTSUGI_MODEL_FILE.
   if [ "$do_init" -eq 1 ]; then
-    "$dir/aegis" stop >/dev/null 2>&1 || true
-    "$dir/aegis" init || warn "aegis init failed; run it manually later."
+    "$dir/kintsugi" stop >/dev/null 2>&1 || true
+    "$dir/kintsugi" init || warn "kintsugi init failed; run it manually later."
   else
-    echo "  later:  aegis init      # detect agents, wire interception, start the daemon"
+    echo "  later:  kintsugi init      # detect agents, wire interception, start the daemon"
   fi
 
   echo
-  say "done. Aegis is guarding your machine. Try:  aegis status   ·   aegis tui"
+  say "done. Kintsugi is guarding your machine. Try:  kintsugi status   ·   kintsugi tui"
 }
 
 main() {
@@ -347,15 +347,15 @@ main() {
   # Idempotent re-run: if the target version is already installed in BIN_DIR,
   # skip the download. This also preserves a locally-built llama daemon (the
   # prebuilt tarball would otherwise overwrite it with a heuristic-only build).
-  installed="$("$BIN_DIR/aegis" --version 2>/dev/null | awk '{print $NF}')"
+  installed="$("$BIN_DIR/kintsugi" --version 2>/dev/null | awk '{print $NF}')"
   if [ -n "$installed" ] && [ "$installed" = "${tag#v}" ]; then
-    say "aegis ${tag#v} already installed in $BIN_DIR — skipping binary download."
+    say "kintsugi ${tag#v} already installed in $BIN_DIR — skipping binary download."
     [ "$BIN_ONLY" -eq 1 ] && return
     stepper "$BIN_DIR"; return
   fi
 
   base="https://github.com/$REPO/releases/download/$tag"
-  tarball="aegis-$target.tar.gz"
+  tarball="kintsugi-$target.tar.gz"
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' EXIT
 
@@ -385,7 +385,7 @@ main() {
     install -m 0755 "$src" "$BIN_DIR/$b" 2>/dev/null || { cp "$src" "$BIN_DIR/$b"; chmod 0755 "$BIN_DIR/$b"; }
   done
   say "installed ${BINS} to $BIN_DIR"
-  [ "$BIN_ONLY" -eq 1 ] && { say "binaries updated. Restart the daemon to run the new build:  aegis stop && aegis init"; return; }
+  [ "$BIN_ONLY" -eq 1 ] && { say "binaries updated. Restart the daemon to run the new build:  kintsugi stop && kintsugi init"; return; }
   stepper "$BIN_DIR"
 }
 

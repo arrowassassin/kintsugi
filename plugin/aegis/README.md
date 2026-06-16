@@ -1,32 +1,32 @@
-# Aegis — Claude Code plugin
+# Kintsugi — Claude Code plugin
 
-This plugin wires Claude Code to Aegis. It is a thin **wiring layer**: it does not
-ship the Aegis binaries. Install those first (they're native Rust + a resident
+This plugin wires Claude Code to Kintsugi. It is a thin **wiring layer**: it does not
+ship the Kintsugi binaries. Install those first (they're native Rust + a resident
 daemon, so they belong on a real package manager — signable and checksummed):
 
 ```sh
-cargo install aegis           # or: brew install aegis   (when published)
-aegis init                    # starts the daemon and is otherwise idempotent
+cargo install kintsugi           # or: brew install kintsugi   (when published)
+kintsugi init                    # starts the daemon and is otherwise idempotent
 ```
 
 Then enable the plugin:
 
 ```
-/plugin marketplace add arrowassassin/aegis
-/plugin install aegis@aegis
+/plugin marketplace add arrowassassin/kintsugi
+/plugin install kintsugi@kintsugi
 ```
 
 ## What it wires
 
-- **PreToolUse hook → `aegis-hook`**: every `Bash` tool call is classified before
+- **PreToolUse hook → `kintsugi-hook`**: every `Bash` tool call is classified before
   it runs; catastrophic/ambiguous commands are held (mapped to Claude Code's
   `ask`), and everything is recorded.
-- **MCP server `aegis-exec` → `aegis-mcp`**: agents can run shell commands
-  *through* Aegis (guarded + recorded + reversible) instead of shelling out raw.
+- **MCP server `kintsugi-exec` → `kintsugi-mcp`**: agents can run shell commands
+  *through* Kintsugi (guarded + recorded + reversible) instead of shelling out raw.
 
 Both fail **open** if the daemon isn't running (a command runs unguarded with a
-warning) — set `AEGIS_FAIL_CLOSED=1` to block instead. Start/keep the daemon with
-`aegis init`.
+warning) — set `KINTSUGI_FAIL_CLOSED=1` to block instead. Start/keep the daemon with
+`kintsugi init`.
 
 ## Why binaries aren't bundled
 
@@ -39,5 +39,5 @@ per-OS prebuilt binaries under `bin/` and point the hook/MCP at
 
 ## Commands you'll still use from the terminal
 
-`aegis status` · `aegis log` · `aegis tui` · `aegis queue` / `approve <id>` ·
-`aegis undo` · `aegis panic` / `resume`.
+`kintsugi status` · `kintsugi log` · `kintsugi tui` · `kintsugi queue` / `approve <id>` ·
+`kintsugi undo` · `kintsugi panic` / `resume`.

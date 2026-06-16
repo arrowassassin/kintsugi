@@ -38,9 +38,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          dist="aegis-${{ matrix.target }}"
+          dist="kintsugi-${{ matrix.target }}"
           mkdir -p "$dist"
-          bins=(aegis aegis-daemon aegis-shim aegis-hook aegis-mcp)
+          bins=(kintsugi kintsugi-daemon kintsugi-shim kintsugi-hook kintsugi-mcp)
           for b in "${bins[@]}"; do
             src="target/${{ matrix.target }}/release/$b"
             [ -f "$src.exe" ] && src="$src.exe"
@@ -54,8 +54,8 @@ jobs:
           tar -czf "$dist.tar.gz" "$dist"
       - uses: actions/upload-artifact@v4
         with:
-          name: aegis-${{ matrix.target }}
-          path: aegis-${{ matrix.target }}.tar.gz
+          name: kintsugi-${{ matrix.target }}
+          path: kintsugi-${{ matrix.target }}.tar.gz
 
   publish:
     name: publish release
