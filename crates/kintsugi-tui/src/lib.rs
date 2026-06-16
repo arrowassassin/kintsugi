@@ -85,8 +85,16 @@ fn resolve(app: &mut App, id: &str, approve: bool) {
     });
 }
 
-/// Load the most recent events into the app (live refresh).
+/// Load the most recent events into the app (live refresh), and refresh the
+/// daemon vitals (up/down + active scorer) for the header strip.
 fn reload(app: &mut App, db_path: &Path) {
+    // Cheap liveness ping + scorer id; both fail-soft so the TUI works headless.
+    app.daemon_up = kintsugi_daemon::Client::is_daemon_running();
+    app.scorer = if app.daemon_up {
+        kintsugi_daemon::Client::status_scorer().ok()
+    } else {
+        None
+    };
     if !db_path.exists() {
         return;
     }

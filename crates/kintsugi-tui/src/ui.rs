@@ -13,7 +13,7 @@ use ratatui::widgets::{
 };
 use time::macros::format_description;
 
-use crate::app::{outcome_word, App, Mode, MIN_HEIGHT, MIN_WIDTH};
+use crate::app::{outcome_word, App, Mode, Tab, MIN_HEIGHT, MIN_WIDTH};
 
 const ACCENT: Color = Color::Yellow; // the one reserved accent (held / ambiguous)
 const DANGER: Color = Color::Red; // denied / catastrophic
@@ -37,7 +37,7 @@ pub fn render(f: &mut Frame, app: &App) {
     .split(area);
 
     render_header(f, app, rows[0]);
-    if app.is_empty() {
+    if app.visible().is_empty() {
         render_empty(f, app, rows[1]);
     } else if app.mode == Mode::Detail {
         render_detail(f, app, rows[1], true);
@@ -78,33 +78,77 @@ fn render_too_small(f: &mut Frame, area: Rect) {
 }
 
 fn render_header(f: &mut Frame, app: &App, area: Rect) {
-    let total = app.visible().len();
-    let left = Line::from(vec![
+    // Left: brand + tab bar. The active tab is bracketed *and* bold/accent, so it
+    // reads as selected without relying on color (NO_COLOR-safe).
+    let mut spans = vec![
         Span::styled("▦ Kintsugi", Style::default().add_modifier(Modifier::BOLD)),
-        Span::styled("  timeline", dim(app)),
-    ]);
-    let right = Line::from(Span::styled(format!("{total} events"), dim(app))).right_aligned();
-    f.render_widget(Paragraph::new(left), area);
-    f.render_widget(Paragraph::new(right), area);
+        Span::raw("  "),
+    ];
+    for (i, tab) in Tab::ALL.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(" · ", dim(app)));
+        }
+        let active = *tab == app.tab;
+        let label = if active {
+            format!("[{}]", tab.title())
+        } else {
+            format!(" {} ", tab.title())
+        };
+        let style = if active {
+            accent_fg(app, ACCENT).add_modifier(Modifier::BOLD)
+        } else {
+            dim(app)
+        };
+        spans.push(Span::styled(label, style));
+    }
+    f.render_widget(Paragraph::new(Line::from(spans)), area);
+
+    // Right: live vitals — counts (global) and daemon health, all worded.
+    let (total, held, catastrophic) = app.vitals();
+    let mut vitals = vec![Span::styled(format!("{total} events"), dim(app))];
+    if held > 0 {
+        vitals.push(Span::styled(" · ", dim(app)));
+        vitals.push(Span::styled(format!("{held} held"), accent_fg(app, ACCENT)));
+    }
+    if catastrophic > 0 {
+        vitals.push(Span::styled(" · ", dim(app)));
+        vitals.push(Span::styled(
+            format!("{catastrophic} catastrophic"),
+            accent_fg(app, DANGER),
+        ));
+    }
+    vitals.push(Span::styled(" · ", dim(app)));
+    if app.daemon_up {
+        let scorer = app.scorer.as_deref().unwrap_or("ready");
+        vitals.push(Span::styled(
+            format!("● daemon {scorer}"),
+            accent_fg(app, OKGREEN),
+        ));
+    } else {
+        vitals.push(Span::styled("○ daemon down", dim(app)));
+    }
+    f.render_widget(Paragraph::new(Line::from(vitals).right_aligned()), area);
 }
 
 fn render_empty(f: &mut Frame, app: &App, area: Rect) {
-    let block = panel(app, " timeline ");
+    let block = panel(app, &format!(" {} ", app.tab.title().to_lowercase()));
+    // Distinguish "this slice is genuinely empty" from "the filter hid everything".
+    let (headline, hint): (&str, String) = if !app.filter.is_empty() {
+        (
+            "No rows match the filter.",
+            format!("filter: {}", app.filter),
+        )
+    } else {
+        ("Nothing here yet.", app.tab.empty_copy().to_string())
+    };
     let lines = vec![
         Line::from(""),
         Line::from(Span::styled(
-            "No events yet.",
+            headline,
             Style::default().add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
-        Line::from(Span::styled(
-            "Kintsugi is watching. Run a command through a wired agent",
-            dim(app),
-        )),
-        Line::from(Span::styled(
-            "(or the $PATH shim) and it will appear here.",
-            dim(app),
-        )),
+        Line::from(Span::styled(hint, dim(app))),
     ];
     f.render_widget(
         Paragraph::new(lines)
@@ -218,7 +262,7 @@ fn render_list(f: &mut Frame, app: &App, area: Rect) {
     };
     let table = Table::new(rows, widths)
         .header(header)
-        .block(panel(app, " timeline "))
+        .block(panel(app, &format!(" {} ", app.tab.title().to_lowercase())))
         .row_highlight_style(highlight)
         .highlight_symbol("› ");
 
@@ -343,7 +387,7 @@ fn gauge_rect(area: Rect) -> Rect {
 
 fn render_footer(f: &mut Frame, app: &App, area: Rect) {
     let rows = Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).split(area);
-    let help = "j/k move · spc/b · enter detail · a/d approve/deny · u undo · / filter · q quit";
+    let help = "j/k move · tab views · enter detail · a/d resolve · u undo · / filter · q quit";
     // Right-aligned "row N/M" indicator so paging has a frame of reference — but
     // only when it fits without crowding the help (narrow terminals show help alone).
     let total = app.visible().len();
@@ -493,8 +537,8 @@ mod tests {
     fn empty_state_is_designed() {
         let app = App::new(false);
         let text = buffer_text(&app, 80, 24);
-        assert!(text.contains("No events yet"));
-        assert!(text.contains("watching"));
+        assert!(text.contains("Nothing here yet"));
+        assert!(text.contains("wired agent"));
     }
 
     #[test]

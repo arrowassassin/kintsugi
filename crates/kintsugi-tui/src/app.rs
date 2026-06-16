@@ -129,6 +129,65 @@ pub enum Mode {
     Detail,
 }
 
+/// The top-level views, switched with `Tab` / `1`,`2`,`3`. Each is the same
+/// table over a different *slice* of the same live log — the structure (which
+/// slice you're looking at) is the information, not decoration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tab {
+    /// Everything, newest first — the full agent + human + watcher stream.
+    Timeline,
+    /// Only the destructive band (catastrophic + ambiguous) — the audit lens.
+    Audit,
+    /// Only passively-recorded human shell commands (agent = `shell`).
+    Recorder,
+}
+
+impl Tab {
+    /// All tabs in display order.
+    pub const ALL: [Tab; 3] = [Tab::Timeline, Tab::Audit, Tab::Recorder];
+
+    /// The short label shown in the tab bar.
+    pub fn title(self) -> &'static str {
+        match self {
+            Tab::Timeline => "Timeline",
+            Tab::Audit => "Audit",
+            Tab::Recorder => "Recorder",
+        }
+    }
+
+    /// One-line empty-state copy when this tab's slice is empty.
+    pub fn empty_copy(self) -> &'static str {
+        match self {
+            Tab::Timeline => {
+                "Run a command through a wired agent (or the $PATH shim) — it appears here."
+            }
+            Tab::Audit => {
+                "Nothing destructive yet. Catastrophic and ambiguous commands surface here."
+            }
+            Tab::Recorder => {
+                "No recorded shell sessions. Install the hook: kintsugi record install."
+            }
+        }
+    }
+
+    /// Whether an event belongs in this tab's slice.
+    fn includes(self, e: &LoggedEvent) -> bool {
+        match self {
+            Tab::Timeline => true,
+            Tab::Audit => e.class != kintsugi_core::Class::Safe,
+            Tab::Recorder => e.agent == "shell",
+        }
+    }
+
+    fn next(self) -> Tab {
+        match self {
+            Tab::Timeline => Tab::Audit,
+            Tab::Audit => Tab::Recorder,
+            Tab::Recorder => Tab::Timeline,
+        }
+    }
+}
+
 /// A side-effecting action the event loop must perform (kept out of pure state).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
@@ -158,6 +217,12 @@ pub struct App {
     /// Number of timeline data-rows visible in the last render, used as the step
     /// for `PageUp`/`PageDown`. Set by the renderer each frame; 0 until the first.
     pub page_rows: usize,
+    /// The active top-level view.
+    pub tab: Tab,
+    /// Whether the daemon answered on the last refresh (for the vitals strip).
+    pub daemon_up: bool,
+    /// The active Tier-2 scorer backend id, if the daemon reported one.
+    pub scorer: Option<String>,
 }
 
 impl App {
@@ -170,6 +235,33 @@ impl App {
             status: None,
             color,
             page_rows: 0,
+            tab: Tab::Timeline,
+            daemon_up: false,
+            scorer: None,
+        }
+    }
+
+    /// Counts for the header vitals strip: (total, held, catastrophic) over the
+    /// full loaded set (not the filtered/tab slice — vitals are global).
+    pub fn vitals(&self) -> (usize, usize, usize) {
+        let mut held = 0;
+        let mut catastrophic = 0;
+        for e in &self.events {
+            if e.decision == kintsugi_core::Decision::Hold {
+                held += 1;
+            }
+            if e.class == kintsugi_core::Class::Catastrophic {
+                catastrophic += 1;
+            }
+        }
+        (self.events.len(), held, catastrophic)
+    }
+
+    /// Switch to a specific tab, resetting selection to the top of its slice.
+    pub fn select_tab(&mut self, tab: Tab) {
+        if self.tab != tab {
+            self.tab = tab;
+            self.selected = 0;
         }
     }
 
@@ -179,13 +271,14 @@ impl App {
         self.clamp_selection();
     }
 
-    /// Indices into `events` that match the current filter.
+    /// Indices into `events` that match the active tab's slice AND the current
+    /// filter (both must hold — the tab narrows, the filter narrows further).
     pub fn filtered_indices(&self) -> Vec<usize> {
         let q = Query::parse(&self.filter);
         self.events
             .iter()
             .enumerate()
-            .filter(|(_, e)| q.matches(e))
+            .filter(|(_, e)| self.tab.includes(e) && q.matches(e))
             .map(|(i, _)| i)
             .collect()
     }
@@ -254,6 +347,11 @@ impl App {
             KeyCode::Char('/') => {
                 self.mode = Mode::Filter;
             }
+            // Tab cycles views; 1/2/3 jump straight to one (the bar shows order).
+            KeyCode::Tab | KeyCode::BackTab => self.select_tab(self.tab.next()),
+            KeyCode::Char('1') => self.select_tab(Tab::Timeline),
+            KeyCode::Char('2') => self.select_tab(Tab::Audit),
+            KeyCode::Char('3') => self.select_tab(Tab::Recorder),
             KeyCode::Char('u') => return Action::Undo,
             KeyCode::Char('a') => return self.resolve_selected(true),
             KeyCode::Char('d') => return self.resolve_selected(false),
@@ -519,6 +617,66 @@ mod tests {
         app.on_key(KeyCode::Char('j'));
         app.on_key(KeyCode::Enter);
         assert_eq!(app.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn tabs_slice_the_log_and_compose_with_filter() {
+        let mut app = App::new(false);
+        app.set_events(vec![
+            ev("claude-code", "ls", Class::Safe, Decision::Allow),
+            ev("shim", "rm -rf /", Class::Catastrophic, Decision::Hold),
+            ev("qwen", "make build", Class::Ambiguous, Decision::Hold),
+            // A passively-recorded human command (agent = shell).
+            ev("shell", "psql prod", Class::Safe, Decision::Allow),
+        ]);
+
+        // Timeline shows everything.
+        assert_eq!(app.tab, Tab::Timeline);
+        assert_eq!(app.visible().len(), 4);
+
+        // Audit = destructive band only (catastrophic + ambiguous).
+        app.on_key(KeyCode::Char('2'));
+        assert_eq!(app.tab, Tab::Audit);
+        assert_eq!(app.visible().len(), 2);
+        assert!(app.visible().iter().all(|e| e.class != Class::Safe));
+
+        // Recorder = agent == shell only.
+        app.on_key(KeyCode::Char('3'));
+        assert_eq!(app.tab, Tab::Recorder);
+        assert_eq!(app.visible().len(), 1);
+        assert_eq!(app.visible()[0].command, "psql prod");
+
+        // Tab cycles back to Timeline.
+        app.on_key(KeyCode::Tab);
+        assert_eq!(app.tab, Tab::Timeline);
+
+        // Tab predicate AND the text filter both apply.
+        app.on_key(KeyCode::Char('2')); // Audit
+        app.filter = "rm".into();
+        assert_eq!(app.visible().len(), 1);
+        assert_eq!(app.visible()[0].command, "rm -rf /");
+    }
+
+    #[test]
+    fn vitals_count_held_and_catastrophic_globally() {
+        let mut app = App::new(false);
+        app.set_events(vec![
+            ev("claude-code", "ls", Class::Safe, Decision::Allow),
+            ev("shim", "rm -rf /", Class::Catastrophic, Decision::Hold),
+            ev("qwen", "make build", Class::Ambiguous, Decision::Hold),
+        ]);
+        // Vitals are global (independent of the active tab/filter).
+        app.on_key(KeyCode::Char('3')); // Recorder (empty slice)
+        assert_eq!(app.visible().len(), 0);
+        assert_eq!(app.vitals(), (3, 2, 1)); // total, held, catastrophic
+    }
+
+    #[test]
+    fn switching_tab_resets_selection() {
+        let mut app = sample_app();
+        app.selected = 2;
+        app.on_key(KeyCode::Char('2'));
+        assert_eq!(app.selected, 0);
     }
 
     #[test]
