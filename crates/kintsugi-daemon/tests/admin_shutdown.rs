@@ -141,6 +141,39 @@ fn a_captured_proof_cannot_be_replayed() {
 }
 
 #[test]
+fn repeated_failures_lock_out_brute_force() {
+    let _g = serial_lock();
+    let tmp = tempfile::tempdir().unwrap();
+    let vault = tmp.path().join("vault.json");
+    let db = tmp.path().join("events.db");
+    provision_at(&vault, "correct horse battery");
+    std::env::set_var("KINTSUGI_VAULT", &vault);
+    std::env::set_var("KINTSUGI_DB", &db);
+
+    let daemon = Daemon::open(&db).unwrap();
+    // Hammer wrong proofs; past the free budget the daemon locks out and refuses
+    // to even check the proof, returning a "locked out" message.
+    let mut locked_out = false;
+    for _ in 0..8 {
+        if let ipc::Response::Error { message } = daemon.handle_request(ipc::Request::Shutdown {
+            op: "shutdown".into(),
+            nonce: String::new(),
+            proof: "00".into(),
+        }) {
+            if message.contains("locked out") {
+                locked_out = true;
+                break;
+            }
+        }
+    }
+    assert!(locked_out, "a brute-force run must trigger a lockout");
+    assert!(!daemon.should_shutdown(), "bad auth never stops the daemon");
+
+    std::env::remove_var("KINTSUGI_VAULT");
+    std::env::remove_var("KINTSUGI_DB");
+}
+
+#[test]
 fn unprovisioned_daemon_stops_without_a_password() {
     let _g = serial_lock();
     let tmp = tempfile::tempdir().unwrap();

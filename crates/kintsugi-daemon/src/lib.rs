@@ -105,6 +105,47 @@ pub struct Daemon {
     pending: RefCell<Option<(Vec<u8>, String)>>,
     /// Set when an authenticated shutdown has been accepted; the serve loop exits.
     shutdown: Cell<bool>,
+    /// In-memory brute-force throttle for admin authentication.
+    throttle: RefCell<AuthThrottle>,
+}
+
+/// Rate-limit + lockout for admin authentication. The daemon is the single
+/// authority, so a process-local counter is enough: after a few consecutive
+/// failures it locks out for an exponentially growing window (defeating a script
+/// hammering the admin password), and a success resets it.
+#[derive(Default)]
+struct AuthThrottle {
+    failures: u32,
+    locked_until: Option<std::time::Instant>,
+}
+
+impl AuthThrottle {
+    /// Failed attempts allowed before the first lockout.
+    const FREE_ATTEMPTS: u32 = 5;
+
+    /// Remaining lockout duration, if currently locked out.
+    fn lockout_remaining(&self) -> Option<std::time::Duration> {
+        self.locked_until
+            .and_then(|t| t.checked_duration_since(std::time::Instant::now()))
+    }
+
+    /// Count a failed attempt; arm/extend the lockout once past the free budget.
+    fn record_failure(&mut self) {
+        self.failures = self.failures.saturating_add(1);
+        if self.failures >= Self::FREE_ATTEMPTS {
+            // 30s, then doubling (60s, 120s, …) capped at one hour.
+            let over = (self.failures - Self::FREE_ATTEMPTS).min(7);
+            self.locked_until = Some(
+                std::time::Instant::now()
+                    + std::time::Duration::from_secs((30u64 << over).min(3600)),
+            );
+        }
+    }
+
+    fn reset(&mut self) {
+        self.failures = 0;
+        self.locked_until = None;
+    }
 }
 
 impl Daemon {
@@ -160,6 +201,7 @@ impl Daemon {
             vault_degraded,
             pending: RefCell::new(None),
             shutdown: Cell::new(false),
+            throttle: RefCell::new(AuthThrottle::default()),
         })
     }
 
@@ -218,6 +260,18 @@ impl Daemon {
             self.shutdown.set(true);
             return ipc::Response::Ack;
         };
+        // Brute-force lockout: after repeated failures, refuse without even
+        // checking the proof until the window elapses (the attempt is still
+        // logged). Defeats a script hammering the admin password.
+        if let Some(rem) = self.throttle.borrow().lockout_remaining() {
+            self.record_admin(op, false, "locked out");
+            return ipc::Response::Error {
+                message: format!(
+                    "too many failed attempts; locked out for {}s",
+                    rem.as_secs() + 1
+                ),
+            };
+        }
         // The challenge is one-shot: take it regardless of the outcome.
         let pending = self.pending.borrow_mut().take();
         let ok = match (pending, hex::decode(nonce_hex), hex::decode(proof_hex)) {
@@ -229,10 +283,12 @@ impl Daemon {
             _ => false,
         };
         if ok {
+            self.throttle.borrow_mut().reset();
             self.record_admin(op, true, "authenticated");
             self.shutdown.set(true);
             ipc::Response::Ack
         } else {
+            self.throttle.borrow_mut().record_failure();
             self.record_admin(op, false, "authentication failed");
             ipc::Response::Error {
                 message: "authentication failed".into(),
