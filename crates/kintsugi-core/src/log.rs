@@ -549,12 +549,14 @@ impl EventLog {
     /// The read-modify-append, run inside the write transaction. Returns
     /// (prev_hash, hash, seq).
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     fn append_locked(
         &self,
         cmd: &ProposedCommand,
         verdict: &Verdict,
         ts: &str,
         cwd: &str,
+        command: &str,
         argv_json: &str,
         snapshot_id: Option<&str>,
     ) -> Result<(String, String, i64), LogError> {
@@ -565,7 +567,7 @@ impl EventLog {
             ts,
             &cmd.agent,
             cwd,
-            &cmd.raw,
+            command,
             argv_json,
             verdict.class,
             verdict.decision,
@@ -586,7 +588,7 @@ impl EventLog {
                 ts,
                 cmd.agent,
                 cwd,
-                cmd.raw,
+                command,
                 argv_json,
                 verdict.class.as_str(),
                 verdict.decision.as_str(),
@@ -612,7 +614,21 @@ impl EventLog {
     ) -> Result<LoggedEvent, LogError> {
         let ts = cmd.ts.format(&Rfc3339)?;
         let cwd = cmd.cwd.to_string_lossy().to_string();
-        let argv_json = serde_json::to_string(&cmd.argv)
+
+        // Redact-before-hash (security spine #6): never let a command-line secret
+        // (DB connection strings, `-pSECRET`, `PGPASSWORD=…`, bearer tokens) enter
+        // the append-only, hash-chained log — it could not be scrubbed later. Only
+        // the secret *value* is replaced (rest verbatim); when nothing matches, the
+        // command/argv are stored byte-identically (so the common case and every
+        // existing test are unchanged). The argv is re-derived from the redacted
+        // command so it can't leak the secret either.
+        let red = crate::redact::redact_command(&cmd.raw);
+        let (command, argv): (String, Vec<String>) = if red.any() {
+            (red.text.clone(), crate::shell::split(&red.text))
+        } else {
+            (cmd.raw.clone(), cmd.argv.clone())
+        };
+        let argv_json = serde_json::to_string(&argv)
             .map_err(|e| LogError::Corrupt(format!("argv serialize: {e}")))?;
 
         // Serialize the read-modify-append: take the write lock immediately so a
@@ -620,7 +636,7 @@ impl EventLog {
         // head, rather than both linking new rows to the same prev_hash.
         self.conn.execute_batch("BEGIN IMMEDIATE")?;
         let (prev_hash, hash, seq) =
-            match self.append_locked(cmd, verdict, &ts, &cwd, &argv_json, snapshot_id) {
+            match self.append_locked(cmd, verdict, &ts, &cwd, &command, &argv_json, snapshot_id) {
                 Ok(v) => {
                     self.conn.execute_batch("COMMIT")?;
                     v
@@ -637,8 +653,8 @@ impl EventLog {
             ts: cmd.ts,
             agent: cmd.agent.clone(),
             cwd,
-            command: cmd.raw.clone(),
-            argv: cmd.argv.clone(),
+            command,
+            argv,
             class: verdict.class,
             decision: verdict.decision,
             reason: verdict.reason.clone(),

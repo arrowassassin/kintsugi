@@ -128,3 +128,29 @@ fn empty_log_chain_is_intact() {
     assert_eq!(log.count().unwrap(), 0);
     assert!(log.tail(10).unwrap().is_empty());
 }
+
+#[test]
+fn secret_commands_are_redacted_before_hashing_and_chain_stays_intact() {
+    let log = EventLog::open_in_memory().unwrap();
+    let secret = "s3cr3tPa55";
+    let raw = format!("mysql -p{secret} -u root");
+    let e = log.log_event(&sample(&raw), &allow(), None).unwrap();
+
+    // The secret value never enters the command or argv columns (so it never
+    // entered the hash either — redaction happens before hashing).
+    assert!(!e.command.contains(secret), "command leaked: {}", e.command);
+    assert!(e.command.contains("[redacted]"));
+    assert!(
+        !e.argv.iter().any(|a| a.contains(secret)),
+        "argv leaked: {:?}",
+        e.argv
+    );
+    // The hash chain still verifies.
+    assert!(log.verify_chain().unwrap().is_intact());
+
+    // A command with no secret is stored byte-identically (no behavior change).
+    let e2 = log.log_event(&sample("git status"), &allow(), None).unwrap();
+    assert_eq!(e2.command, "git status");
+    assert_eq!(e2.argv, vec!["git".to_string(), "status".to_string()]);
+    assert!(log.verify_chain().unwrap().is_intact());
+}
