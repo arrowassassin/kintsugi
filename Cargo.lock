@@ -1624,6 +1624,7 @@ dependencies = [
  "kintsugi-core",
  "kintsugi-daemon",
  "kintsugi-intercept",
+ "kintsugi-model",
  "kintsugi-tui",
  "serde",
  "serde_json",
