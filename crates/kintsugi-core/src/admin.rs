@@ -207,6 +207,62 @@ fn open(key: &[u8; KEY_LEN], nonce_hex: &str, ct_hex: &str) -> Result<Vec<u8>, A
         .map_err(|_| AdminError::Tampered)
 }
 
+/// Copy a byte slice into a `KEY_LEN` array (errors on the wrong length).
+fn to_key(bytes: &[u8]) -> Result<[u8; KEY_LEN], AdminError> {
+    if bytes.len() != KEY_LEN {
+        return Err(AdminError::Decode);
+    }
+    let mut k = [0u8; KEY_LEN];
+    k.copy_from_slice(bytes);
+    Ok(k)
+}
+
+/// A deterministic MAC built from the AEAD: the Poly1305 tag over an empty
+/// message, keyed by `key`, with the challenge `nonce` and `op` bound as AAD.
+/// Same key + nonce + op → same tag on both sides, so it works as a
+/// challenge-response proof without a separate HMAC dependency.
+fn auth_mac(key: &[u8; KEY_LEN], nonce: &[u8], op: &[u8]) -> Result<Vec<u8>, AdminError> {
+    if nonce.len() != NONCE_LEN {
+        return Err(AdminError::Decode);
+    }
+    // AAD binds both the nonce and the operation so the tag can't be reused for a
+    // different challenge or a different privileged action.
+    let mut aad = Vec::with_capacity(CONTEXT.len() + nonce.len() + 1 + op.len());
+    aad.extend_from_slice(CONTEXT);
+    aad.extend_from_slice(nonce);
+    aad.push(0x1f);
+    aad.extend_from_slice(op);
+    aead(key)
+        .encrypt(
+            XNonce::from_slice(nonce),
+            Payload {
+                msg: b"",
+                aad: &aad,
+            },
+        )
+        .map_err(|_| AdminError::Kdf)
+}
+
+/// A fresh random challenge nonce (24 bytes, matching the AEAD nonce width).
+pub fn random_auth_nonce() -> Result<Vec<u8>, AdminError> {
+    Ok(random_bytes::<NONCE_LEN>()?.to_vec())
+}
+
+/// Client side: derive the verifier from `password` + `salt_hex` (the daemon's
+/// challenge) and compute the proof for `op` under `nonce`. The password is used
+/// only locally; only the resulting proof is sent.
+pub fn compute_proof(
+    password: &str,
+    salt_hex: &str,
+    params: KdfParams,
+    nonce: &[u8],
+    op: &[u8],
+) -> Result<Vec<u8>, AdminError> {
+    let salt = hex::decode(salt_hex).map_err(|_| AdminError::Decode)?;
+    let key = params.derive(password.as_bytes(), &salt)?;
+    auth_mac(&key, nonce, op)
+}
+
 /// Constant-time byte comparison (avoid leaking the verifier via timing).
 fn ct_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
@@ -271,6 +327,30 @@ impl SealedVault {
             return false;
         };
         ct_eq(got.as_ref(), &want)
+    }
+
+    /// The inputs a client needs to compute an auth proof: the verifier salt and
+    /// the KDF params. Handed out by the daemon in a challenge — neither is secret.
+    pub fn auth_challenge(&self) -> (String, KdfParams) {
+        (self.verifier_salt.clone(), self.params)
+    }
+
+    /// Verify a challenge-response proof for operation `op` under `nonce`. The
+    /// proof is an AEAD tag over an empty message, keyed by the password verifier,
+    /// with `nonce` (the daemon's fresh 24-byte challenge) and `op` as AAD — so the
+    /// password never crosses the wire and a captured proof can't be replayed for a
+    /// different nonce/op. Compared constant-time.
+    pub fn verify_proof(&self, nonce: &[u8], op: &[u8], proof: &[u8]) -> bool {
+        let Ok(verifier) = hex::decode(&self.verifier) else {
+            return false;
+        };
+        let Ok(key) = to_key(&verifier) else {
+            return false;
+        };
+        let Ok(want) = auth_mac(&key, nonce, op) else {
+            return false;
+        };
+        ct_eq(&want, proof)
     }
 
     /// Derive the sealing key from the password (or error on wrong password).
@@ -411,6 +491,30 @@ mod tests {
 
     fn provision_fast(pw: &str, s: &LockedSettings) -> Provisioned {
         provision_with(pw, s, KdfParams::fast()).unwrap()
+    }
+
+    #[test]
+    fn auth_proof_round_trips_and_rejects_tampering() {
+        let p = provision_fast("correct horse battery", &LockedSettings::default());
+        let v = &p.vault;
+        let (salt, params) = v.auth_challenge();
+        let nonce = random_auth_nonce().unwrap();
+        let op = b"shutdown";
+
+        // Correct password → a proof the daemon accepts.
+        let proof = compute_proof("correct horse battery", &salt, params, &nonce, op).unwrap();
+        assert!(v.verify_proof(&nonce, op, &proof));
+
+        // Wrong password → rejected.
+        let bad = compute_proof("guess", &salt, params, &nonce, op).unwrap();
+        assert!(!v.verify_proof(&nonce, op, &bad));
+
+        // Replay under a DIFFERENT nonce → rejected (not replayable).
+        let other = random_auth_nonce().unwrap();
+        assert!(!v.verify_proof(&other, op, &proof));
+
+        // Same proof for a DIFFERENT op → rejected (bound to the operation).
+        assert!(!v.verify_proof(&nonce, b"unhook", &proof));
     }
 
     #[test]

@@ -26,6 +26,7 @@ clap.workspace = true
 directories.workspace = true
 interprocess.workspace = true
 zeroize.workspace = true
+hex.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

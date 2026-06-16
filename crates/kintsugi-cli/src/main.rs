@@ -1033,30 +1033,61 @@ fn cmd_banner() -> Result<()> {
 }
 
 fn cmd_stop() -> Result<()> {
-    // When settings are admin-locked, stopping requires the admin password.
+    // Preferred path: the daemon is up → it authenticates the shutdown itself,
+    // against the vault IT loaded at startup. The caller's environment can't
+    // redirect that check, so this closes the `KINTSUGI_VAULT` CLI-gate bypass.
+    if Client::is_daemon_running() {
+        return stop_via_daemon();
+    }
+
+    // Daemon socket not answering. There's nothing live to authenticate against;
+    // honor the local gate (fail-closed on a degraded vault) and clean up a stale
+    // PID. A still-alive-but-socket-dead process is the only case we kill by PID.
     if !admin_cmd::allow_stop() {
         return Ok(());
     }
-    let running = Client::is_daemon_running();
     let pid_path = kintsugi_daemon::pid_file_path();
     let pid = std::fs::read_to_string(&pid_path)
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
-
     match pid {
         Some(pid) => {
             kill_pid(&pid);
             let _ = std::fs::remove_file(&pid_path);
             println!("kintsugi: stopped the daemon (pid {pid}).");
         }
-        None if running => {
-            println!(
-                "kintsugi: the daemon is running but its PID file is missing.\n  \
-                 Stop it manually (e.g. `pkill kintsugi-daemon`)."
-            );
-        }
         None => println!("kintsugi: the daemon is not running."),
+    }
+    Ok(())
+}
+
+/// Ask the running daemon to shut down, proving knowledge of the admin password
+/// via a challenge-response when it is locked. The password never crosses the
+/// socket — only a one-time, nonce-bound proof does.
+fn stop_via_daemon() -> Result<()> {
+    let (locked, nonce, salt, params) =
+        Client::auth_begin("shutdown").context("begin shutdown handshake")?;
+
+    let (nonce_hex, proof_hex) = if locked {
+        let pw = admin_cmd::read_admin_password("Admin password to stop Kintsugi: ")?;
+        let nonce_bytes = hex::decode(&nonce).context("decode challenge nonce")?;
+        let proof =
+            kintsugi_core::admin::compute_proof(&pw, &salt, params, &nonce_bytes, b"shutdown")
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+        (nonce, hex::encode(proof))
+    } else {
+        (String::new(), String::new())
+    };
+
+    match Client::shutdown("shutdown", &nonce_hex, &proof_hex) {
+        Ok(()) => {
+            println!("kintsugi: stopped the daemon.");
+        }
+        Err(e) => {
+            // Wrong password / degraded vault: refuse, don't fall back to a kill.
+            eprintln!("kintsugi: not stopping — {e}");
+        }
     }
     Ok(())
 }

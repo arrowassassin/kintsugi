@@ -259,6 +259,12 @@ pub fn allow_stop() -> bool {
     }
 }
 
+/// Prompt for the admin password on the controlling terminal (echo off). Used by
+/// the daemon shutdown handshake; the value is sent only as a derived proof.
+pub fn read_admin_password(prompt: &str) -> Result<String> {
+    read_password_tty(prompt)
+}
+
 /// Read a password from a file (trailing newline trimmed) or interactively.
 fn read_password(prompt: &str, file: &Option<PathBuf>) -> Result<String> {
     if let Some(f) = file {
