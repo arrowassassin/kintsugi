@@ -350,3 +350,19 @@ the locked product decisions this build implements.
   detection (no catastrophic-as-Safe leak) and moves here-string detection to the
   tokenizer pass. Chosen over refusing such lines (which risked a substitution-
   hidden leak) and over a bounded allocator (heavy, still aborts on the limit).
+- Admin-locked settings + audit recorder is a phased, design-first feature (see
+  aegis-admin-recorder-design.md). The daemon becomes the sole authority for privileged
+  ops (stop/change-password/unhook/disable-recording behind an IPC challenge-response;
+  argon2id verifier + AEAD-sealed settings with a root-owned sealed-file fallback for
+  headless hosts; watchdog so `kill` isn't permanent). Honest framing is a hard gate:
+  defeats an AI agent / normal user and makes a forced stop tamper-evident, never claims
+  to stop root. Phase 1 here ships only the design doc + command-line secret redaction.
+- Secret redaction runs at capture time, before hashing (the chain is immutable, so a
+  leaked value can't be scrubbed later). It redacts the value span and keeps the command
+  verbatim with a `[redacted]` marker — resolving spine #3 (verbatim) vs #6 (no secret
+  values). Conservative by design (over-redact rather than leak); program-gated `-p`/`-u`
+  to avoid mauling `mkdir -p`/`ps -p`; no regex dep (manual scan, hot-path safe).
+- Passive recording stays userspace (rc preexec hook + the $PATH shim) per "no kernel
+  code"; auditd `-e 2`/eBPF is the root-backed floor we integrate with, not reimplement.
+  Recorder is fail-open for availability (never halt a DB host like auditd's disk-full
+  default) and records a signed gap-marker rather than silently dropping events.

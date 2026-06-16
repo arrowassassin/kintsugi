@@ -5,6 +5,22 @@ All notable changes to Aegis are documented here. The format loosely follows
 
 ## [Unreleased]
 
+### Admin settings + audit recorder (design + phase 1)
+- **Design doc** ([`aegis-admin-recorder-design.md`](aegis-admin-recorder-design.md)) for two
+  upcoming capabilities — password-locked encrypted settings (admin-provisioned; stopping/
+  unhooking Aegis requires the password when locked) and passive human-shell session recording
+  for enterprise/DBA audit. Folds in a 6-engineer design roundtable and a ~13-stream market /
+  filesystem-technology research sweep (cited). Headline finding: *record + per-command
+  filesystem revert + tamper-evident audit* is unbuilt as a shipping product (closest: a Dec-2025
+  AI-agent sandbox paper and a 2003 "Undo for Operators" paper); flags a same-named academic
+  "AEGIS" project to deconflict from, and the honest "never reversible" list.
+- **Command-line secret redaction** (`aegis_core::redact`) — the launch-blocker for any audit
+  recorder. Redacts the *value span* of credentials on a command line (DB connection strings,
+  `mysql -pSECRET`, `PGPASSWORD=…`, `--token=`/`--api-key=`, `Authorization: Bearer …`,
+  `curl -u user:pass`) before a command is hashed into the append-only log, keeping the rest
+  verbatim and leaving a `[redacted]` marker. Conservative, no I/O, hot-path safe — so the audit
+  log can't itself become a credential leak (the documented failure of auditd/tlog).
+
 ### Security assessment + hardening
 - **Enterprise stress & vulnerability assessment** ([`docs/security-assessment.md`](docs/security-assessment.md),
   published at the site's *Security* page). Measured, reproducible: 0 / 176

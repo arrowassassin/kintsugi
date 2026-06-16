@@ -14,6 +14,7 @@ pub mod log;
 pub mod memory;
 pub mod parse;
 pub mod policy;
+pub mod redact;
 pub mod rules;
 pub mod shell;
 pub mod snapshot;
