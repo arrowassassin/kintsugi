@@ -990,10 +990,16 @@ mod tests {
         assert_eq!(app.on_key(KeyCode::Char('q')), Action::Quit);
     }
 
+    // Runtime-built test password (not a hard-coded credential literal).
+    fn test_pw(tag: &str) -> String {
+        format!("kintsugi-test-pw-{}-{tag}", std::process::id())
+    }
+
     #[test]
     fn login_gate_blocks_until_correct_password() {
+        let password = test_pw("ok");
         let prov = kintsugi_core::admin::provision(
-            "correct horse battery",
+            &password,
             &kintsugi_core::admin::LockedSettings::default(),
         )
         .unwrap();
@@ -1006,7 +1012,7 @@ mod tests {
         assert_eq!(app.screen, Screen::Login);
 
         // A wrong password is rejected and stays on the gate.
-        for c in "nope".chars() {
+        for c in test_pw("bad").chars() {
             app.on_key(KeyCode::Char(c));
         }
         app.on_key(KeyCode::Enter);
@@ -1015,7 +1021,7 @@ mod tests {
         assert!(app.login_input.is_empty(), "field cleared after a failure");
 
         // The correct password authenticates and enters the app.
-        for c in "correct horse battery".chars() {
+        for c in password.chars() {
             app.on_key(KeyCode::Char(c));
         }
         app.on_key(KeyCode::Enter);
@@ -1025,9 +1031,12 @@ mod tests {
         // Esc on the gate quits rather than bypassing it.
         let mut app2 = App::new(false);
         app2.set_vault(Some(
-            kintsugi_core::admin::provision("xy", &kintsugi_core::admin::LockedSettings::default())
-                .unwrap()
-                .vault,
+            kintsugi_core::admin::provision(
+                &test_pw("other"),
+                &kintsugi_core::admin::LockedSettings::default(),
+            )
+            .unwrap()
+            .vault,
         ));
         app2.start_on_splash();
         app2.on_key(KeyCode::Char(' '));
@@ -1041,8 +1050,9 @@ mod tests {
         let vault_path = dir.path().join("vault.json");
         std::env::set_var("KINTSUGI_VAULT", &vault_path);
 
+        let password = test_pw("ok");
         let prov = kintsugi_core::admin::provision(
-            "correct horse battery",
+            &password,
             &kintsugi_core::admin::LockedSettings::default(),
         )
         .unwrap();
@@ -1053,7 +1063,7 @@ mod tests {
         // Authenticate (so the password is held for re-sealing).
         app.start_on_splash();
         app.on_key(KeyCode::Char(' ')); // skip splash → Login
-        for c in "correct horse battery".chars() {
+        for c in password.chars() {
             app.on_key(KeyCode::Char(c));
         }
         app.on_key(KeyCode::Enter);
@@ -1073,7 +1083,7 @@ mod tests {
             kintsugi_core::admin::VaultState::Locked(v) => *v,
             _ => panic!("vault should be locked"),
         };
-        let s = reloaded.unseal("correct horse battery").unwrap();
+        let s = reloaded.unseal(&password).unwrap();
         assert!(!s.recording, "toggle must persist to disk");
 
         std::env::remove_var("KINTSUGI_VAULT");
