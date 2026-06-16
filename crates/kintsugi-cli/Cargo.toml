@@ -1,5 +1,5 @@
 [package]
-name = "kintsugi-cli"
+name = "kintsugi"
 description = "The `kintsugi` binary: a local-first safety layer for AI coding agents — intercept, classify, hold, undo, audit, and a live TUI."
 version.workspace = true
 edition.workspace = true
