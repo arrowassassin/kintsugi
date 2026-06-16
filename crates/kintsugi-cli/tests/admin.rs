@@ -42,6 +42,116 @@ fn provision_locks_and_status_reports_locked() {
 }
 
 #[test]
+fn settings_view_and_set_round_trip_with_password_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = dir.path().join("vault.json");
+    let pw = dir.path().join("pw");
+    std::fs::write(&pw, "correct horse battery").unwrap();
+
+    // Provision, then read settings back (defaults: recording on).
+    let prov = kintsugi()
+        .args(["admin", "provision", "--password-file"])
+        .arg(&pw)
+        .env("KINTSUGI_VAULT", &vault)
+        .output()
+        .unwrap();
+    assert!(prov.status.success());
+
+    let view = kintsugi()
+        .args(["admin", "settings", "--password-file"])
+        .arg(&pw)
+        .env("KINTSUGI_VAULT", &vault)
+        .output()
+        .unwrap();
+    assert!(
+        view.status.success(),
+        "{}",
+        String::from_utf8_lossy(&view.stderr)
+    );
+    let s = String::from_utf8_lossy(&view.stdout);
+    assert!(s.contains("recording                 on"), "view: {s}");
+
+    // Turn recording off, then confirm it persisted (sealed + re-read).
+    let set = kintsugi()
+        .args(["admin", "set", "recording", "off", "--password-file"])
+        .arg(&pw)
+        .env("KINTSUGI_VAULT", &vault)
+        .output()
+        .unwrap();
+    assert!(
+        set.status.success(),
+        "{}",
+        String::from_utf8_lossy(&set.stderr)
+    );
+
+    let view2 = kintsugi()
+        .args(["admin", "settings", "--password-file"])
+        .arg(&pw)
+        .env("KINTSUGI_VAULT", &vault)
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&view2.stdout).contains("recording                 off"));
+}
+
+#[test]
+fn set_with_wrong_password_fails_and_does_not_change_settings() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = dir.path().join("vault.json");
+    let pw = dir.path().join("pw");
+    let wrong = dir.path().join("wrong");
+    std::fs::write(&pw, "correct horse battery").unwrap();
+    std::fs::write(&wrong, "incorrect horse staple").unwrap();
+    kintsugi()
+        .args(["admin", "provision", "--password-file"])
+        .arg(&pw)
+        .env("KINTSUGI_VAULT", &vault)
+        .output()
+        .unwrap();
+
+    let set = kintsugi()
+        .args(["admin", "set", "recording", "off", "--password-file"])
+        .arg(&wrong)
+        .env("KINTSUGI_VAULT", &vault)
+        .output()
+        .unwrap();
+    assert!(!set.status.success(), "wrong password must be rejected");
+
+    // Setting is unchanged (still on).
+    let view = kintsugi()
+        .args(["admin", "settings", "--password-file"])
+        .arg(&pw)
+        .env("KINTSUGI_VAULT", &vault)
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&view.stdout).contains("recording                 on"));
+}
+
+#[test]
+fn set_rejects_an_unknown_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = dir.path().join("vault.json");
+    let pw = dir.path().join("pw");
+    std::fs::write(&pw, "correct horse battery").unwrap();
+    kintsugi()
+        .args(["admin", "provision", "--password-file"])
+        .arg(&pw)
+        .env("KINTSUGI_VAULT", &vault)
+        .output()
+        .unwrap();
+    let set = kintsugi()
+        .args(["admin", "set", "allow-rm-rf-slash", "on", "--password-file"])
+        .arg(&pw)
+        .env("KINTSUGI_VAULT", &vault)
+        .output()
+        .unwrap();
+    assert!(
+        !set.status.success(),
+        "there is no setting that loosens the floor"
+    );
+    assert!(String::from_utf8_lossy(&set.stderr).contains("unknown setting"));
+}
+
+#[test]
 fn short_password_is_rejected_and_no_vault_written() {
     let dir = tempfile::tempdir().unwrap();
     let vault = dir.path().join("vault.json");
