@@ -167,7 +167,7 @@ below:
 | `kintsugi-core` | shared types, rule engine, policy, decision memory, hash-chained event log |
 | `kintsugi-daemon` | resident process: local IPC server + decision loop |
 | `kintsugi-intercept` | the `$PATH` shim, Claude Code hook bridge, and `kintsugi-exec` MCP server |
-| `kintsugi-cli` | the `kintsugi` binary: `init`, `status`, `stop`, `log`, `tui`, … |
+| `kintsugi` | the `kintsugi` binary: `init`, `status`, `stop`, `log`, `tui`, … |
 | `kintsugi-model` | Tier-2 scorer: heuristic by default, real GGUF behind `--features llama` |
 | `kintsugi-tui` | live `ratatui` timeline |
 
@@ -181,7 +181,7 @@ your platform has none), then walks you through wiring your agents and an
 curl -fsSL https://github.com/arrowassassin/kintsugi/releases/latest/download/install.sh | sh
 ```
 
-Prefer Cargo? `cargo install --git https://github.com/arrowassassin/kintsugi kintsugi-cli kintsugi-daemon kintsugi-intercept`
+Prefer Cargo? `cargo install kintsugi kintsugi-daemon kintsugi-intercept`
 
 That's it — Kintsugi works immediately with **no model** (an offline heuristic
 scorer). The optional model just sharpens the plain-English summary and risk
