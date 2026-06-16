@@ -1613,7 +1613,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "kintsugi-cli"
+name = "kintsugi"
 version = "0.1.0"
 dependencies = [
  "anyhow",
