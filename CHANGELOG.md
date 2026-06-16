@@ -3,6 +3,14 @@
 All notable changes to Kintsugi are documented here. The format loosely follows
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.1.1]
+
+- **Fix broken README images on crates.io.** The repo-root README (published as the
+  `kintsugi` crate readme) referenced `docs/img/{logo,cast}.svg` by relative path, which
+  cannot resolve on crates.io. Point both at the GitHub Pages host
+  (`https://arrowassassin.github.io/kintsugi/…`), which serves SVG as `image/svg+xml`.
+  README-only change; no code changes.
+
 ## [Unreleased]
 
 ### Enterprise TUI overhaul + brand (phase A4)
