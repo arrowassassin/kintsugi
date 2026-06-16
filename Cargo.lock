@@ -1619,6 +1619,7 @@ dependencies = [
  "anyhow",
  "clap",
  "directories",
+ "hex",
  "interprocess",
  "kintsugi-core",
  "kintsugi-daemon",
@@ -1663,6 +1664,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "directories",
+ "hex",
  "interprocess",
  "kintsugi-core",
  "kintsugi-model",

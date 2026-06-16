@@ -15,8 +15,11 @@ pub mod watch;
 
 use std::path::PathBuf;
 
+use std::cell::{Cell, RefCell};
+
 use anyhow::{Context, Result};
 use directories::ProjectDirs;
+use kintsugi_core::admin::{self, SealedVault, VaultState};
 use kintsugi_core::{Decision, EventLog, Mode, ProposedCommand, Verdict};
 
 pub use ipc::{Client, Observation, Resolution, Server};
@@ -53,6 +56,17 @@ pub struct Daemon {
     scorer: Box<dyn kintsugi_model::Scorer>,
     snapshot_dir: PathBuf,
     kill_path: PathBuf,
+    /// The admin vault loaded at *daemon* startup (not at request time), so the
+    /// auth decision is made against the path the daemon resolved — a caller's
+    /// environment can't redirect it. `None` = unprovisioned (no lock).
+    vault: Option<SealedVault>,
+    /// The vault file exists but is unreadable/corrupt → stay locked (fail-closed):
+    /// refuse authenticated shutdown rather than silently allow it.
+    vault_degraded: bool,
+    /// The last challenge nonce issued (and its op), consumed once by `Shutdown`.
+    pending: RefCell<Option<(Vec<u8>, String)>>,
+    /// Set when an authenticated shutdown has been accepted; the serve loop exits.
+    shutdown: Cell<bool>,
 }
 
 impl Daemon {
@@ -90,13 +104,124 @@ impl Daemon {
                 ipc::set_mode(&p, 0o600);
             }
         }
+        // Load the admin vault ONCE, here at daemon startup, from the path the
+        // daemon resolves (the daemon is launched by the admin/systemd, so its
+        // environment — not a later caller's — decides the vault location).
+        let (vault, vault_degraded) = match admin::load_vault(&admin::default_vault_path()) {
+            VaultState::Locked(v) => (Some(*v), false),
+            VaultState::Unprovisioned => (None, false),
+            VaultState::Degraded(_) => (None, true),
+        };
         Ok(Self {
             log,
             mode: Mode::default(),
             scorer: kintsugi_model::default_scorer(),
             snapshot_dir,
             kill_path,
+            vault,
+            vault_degraded,
+            pending: RefCell::new(None),
+            shutdown: Cell::new(false),
         })
+    }
+
+    /// Whether an authenticated shutdown has been accepted (serve loop should exit).
+    pub fn should_shutdown(&self) -> bool {
+        self.shutdown.get()
+    }
+
+    /// Issue a challenge for a privileged op. `locked=false` means no vault, so the
+    /// caller may proceed without a proof.
+    fn auth_begin(&self, op: &str) -> ipc::Response {
+        if self.vault_degraded {
+            return ipc::Response::Error {
+                message: "admin vault is degraded; refusing privileged operations".into(),
+            };
+        }
+        match &self.vault {
+            Some(v) => {
+                let nonce = match admin::random_auth_nonce() {
+                    Ok(n) => n,
+                    Err(_) => {
+                        return ipc::Response::Error {
+                            message: "could not generate a challenge".into(),
+                        }
+                    }
+                };
+                let (salt, params) = v.auth_challenge();
+                *self.pending.borrow_mut() = Some((nonce.clone(), op.to_string()));
+                ipc::Response::Challenge {
+                    locked: true,
+                    nonce: hex::encode(&nonce),
+                    salt,
+                    params,
+                }
+            }
+            None => ipc::Response::Challenge {
+                locked: false,
+                nonce: String::new(),
+                salt: String::new(),
+                params: kintsugi_core::admin::KdfParams::production(),
+            },
+        }
+    }
+
+    /// Complete an authenticated shutdown. Enforced against the daemon's own vault.
+    fn shutdown_op(&self, op: &str, nonce_hex: &str, proof_hex: &str) -> ipc::Response {
+        if self.vault_degraded {
+            self.record_admin(op, false, "vault degraded");
+            return ipc::Response::Error {
+                message: "admin vault is degraded; refusing to stop".into(),
+            };
+        }
+        let Some(vault) = &self.vault else {
+            // Unprovisioned: there is no lock, so a clean shutdown is allowed.
+            self.record_admin(op, true, "unprovisioned");
+            self.shutdown.set(true);
+            return ipc::Response::Ack;
+        };
+        // The challenge is one-shot: take it regardless of the outcome.
+        let pending = self.pending.borrow_mut().take();
+        let ok = match (pending, hex::decode(nonce_hex), hex::decode(proof_hex)) {
+            (Some((issued_nonce, issued_op)), Ok(nonce), Ok(proof)) => {
+                issued_op == op
+                    && issued_nonce == nonce
+                    && vault.verify_proof(&nonce, op.as_bytes(), &proof)
+            }
+            _ => false,
+        };
+        if ok {
+            self.record_admin(op, true, "authenticated");
+            self.shutdown.set(true);
+            ipc::Response::Ack
+        } else {
+            self.record_admin(op, false, "authentication failed");
+            ipc::Response::Error {
+                message: "authentication failed".into(),
+            }
+        }
+    }
+
+    /// Record a privileged-operation attempt as a hash-chained audit event, so a
+    /// forced stop — successful or not — is always visible on the timeline.
+    fn record_admin(&self, op: &str, ok: bool, reason: &str) {
+        let raw = format!(
+            "admin {op} — {}",
+            if ok { "authenticated" } else { "denied" }
+        );
+        let cmd = ProposedCommand::new(
+            "admin",
+            std::path::Path::new("."),
+            vec!["admin".to_string(), op.to_string()],
+            raw,
+        );
+        let decision = if ok { Decision::Allow } else { Decision::Deny };
+        let verdict = Verdict::rules(
+            kintsugi_core::Class::Safe,
+            decision,
+            format!("admin:{op}:{reason}"),
+        );
+        let _ = self.log.log_event(&cmd, &verdict, None);
     }
 
     /// Whether the panic kill-switch is currently engaged.
@@ -436,6 +561,8 @@ impl Daemon {
             ipc::Request::Status => ipc::Response::Status {
                 scorer: self.scorer_name().to_string(),
             },
+            ipc::Request::AuthBegin { op } => self.auth_begin(&op),
+            ipc::Request::Shutdown { op, nonce, proof } => self.shutdown_op(&op, &nonce, &proof),
         }
     }
 
@@ -529,7 +656,14 @@ pub fn run() -> Result<()> {
         VERSION,
         Server::endpoint().display()
     );
-    server.serve(|req| daemon.handle_request(req))
+    server.serve_until(
+        |req| daemon.handle_request(req),
+        || daemon.should_shutdown(),
+    )?;
+    // An authenticated shutdown landed: clean up the PID file and exit.
+    let _ = std::fs::remove_file(pid_file_path());
+    eprintln!("kintsugi-daemon: authenticated shutdown — exiting.");
+    Ok(())
 }
 
 /// Path to the daemon's PID file (next to the event log).

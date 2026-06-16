@@ -51,6 +51,17 @@ pub enum Request {
     /// callers can tell whether the local model loaded or it's on the heuristic
     /// fallback.
     Status,
+    /// "I want to perform a privileged operation `op` (e.g. shutdown) — give me a
+    /// challenge." The daemon replies with a [`Response::Challenge`]. Auth is
+    /// enforced by the *daemon*, against the vault IT loaded at startup, so the
+    /// caller's environment can't point the check at a different/empty vault.
+    AuthBegin { op: String },
+    /// "Here is the challenge proof for `op`; do it." Currently only shutdown.
+    Shutdown {
+        op: String,
+        nonce: String,
+        proof: String,
+    },
 }
 
 /// A filesystem change observed by the backstop watcher.
@@ -94,6 +105,15 @@ pub enum Response {
     /// The daemon's runtime status (reply to `Status`). `scorer` is the active
     /// backend id, e.g. `heuristic` or `llama:Qwen3-4B-Instruct-2507-Q4_K_M`.
     Status { scorer: String },
+    /// Reply to `AuthBegin`: a fresh challenge. `locked` is false when the daemon
+    /// has no vault (then no proof is needed); otherwise the caller derives the
+    /// proof from `nonce` + `salt` + `params` and the admin password.
+    Challenge {
+        locked: bool,
+        nonce: String,
+        salt: String,
+        params: kintsugi_core::admin::KdfParams,
+    },
     /// Something went wrong handling the request.
     Error { message: String },
 }
@@ -271,6 +291,30 @@ impl Client {
         }
     }
 
+    /// Begin authenticating a privileged op; returns (locked, nonce, salt, params).
+    pub fn auth_begin(op: &str) -> Result<(bool, String, String, kintsugi_core::admin::KdfParams)> {
+        match round_trip(&Request::AuthBegin { op: op.to_string() })? {
+            Response::Challenge {
+                locked,
+                nonce,
+                salt,
+                params,
+            } => Ok((locked, nonce, salt, params)),
+            Response::Error { message } => anyhow::bail!("daemon error: {message}"),
+            _ => anyhow::bail!("unexpected response to AuthBegin"),
+        }
+    }
+
+    /// Complete an authenticated shutdown with a challenge proof (hex). On success
+    /// the daemon records the event and exits.
+    pub fn shutdown(op: &str, nonce: &str, proof: &str) -> Result<()> {
+        expect_ack(round_trip(&Request::Shutdown {
+            op: op.to_string(),
+            nonce: nonce.to_string(),
+            proof: proof.to_string(),
+        })?)
+    }
+
     /// Whether a daemon appears to be listening.
     pub fn is_daemon_running() -> bool {
         match make_name() {
@@ -333,6 +377,31 @@ impl Server {
             };
             if let Err(e) = Self::handle_one(stream, &mut handler) {
                 eprintln!("kintsugi-daemon: connection error: {e}");
+            }
+        }
+        Ok(())
+    }
+
+    /// Serve connections until `stop()` returns true (checked after each one).
+    /// Lets a handler request its own shutdown (e.g. an authenticated `Shutdown`).
+    pub fn serve_until<F, S>(self, mut handler: F, stop: S) -> Result<()>
+    where
+        F: FnMut(Request) -> Response,
+        S: Fn() -> bool,
+    {
+        for incoming in self.listener.incoming() {
+            let stream = match incoming {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("kintsugi-daemon: accept error: {e}");
+                    continue;
+                }
+            };
+            if let Err(e) = Self::handle_one(stream, &mut handler) {
+                eprintln!("kintsugi-daemon: connection error: {e}");
+            }
+            if stop() {
+                break;
             }
         }
         Ok(())
