@@ -52,8 +52,11 @@ jobs:
       # Target is >= 90% line AND branch per `CLAUDE.md`. The floor below guards
       # against regressions; the remaining gap is concentrated in process-`exec`
       # and detached-daemon-spawn paths exercised by the demo/integration tests.
-      - run: cargo llvm-cov --workspace --summary-only --fail-under-lines 88
-      - run: cargo llvm-cov --workspace --lcov --output-path lcov.info
+      # Thin binary entrypoints (daemon `main.rs`, the `src/bin/*` launchers) are
+      # excluded: they are arg-dispatch shells exercised at the process level by
+      # integration tests, which llvm-cov can't attribute to source lines.
+      - run: cargo llvm-cov --workspace --summary-only --fail-under-lines 88 --ignore-filename-regex '(kintsugi-daemon/src/main\.rs|/src/bin/)'
+      - run: cargo llvm-cov --workspace --lcov --output-path lcov.info --ignore-filename-regex '(kintsugi-daemon/src/main\.rs|/src/bin/)'
       - uses: actions/upload-artifact@v4
         with:
           name: coverage-lcov

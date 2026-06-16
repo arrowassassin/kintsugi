@@ -35,6 +35,32 @@ fn kill_switch_path_is_beside_the_db() {
 }
 
 #[test]
+fn fail_closed_marker_toggles_beside_the_db() {
+    let _g = serial_lock();
+    let tmp = tempfile::tempdir().unwrap();
+    std::env::set_var("KINTSUGI_DB", tmp.path().join("events.db"));
+
+    let marker = kintsugi_daemon::fail_closed_marker_path();
+    assert_eq!(marker, tmp.path().join(kintsugi_daemon::FAIL_CLOSED_FILE));
+    // Absent by default.
+    assert!(!kintsugi_daemon::is_fail_closed_marked());
+
+    // Setting it on creates the marker; the interception layer reads exactly this.
+    kintsugi_daemon::set_fail_closed_marker(true).unwrap();
+    assert!(kintsugi_daemon::is_fail_closed_marked());
+    assert!(marker.exists());
+
+    // Idempotent on, then off removes it; off-when-absent is a no-op.
+    kintsugi_daemon::set_fail_closed_marker(true).unwrap();
+    kintsugi_daemon::set_fail_closed_marker(false).unwrap();
+    assert!(!kintsugi_daemon::is_fail_closed_marked());
+    kintsugi_daemon::set_fail_closed_marker(false).unwrap();
+    assert!(!kintsugi_daemon::is_fail_closed_marked());
+
+    std::env::remove_var("KINTSUGI_DB");
+}
+
+#[test]
 fn ipc_messages_roundtrip_through_json() {
     let obs = Request::Observe(Observation {
         kind: "created".into(),
