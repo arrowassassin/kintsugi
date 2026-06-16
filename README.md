@@ -122,23 +122,29 @@ shared or production host:
 - **Password-locked settings + "password to stop."** `kintsugi admin provision`
   seals the settings behind an admin password (argon2id verifier +
   XChaCha20-Poly1305, with a one-time recovery key). Once locked, **stopping,
-  unhooking, or disabling Kintsugi requires the password** — an AI agent or a
-  normal user can't quietly turn it off. `kintsugi admin set <key> <value>` and the
-  TUI manage `recording`, `autostart`, `enforcement`, `fail-closed`, and
-  `require-password-to-stop`. Every setting is a *tightening* control; none can
-  loosen the catastrophic floor. Honest scope: this defeats an agent/non-root user
+  unhooking, or disabling Kintsugi requires the password**, enforced *daemon-side*
+  via a challenge-response (the password never crosses the socket) with
+  **brute-force lockout** — an AI agent or a normal user can't quietly turn it off,
+  and a hammering script gets locked out. The settings (`recording`, `autostart`,
+  `enforcement`, `fail-closed`, `require-password-to-stop`) are tightening-only
+  controls — none can loosen the catastrophic floor — and are managed from the TUI
+  settings panel when unlocked. Honest scope: this defeats an agent/non-root user
   and turns a forced shutdown into a logged, recoverable event — it does **not**
   stop root (see the threat matrix in
   [`kintsugi-admin-recorder-design.md`](kintsugi-admin-recorder-design.md)).
-- **Auto-restart watchdog.** `kintsugi service install` runs the daemon under
-  systemd / launchd with restart-always, so a `kill`/`pkill` relaunches it within
-  seconds; disabling the watchdog is itself password-gated.
-- **Passive session recording (no AI agent).** `kintsugi record install` adds a
-  bash/zsh preexec hook so **every command a human runs** lands on the same
+- **Auto-restart watchdog + fail-closed.** `kintsugi service install` runs the
+  daemon under systemd / launchd with restart-always, so a `kill`/`pkill` relaunches
+  it within seconds; disabling the watchdog is itself password-gated. With
+  fail-closed set, an unreachable daemon **blocks** rather than runs unguarded — so
+  killing the daemon can't be used to open the gate.
+- **Passive session recording + recoverer (no AI agent).** `kintsugi record install`
+  adds a bash/zsh preexec hook so **every command a human runs** lands on the same
   tamper-evident, classified audit log — for DBA/operator compliance. It blocks
-  nothing (it records after the fact), spools across daemon restarts, and
-  redacts command-line secrets before hashing. `kintsugi report` lists the
-  destructive commands for review.
+  nothing, spools across daemon restarts, and redacts command-line secrets before
+  hashing. Because the hook fires *before* the command, Kintsugi **snapshots
+  destructive human commands just-in-time**, so `kintsugi undo` can roll back a
+  person's `rm -rf` / `DROP` the same way it rolls back an agent's. `kintsugi report`
+  lists the destructive commands for review.
 - **A real control-room TUI.** `kintsugi tui` opens an animated, branded terminal
   app: tabbed **Timeline / Audit / Recorder** views over the live log, a vitals
   strip, one-key approve/deny/undo, a password login when locked, and an in-app
