@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Kintsugi">
+  <title>Kintsugi</title>
+  <defs>
+    <!-- Metallic kintsugi gold -->
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F6DC8A"/>
+      <stop offset="0.5" stop-color="#D4AF37"/>
+      <stop offset="1" stop-color="#A87C1E"/>
+    </linearGradient>
+    <!-- The two rejoined halves of the tile, split by the seam -->
+    <clipPath id="leftHalf">
+      <path d="M6 18 L34 6 L26 26 L40 40 L30 58 L6 46 Z"/>
+    </clipPath>
+  </defs>
+
+  <!-- The vessel: a dark rounded tile -->
+  <rect x="5" y="5" width="54" height="54" rx="13" fill="#0E1116" stroke="#2A2F3A" stroke-width="1.5"/>
+  <!-- One half a touch lighter, so the tile reads as two pieces rejoined -->
+  <rect x="5" y="5" width="54" height="54" rx="13" fill="#161B22" clip-path="url(#leftHalf)"/>
+
+  <!-- Soft underlay so the seam looks like it glows -->
+  <g fill="none" stroke="#D4AF37" stroke-opacity="0.18" stroke-linecap="round" stroke-linejoin="round" stroke-width="7">
+    <path d="M34 6 L26 26 L40 40 L30 58"/>
+  </g>
+
+  <!-- The kintsugi seam: gold lacquer down the break, with two branch cracks -->
+  <g fill="none" stroke="url(#gold)" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M34 6 L26 26 L40 40 L30 58" stroke-width="3.2"/>
+    <path d="M26 26 L14 21" stroke-width="2.2"/>
+    <path d="M40 40 L52 33" stroke-width="2.2"/>
+    <!-- a thin bright sheen on top of the main seam -->
+    <path d="M34 6 L26 26 L40 40 L30 58" stroke="#FBEFC2" stroke-opacity="0.55" stroke-width="0.9"/>
+  </g>
+
+  <!-- Gold pools where the cracks meet -->
+  <g fill="url(#gold)">
+    <circle cx="26" cy="26" r="2.4"/>
+    <circle cx="40" cy="40" r="2.4"/>
+    <circle cx="14" cy="21" r="1.5"/>
+    <circle cx="52" cy="33" r="1.5"/>
+  </g>
+</svg>

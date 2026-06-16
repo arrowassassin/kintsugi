@@ -75,6 +75,14 @@ pub fn render(f: &mut Frame, area: Rect, frame: usize, color: bool) {
     let done = frame >= FILL_FRAMES;
 
     let mut lines: Vec<Line> = Vec::new();
+    // The brand mark — a tile rejoined by a golden seam — above the wordmark,
+    // when there's vertical room. Mirrors the web/README logo in the terminal.
+    if area.height >= 16 {
+        for ml in mark_lines(color) {
+            lines.push(ml);
+        }
+        lines.push(Line::from(""));
+    }
     for row in &rows {
         let mut spans = Vec::new();
         for (col, ch) in row.chars().enumerate() {
@@ -115,6 +123,40 @@ pub fn render(f: &mut Frame, area: Rect, frame: usize, color: bool) {
         Paragraph::new(lines).alignment(Alignment::Center),
         centered(area, content_height),
     );
+}
+
+/// The brand mark: a 5-row tile crossed by a golden kintsugi seam. The seam
+/// glyphs are gold (when color is on); the frame is dim. Returns centered Lines.
+fn mark_lines(color: bool) -> Vec<Line<'static>> {
+    let frame_style = if color {
+        Style::default().fg(SEAM)
+    } else {
+        Style::default()
+    };
+    let gold = if color {
+        Style::default().fg(GOLD).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+    };
+    // Each tile row: a bordered cell with a seam segment (the ╲ ╳ ╱ run) in gold.
+    let row = |left: &'static str, seam: &'static str, right: &'static str| {
+        Line::from(vec![
+            Span::styled(left, frame_style),
+            Span::styled(seam, gold),
+            Span::styled(right, frame_style),
+        ])
+    };
+    // Inner content between the borders is always 7 columns wide, so the tile
+    // stays a perfect rectangle.
+    vec![
+        Line::from(Span::styled("╭───────╮", frame_style)),
+        row("│  ", "╲", "    │"),
+        row("│  ", "╲ ╱", "  │"),
+        row("│   ", "╳", "   │"),
+        row("│  ", "╱ ╲", "  │"),
+        row("│  ", "╱", "    │"),
+        Line::from(Span::styled("╰───────╯", frame_style)),
+    ]
 }
 
 /// A vertically-centered sub-rect of `area` that is `height` rows tall.
@@ -191,5 +233,19 @@ mod tests {
     fn narrow_terminal_degrades_without_panic() {
         let text = frame_text(10, true, 24, 10);
         assert!(text.contains("KINTSUGI"));
+    }
+
+    #[test]
+    fn brand_mark_is_a_perfect_rectangle() {
+        // Every tile row must be the same display width or the box looks broken.
+        let lines = mark_lines(false);
+        let widths: Vec<usize> = lines
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.chars().count()).sum())
+            .collect();
+        assert!(
+            widths.windows(2).all(|w| w[0] == w[1]),
+            "tile rows ragged: {widths:?}"
+        );
     }
 }
