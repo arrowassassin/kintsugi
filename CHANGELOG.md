@@ -3,15 +3,13 @@
 All notable changes to Kintsugi are documented here. The format loosely follows
 [Keep a Changelog](https://keepachangelog.com/).
 
-## [0.1.1]
+## [0.2.0] — 2026-06-17
 
-- **Fix broken README images on crates.io.** The repo-root README (published as the
-  `kintsugi` crate readme) referenced `docs/img/{logo,cast}.svg` by relative path, which
-  cannot resolve on crates.io. Point both at the GitHub Pages host
-  (`https://arrowassassin.github.io/kintsugi/…`), which serves SVG as `image/svg+xml`.
-  README-only change; no code changes.
-
-## [0.1.5]
+First minor release: the protection is now visible and trustworthy, the backstop
+is on by default (and quiet), enterprise hosts can lock the wiring out of a user's
+reach, and Google Antigravity joins the supported agents. Bundles everything that
+accumulated since 0.1.x (the `kintsugi model` command, dry-run, limits, guard,
+enforce-shell, the TUI overhaul, and the real-world update/backstop fixes).
 
 ### Google Antigravity support
 - **`kintsugi init` now detects and wires Google Antigravity** like the other
@@ -26,9 +24,10 @@ All notable changes to Kintsugi are documented here. The format loosely follows
   it's distinguished from a plain Gemini CLI install that shares `~/.gemini`.
 
 ### Fixes from real-world use
-- **Version reporting fixed.** The crate version is bumped to `0.1.5`; an earlier
-  tag was cut without bumping it, so the binary self-reported a stale version and
-  `kintsugi update` would offer the "new" release forever. `kintsugi update` now
+- **Version reporting fixed.** The crate version is bumped to `0.2.0`; an earlier
+  tag (`v0.1.4`) was cut without bumping it, so the binary self-reported a stale
+  version and `kintsugi update` would offer the "new" release forever. `kintsugi
+  update` now
   **verifies** the result: it warns if the freshly-installed binary reports the
   wrong version (a release built without a bump) or if another `kintsugi` shadows
   it earlier on your `PATH` — instead of silently looking like a no-op.
@@ -606,3 +605,11 @@ All notable changes to Kintsugi are documented here. The format loosely follows
 ### Changed
 - Pinned all dependencies to latest stable. `rusqlite` held at 0.39 because 0.40
   pulls `libsqlite3-sys` 0.38 which needs the unstable `cfg_select!` feature.
+
+## [0.1.1]
+
+- **Fix broken README images on crates.io.** The repo-root README (published as the
+  `kintsugi` crate readme) referenced `docs/img/{logo,cast}.svg` by relative path, which
+  cannot resolve on crates.io. Point both at the GitHub Pages host
+  (`https://arrowassassin.github.io/kintsugi/…`), which serves SVG as `image/svg+xml`.
+  README-only change; no code changes.

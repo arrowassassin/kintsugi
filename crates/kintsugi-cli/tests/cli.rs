@@ -325,12 +325,16 @@ fn dry_run_redacts_secrets_before_printing() {
 
 #[test]
 fn version_reports_the_bumped_number() {
-    // Guards against the release-hygiene bug where the tag is cut without bumping
-    // the crate version (so the binary self-reports a stale number).
+    // Guards against the release-hygiene bug where a tag is cut without bumping
+    // the crate version. Asserts against CARGO_PKG_VERSION so it tracks every
+    // release automatically — no per-bump edit, and it can never go stale.
     let out = kintsugi().arg("--version").output().unwrap();
     assert!(out.status.success());
     let s = String::from_utf8_lossy(&out.stdout);
-    assert!(s.contains("0.1.5"), "version should be 0.1.5, got: {s}");
+    assert!(
+        s.contains(env!("CARGO_PKG_VERSION")),
+        "binary --version should report the crate version, got: {s}"
+    );
 }
 
 #[test]
