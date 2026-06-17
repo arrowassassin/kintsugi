@@ -449,6 +449,29 @@ the locked product decisions this build implements.
   surrounding file contents. Tests use `KINTSUGI_ETC_DIR` to exercise the logic
   without touching real `/etc`. Honest scope: binds users below root, not root —
   stated in `kintsugi limits` and the install message.
+- Google Antigravity: detected via its own `~/.gemini/antigravity-cli` subtree
+  (not bare `~/.gemini`, which it shares with the Gemini CLI — both are wired
+  independently when present). Primary interception is a native `PreToolUse`
+  plugin hook (`plugins/kintsugi/hooks.json`, matcher `run_command`); the
+  `antigravity` dialect reads `toolCall.arguments.CommandLine` and replies
+  `{decision: allow|deny}` with allow emitted explicitly (its contract expects a
+  decision object on stdout). No native ask → ambiguous holds map to deny
+  (monotonic caution). MCP is the documented fallback (`mcpServers` in
+  `~/.gemini/config/mcp_config.json`). Hook schema is per current Antigravity
+  docs (Nov 2025 launch); it fails open if the format drifts, and the $PATH shim
+  + backstop still cover it.
+- Backstop noise: the FS-watcher records only deletions and renames (the
+  destructive, actionable signals), not creates/content-saves, and skips
+  build/VCS/cache trees + editor scratch files. Rationale: the append-only log
+  can't be pruned (spine #4), so recording every file save would bloat it
+  permanently without telling the user anything they can act on; interception +
+  snapshots already cover agent writes. The TUI puts `fs-watch` events in their
+  own Backstop tab so a busy work tree never buries command activity.
+- Release/version hygiene: workspace version bumped to 0.1.5 because a prior tag
+  (v0.1.4) was cut without bumping it, so binaries self-reported 0.1.3 and
+  `kintsugi update` looped. `update` now re-runs the installed binary's
+  `--version` and checks PATH resolution, surfacing a no-bump release or a PATH
+  shadow instead of a silent no-op. The version bump must precede the tag.
 - Guarded launch: `kintsugi guard <command…>` forces the shim dir to the front of
   the launched child's `PATH` so an auto-approve/"yolo" agent's by-name shell-outs
   still hit the gate, ensures the daemon is up, and forwards the child's exit code

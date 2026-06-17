@@ -24,11 +24,9 @@ use anyhow::{Context, Result};
 
 /// Markers for the managed block we own inside a shared system file. Re-running
 /// install replaces the block in place (idempotent); remove deletes just it.
+/// The marker strings live in `kintsugi-core` as the single source of truth.
 #[cfg(unix)]
-const BEGIN: &str =
-    "# >>> kintsugi enforced shell wiring (root-owned — a normal user cannot edit this) >>>";
-#[cfg(unix)]
-const END: &str = "# <<< kintsugi enforced shell wiring <<<";
+use kintsugi_core::{END, START as BEGIN};
 
 /// The system config root. `/etc` in production; overridable for tests.
 #[cfg(unix)]
@@ -83,6 +81,26 @@ pub fn is_enforced() -> bool {
     }
     #[cfg(not(unix))]
     {
+        windows_machine_path_has_shim()
+    }
+}
+
+/// True only when the wiring is present **and** in root-owned files — i.e.
+/// genuinely un-removable by a normal user. This is the stronger property the
+/// "only root/admin can remove" claim in `kintsugi status` actually depends on;
+/// `is_enforced` alone only checks presence (which a writable override dir could
+/// satisfy without the ownership that makes it stick).
+pub fn is_root_enforced() -> bool {
+    #[cfg(unix)]
+    {
+        unix_targets()
+            .iter()
+            .any(|p| file_has_block(p) && root_owned(p))
+    }
+    #[cfg(not(unix))]
+    {
+        // On Windows the machine PATH lives in HKLM, which only an Administrator
+        // can write — presence there is itself the ownership guarantee.
         windows_machine_path_has_shim()
     }
 }
@@ -278,9 +296,25 @@ fn windows_machine_path_has_shim() -> bool {
     !windows_machine_path().is_empty() && windows_machine_path().to_lowercase().contains("kintsugi")
 }
 
+/// Reject a shim path carrying characters that could break out of the
+/// single-quoted PowerShell string literals below. A genuine Windows path never
+/// contains these; this closes a command-injection vector where a non-admin sets
+/// a hostile `KINTSUGI_DATA_DIR` and an admin later runs enforce-shell.
+#[cfg(not(unix))]
+fn reject_unsafe_shim(shim: &str) -> Result<()> {
+    if shim.contains(['\'', '"', ';', '`', '$', '&', '|', '\n', '\r']) {
+        anyhow::bail!(
+            "refusing to enforce: the shim path contains unsafe characters ({shim}).\n  \
+             Set a clean KINTSUGI_DATA_DIR and re-run."
+        );
+    }
+    Ok(())
+}
+
 #[cfg(not(unix))]
 fn windows_install(shim: &Path) -> Result<Vec<PathBuf>> {
     let shim = shim.display().to_string();
+    reject_unsafe_shim(&shim)?;
     let script = format!(
         "$m=[Environment]::GetEnvironmentVariable('Path','Machine'); \
          if($m -notlike '*{shim}*'){{[Environment]::SetEnvironmentVariable('Path','{shim};'+$m,'Machine')}}"

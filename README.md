@@ -44,9 +44,9 @@ frames in [`docs/img/`](docs/img/) if the animation doesn't play.)*
   rule engine (not an LLM rolling the dice) decides what's catastrophic, so the
   block is predictable and can't be "talked out of" by a clever prompt.
 - **Works with every agent — and your shell.** Native pre-tool hooks for Claude
-  Code, Cursor, Codex, Qwen, Gemini, Copilot, and OpenCode — or a raw `bash`
-  script via the `$PATH` shim: one safety layer at the process level, not a
-  fragile per-tool plugin. `kintsugi init` wires them all in one command.
+  Code, Cursor, Codex, Qwen, Gemini, Copilot, OpenCode, and Google Antigravity —
+  or a raw `bash` script via the `$PATH` shim: one safety layer at the process
+  level, not a fragile per-tool plugin. `kintsugi init` wires them all in one command.
 - **Reversible by default.** Kintsugi snapshots files before a destructive op, so
   `kintsugi undo` brings them back. The honest promise is *nothing unrecoverable* —
   a filesystem backstop catches even changes that slipped past interception.
@@ -242,6 +242,7 @@ in-band UX — so a held command pauses the agent itself, not just a `$PATH` shi
 | **Cursor CLI** | native `beforeShellExecution` hook (`~/.cursor/hooks.json`) |
 | **Codex CLI** | native `PreToolUse` hook (`~/.codex/config.toml`) |
 | **OpenCode** | a bundled `tool.execute.before` plugin (`~/.config/opencode/plugin/kintsugi.js`) that bridges to the hook |
+| **Google Antigravity** | native `PreToolUse` plugin hook (`~/.gemini/antigravity-cli/plugins/kintsugi/hooks.json`), or the MCP server in `~/.gemini/config/mcp_config.json` |
 | any other MCP client | the `kintsugi-exec` MCP server (stdio) |
 | **any tool or raw shell** (Aider, Continue, a `bash` script, a Makefile, you) | the `$PATH` shim — `kintsugi init` prints the `PATH` line to prepend |
 

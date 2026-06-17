@@ -22,6 +22,10 @@
 //!   allow|deny|ask, userMessage, agentMessage}` out.
 //! - OpenCode: no external-command hook — a bundled JS plugin bridges to us with
 //!   a simple `{command, cwd}` in / `{decision: allow|deny|ask, reason}` out.
+//! - Google Antigravity: plugin `PreToolUse` hook (matcher `run_command`).
+//!   `{toolCall:{name, arguments:{CommandLine, Cwd}}, conversationId}` in
+//!   (PascalCase argument keys); `{decision: allow|deny, reason}` out — no native
+//!   ask, so an ambiguous hold is mapped to deny.
 
 use std::path::PathBuf;
 
@@ -38,6 +42,7 @@ pub enum Dialect {
     Cursor,
     OpenCode,
     Codex,
+    Antigravity,
 }
 
 /// A normalized shell command extracted from a hook payload.
@@ -101,6 +106,7 @@ impl Dialect {
             "cursor" => Dialect::Cursor,
             "opencode" => Dialect::OpenCode,
             "codex" => Dialect::Codex,
+            "antigravity" => Dialect::Antigravity,
             _ => return None,
         })
     }
@@ -116,6 +122,7 @@ impl Dialect {
             Dialect::Cursor => "cursor",
             Dialect::OpenCode => "opencode",
             Dialect::Codex => "codex",
+            Dialect::Antigravity => "antigravity",
         }
     }
 
@@ -123,8 +130,9 @@ impl Dialect {
     /// hold is mapped to deny — safe per the monotonic-caution rule (the model
     /// may only add caution, never remove it).
     fn supports_ask(self) -> bool {
-        // Gemini's decision enum is allow/deny/block — no interactive ask.
-        !matches!(self, Dialect::Gemini)
+        // Gemini's decision enum is allow/deny/block, and Antigravity's hook
+        // decision is allow/deny — neither has an interactive ask.
+        !matches!(self, Dialect::Gemini | Dialect::Antigravity)
     }
 
     /// Parse one CLI's hook payload into a normalized command.
@@ -135,6 +143,7 @@ impl Dialect {
             }
             Dialect::Copilot => parse_copilot(input),
             Dialect::Cursor | Dialect::OpenCode => parse_flat(input),
+            Dialect::Antigravity => parse_antigravity(input),
         }
     }
 
@@ -192,6 +201,7 @@ impl Dialect {
             Dialect::Copilot => format_copilot(resolved),
             Dialect::Cursor => format_cursor(resolved),
             Dialect::OpenCode => format_opencode(resolved),
+            Dialect::Antigravity => format_antigravity(resolved),
         }
     }
 
@@ -201,6 +211,9 @@ impl Dialect {
     pub fn pass(self) -> HookOutcome {
         match self {
             Dialect::Cursor => format_cursor(&Resolved::Allow),
+            // Antigravity's contract is "read a JSON decision object from stdout",
+            // so answer its gate with an explicit allow rather than silence.
+            Dialect::Antigravity => format_antigravity(&Resolved::Allow),
             _ => HookOutcome::silent(),
         }
     }
@@ -281,6 +294,62 @@ fn parse_copilot(input: &str) -> Parsed {
             command: c,
             cwd: cwd_or_current(p.cwd),
             session_id: p.session_id,
+        }),
+        _ => Parsed::NotShell,
+    }
+}
+
+/// Antigravity's `PreToolUse` payload: the command lives in
+/// `toolCall.arguments.CommandLine` (PascalCase), the tool name in
+/// `toolCall.name`, and the session in `conversationId`.
+#[derive(Debug, Deserialize)]
+struct AntigravityStyle {
+    #[serde(default, rename = "toolCall")]
+    tool_call: Option<AntigravityToolCall>,
+    #[serde(default, rename = "conversationId")]
+    conversation_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AntigravityToolCall {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    arguments: Option<AntigravityArgs>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AntigravityArgs {
+    #[serde(default, rename = "CommandLine")]
+    command_line: Option<String>,
+    #[serde(default, rename = "Cwd")]
+    cwd: Option<String>,
+}
+
+fn parse_antigravity(input: &str) -> Parsed {
+    let p: AntigravityStyle = match serde_json::from_str(input) {
+        Ok(p) => p,
+        Err(e) => return Parsed::Bad(e.to_string()),
+    };
+    let Some(tc) = p.tool_call else {
+        return Parsed::NotShell;
+    };
+    // Antigravity's shell tool is `run_command`; accept the common aliases too.
+    let tool = tc.name.as_deref().unwrap_or_default();
+    if !matches!(
+        tool,
+        "run_command" | "run_shell_command" | "Bash" | "bash" | "shell"
+    ) {
+        return Parsed::NotShell;
+    }
+    let Some(args) = tc.arguments else {
+        return Parsed::NotShell;
+    };
+    match args.command_line {
+        Some(c) if !c.trim().is_empty() => Parsed::Shell(Shell {
+            command: c,
+            cwd: cwd_or_current(args.cwd),
+            session_id: p.conversation_id,
         }),
         _ => Parsed::NotShell,
     }
@@ -393,6 +462,28 @@ fn format_opencode(resolved: &Resolved) -> HookOutcome {
     HookOutcome::json(serde_json::json!({ "decision": decision, "reason": reason }))
 }
 
+/// Google Antigravity: `{decision: allow|deny, reason}` (no ask — already
+/// downgraded). Allow is explicit (its contract expects a decision object).
+fn format_antigravity(resolved: &Resolved) -> HookOutcome {
+    let (decision, reason) = match resolved {
+        Resolved::Allow => ("allow", None),
+        Resolved::Deny(r) => ("deny", Some(r)),
+        // Unreachable: Antigravity has no ask, so resolve→format downgrades it to
+        // Deny before we get here. Treat defensively as a deny.
+        Resolved::Ask(r) => ("deny", Some(r)),
+    };
+    let mut obj = serde_json::json!({ "decision": decision });
+    if let Some(r) = reason {
+        let map = obj.as_object_mut().unwrap();
+        map.insert("reason".into(), serde_json::json!(r));
+        map.insert(
+            "systemMessage".into(),
+            serde_json::json!(format!("Kintsugi: {r}")),
+        );
+    }
+    HookOutcome::json(obj)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -415,7 +506,58 @@ mod tests {
         assert_eq!(Dialect::from_agent("cursor"), Some(Dialect::Cursor));
         assert_eq!(Dialect::from_agent("opencode"), Some(Dialect::OpenCode));
         assert_eq!(Dialect::from_agent("codex"), Some(Dialect::Codex));
+        assert_eq!(
+            Dialect::from_agent("antigravity"),
+            Some(Dialect::Antigravity)
+        );
         assert_eq!(Dialect::from_agent("nope"), None);
+    }
+
+    #[test]
+    fn antigravity_parses_run_command_with_pascalcase_args() {
+        let p = Dialect::Antigravity.parse(
+            r#"{"toolCall":{"name":"run_command","arguments":{"CommandLine":"rm -rf /","Cwd":"/work"}},"conversationId":"c9"}"#,
+        );
+        match p {
+            Parsed::Shell(s) => {
+                assert_eq!(s.command, "rm -rf /");
+                assert_eq!(s.cwd, PathBuf::from("/work"));
+                assert_eq!(s.session_id.as_deref(), Some("c9"));
+            }
+            other => panic!("expected shell, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn antigravity_non_shell_tool_is_not_shell() {
+        let p = Dialect::Antigravity
+            .parse(r#"{"toolCall":{"name":"write_file","arguments":{"Path":"x"}}}"#);
+        assert_eq!(p, Parsed::NotShell);
+    }
+
+    #[test]
+    fn antigravity_denies_and_downgrades_ask_to_deny() {
+        // Deny carries a decision + reason.
+        let out = Dialect::Antigravity.format(&Resolved::Deny("boom".into()));
+        let v: serde_json::Value = serde_json::from_str(&out.stdout.unwrap()).unwrap();
+        assert_eq!(v["decision"], "deny");
+        assert_eq!(v["reason"], "boom");
+        // No native ask → a hold becomes deny.
+        let out = Dialect::Antigravity.format(&Resolved::Ask("held".into()));
+        let v: serde_json::Value = serde_json::from_str(&out.stdout.unwrap()).unwrap();
+        assert_eq!(v["decision"], "deny", "antigravity has no ask; must deny");
+    }
+
+    #[test]
+    fn antigravity_allow_and_pass_are_explicit() {
+        let allow = Dialect::Antigravity.format(&Resolved::Allow);
+        let v: serde_json::Value = serde_json::from_str(&allow.stdout.unwrap()).unwrap();
+        assert_eq!(v["decision"], "allow");
+        assert_eq!(
+            Dialect::Antigravity.pass(),
+            format_antigravity(&Resolved::Allow),
+            "antigravity must answer its gate with an explicit allow"
+        );
     }
 
     #[test]
@@ -514,6 +656,7 @@ mod tests {
             Dialect::Cursor,
             Dialect::OpenCode,
             Dialect::Codex,
+            Dialect::Antigravity,
         ] {
             assert!(matches!(d.parse("not json"), Parsed::Bad(_)), "{d:?}");
         }

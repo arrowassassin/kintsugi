@@ -11,7 +11,37 @@ All notable changes to Kintsugi are documented here. The format loosely follows
   (`https://arrowassassin.github.io/kintsugi/…`), which serves SVG as `image/svg+xml`.
   README-only change; no code changes.
 
-## [Unreleased]
+## [0.1.5]
+
+### Google Antigravity support
+- **`kintsugi init` now detects and wires Google Antigravity** like the other
+  agents. It installs a native `PreToolUse` plugin hook at
+  `~/.gemini/antigravity-cli/plugins/kintsugi/hooks.json` (matcher `run_command`),
+  so destructive commands are classified before they run, and prints the
+  `mcpServers` entry to add to `~/.gemini/config/mcp_config.json` as the MCP
+  fallback. A new `antigravity` hook dialect parses Antigravity's
+  `toolCall.arguments.CommandLine` payload and answers `{decision: allow|deny}`
+  (no native "ask" — an ambiguous hold maps to deny, per the monotonic-caution
+  rule). Detection uses Antigravity's own `~/.gemini/antigravity-cli` subtree, so
+  it's distinguished from a plain Gemini CLI install that shares `~/.gemini`.
+
+### Fixes from real-world use
+- **Version reporting fixed.** The crate version is bumped to `0.1.5`; an earlier
+  tag was cut without bumping it, so the binary self-reported a stale version and
+  `kintsugi update` would offer the "new" release forever. `kintsugi update` now
+  **verifies** the result: it warns if the freshly-installed binary reports the
+  wrong version (a release built without a bump) or if another `kintsugi` shadows
+  it earlier on your `PATH` — instead of silently looking like a no-op.
+- **The backstop watcher is far quieter.** It now records only the *destructive*
+  filesystem signals it exists to catch — **deletions and renames** — and skips
+  file creates and content saves (the bulk of a working tree's churn, already
+  covered by interception + snapshots for agent writes). It also ignores
+  build/VCS/cache trees (`.git`, `node_modules`, `target`, `dist`, …) and editor
+  scratch files. This keeps the append-only log to signal, not noise.
+- **The TUI separates the backstop from the timeline.** `fs-watch` observations
+  now live in their own **Backstop** tab (press `4`) instead of flooding the
+  Timeline, which is now agent + human command activity. ("fs-watch" is the
+  filesystem backstop `kintsugi init` starts — see `kintsugi limits`.)
 
 ### Make the protection visible and trustworthy
 - **`kintsugi dry-run`** — point Kintsugi at commands you've already run (your

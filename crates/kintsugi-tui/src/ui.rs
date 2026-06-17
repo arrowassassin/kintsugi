@@ -930,10 +930,17 @@ mod tests {
             ev("claude-code", "ls", Class::Safe, Decision::Allow),
             ev("shim", "rm -rf /", Class::Catastrophic, Decision::Hold),
         ]);
-        let text = buffer_text(&app, 100, 24);
+        // Render wide so the full tab bar (incl. the Backstop tab) has room and
+        // isn't overlapped by the right-aligned vitals strip.
+        let text = buffer_text(&app, 140, 24);
         // Timeline holds both; Audit holds only the catastrophic one.
         assert!(text.contains("Timeline] 2"));
         assert!(text.contains("Audit  1") || text.contains("Audit 1"));
+        // The dedicated backstop tab is present in the bar.
+        assert!(
+            text.contains("Backstop"),
+            "tab bar should include Backstop:\n{text}"
+        );
     }
 
     #[test]

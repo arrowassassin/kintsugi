@@ -1286,6 +1286,7 @@ fn wire_hook(kind: init::HookKind, home: Option<&std::path::Path>) -> Result<()>
         Copilot => wire_copilot(home),
         Codex => wire_codex(home),
         OpenCode => wire_opencode(home),
+        Antigravity => wire_antigravity(home),
     }
 }
 
@@ -1343,6 +1344,28 @@ fn wire_opencode(home: &std::path::Path) -> Result<()> {
     let hook_bin = init::sibling_bin("kintsugi-hook");
     let js = init::opencode_plugin_js(&hook_bin.to_string_lossy());
     write_file(&path, &js)
+}
+
+/// Antigravity: write the plugin hook at
+/// `~/.gemini/antigravity-cli/plugins/kintsugi/hooks.json` (a file Kintsugi owns
+/// wholesale). Also print where to add the MCP server as the documented fallback.
+fn wire_antigravity(home: &std::path::Path) -> Result<()> {
+    let path = home
+        .join(".gemini")
+        .join("antigravity-cli")
+        .join("plugins")
+        .join("kintsugi")
+        .join("hooks.json");
+    let cfg = init::antigravity_hooks_config(&hook_command("antigravity"));
+    write_file(&path, &serde_json::to_string_pretty(&cfg)?)?;
+    // Surface the MCP alternative — Antigravity reads ~/.gemini/config/mcp_config.json
+    // (or .agents/mcp_config.json per workspace). Print the exact entry to paste.
+    let mcp = init::antigravity_mcp_config(&init::sibling_bin("kintsugi-mcp").to_string_lossy());
+    println!("      MCP alternative — merge into ~/.gemini/config/mcp_config.json:");
+    for line in serde_json::to_string_pretty(&mcp)?.lines() {
+        println!("        {line}");
+    }
+    Ok(())
 }
 
 /// Bare `kintsugi`: a short banner that tells you the current state and the next step.
@@ -1482,10 +1505,85 @@ fn cmd_update(check_only: bool, yes: bool) -> Result<()> {
     }
 
     run_installer(&tag, had_llama).context("install the update")?;
+
+    // Verify the result instead of trusting it. A release built without bumping
+    // its version, or another `kintsugi` shadowing ours on PATH, otherwise looks
+    // like a silent no-op ("still on the old version") — the exact failure users
+    // hit. Catch both and say what's actually wrong.
+    verify_update(latest);
+
     println!(
         "  ✓ updated to {latest}. Restart the daemon to run it:  kintsugi stop && kintsugi init"
     );
     Ok(())
+}
+
+/// After installing, confirm the binary that now sits where we installed actually
+/// reports the new version, and that it's the one the user's shell will run.
+fn verify_update(expected: &str) {
+    let Some(installed) = std::env::current_exe().ok() else {
+        return;
+    };
+    // 1. Did the new binary land with the right version?
+    if let Some(got) = binary_version(&installed) {
+        let got = got.trim_start_matches('v');
+        if got != expected {
+            eprintln!(
+                "  ⚠ installed {expected}, but {} reports {got}.",
+                installed.display()
+            );
+            eprintln!("    The release was likely built without bumping its version — the code is");
+            eprintln!("    updated (the new features are active; check `kintsugi tui`), only the");
+            eprintln!("    version string is stale. Nothing more to do on your end.");
+        }
+    }
+    // 2. Will the shell actually run the binary we just updated?
+    if let Some(active) = first_on_path("kintsugi") {
+        let same = std::fs::canonicalize(&active).ok() == std::fs::canonicalize(&installed).ok();
+        if !same {
+            eprintln!(
+                "  ⚠ your shell runs {} first, not the just-updated {}.",
+                active.display(),
+                installed.display()
+            );
+            eprintln!(
+                "    Put {} earlier on PATH (or remove the older copy) so `kintsugi` is the new one.",
+                installed.parent().map(|p| p.display().to_string()).unwrap_or_default()
+            );
+        }
+    }
+}
+
+/// Run `<bin> --version` and return the reported version token (the last word of
+/// e.g. `kintsugi 0.1.5`), or `None` if it can't be determined.
+fn binary_version(bin: &std::path::Path) -> Option<String> {
+    let out = std::process::Command::new(bin)
+        .arg("--version")
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(version_token(&String::from_utf8_lossy(&out.stdout)))?
+}
+
+/// The version token from a `--version` line, e.g. `kintsugi 0.1.5` → `0.1.5`.
+/// Pure, so the parse is unit-tested without spawning a process.
+fn version_token(stdout: &str) -> Option<String> {
+    stdout.split_whitespace().last().map(str::to_string)
+}
+
+/// The first `name` found on `PATH` — what an interactive shell would resolve.
+fn first_on_path(name: &str) -> Option<PathBuf> {
+    first_in_path_value(&std::env::var_os("PATH")?, name)
+}
+
+/// Inner form taking an explicit `PATH` value, so the lookup is unit-testable
+/// without mutating the process environment.
+fn first_in_path_value(path: &std::ffi::OsStr, name: &str) -> Option<PathBuf> {
+    std::env::split_paths(path)
+        .map(|d| d.join(name))
+        .find(|p| p.is_file())
 }
 
 /// Whether the installed `kintsugi-daemon` (sibling of this binary) has the llama
@@ -1692,10 +1790,13 @@ fn cmd_status() -> Result<()> {
         }
     }
 
-    // Shell enforcement: when on, the wiring sits in root-owned system files a
-    // normal user can't edit out — only root (or the admin password) can remove.
-    if shell_enforce::is_enforced() {
-        println!("  shell:   enforced system-wide (only root/admin can remove)");
+    // Shell enforcement: only claim "un-removable" when the wiring is actually in
+    // root-owned files. If it's present but not root-owned, say so — that's a
+    // weaker state a normal user could still edit.
+    if shell_enforce::is_root_enforced() {
+        println!("  shell:   enforced system-wide (root-owned; only root/admin can remove)");
+    } else if shell_enforce::is_enforced() {
+        println!("  shell:   wiring present but NOT root-owned — a user could still edit it");
     }
 
     // The panic kill-switch is the loudest state — surface it prominently.
@@ -1962,6 +2063,34 @@ mod filter_tests {
             std::env::split_paths(&out).collect::<Vec<_>>(),
             vec![shim.to_path_buf()]
         );
+    }
+
+    #[test]
+    fn version_token_takes_the_last_word() {
+        assert_eq!(version_token("kintsugi 0.1.5").as_deref(), Some("0.1.5"));
+        assert_eq!(
+            version_token("kintsugi v0.1.5\n").as_deref(),
+            Some("v0.1.5")
+        );
+        assert_eq!(version_token("   ").as_deref(), None);
+    }
+
+    #[test]
+    fn first_in_path_value_resolves_the_first_hit() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = tmp.path().join("a");
+        let b = tmp.path().join("b");
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        // Only dir `b` holds the binary → it's found there, not in `a`.
+        std::fs::write(b.join("kintsugi"), b"x").unwrap();
+        let path = std::env::join_paths([&a, &b]).unwrap();
+        assert_eq!(
+            first_in_path_value(&path, "kintsugi"),
+            Some(b.join("kintsugi"))
+        );
+        // Absent everywhere → None.
+        assert_eq!(first_in_path_value(&path, "nope-not-here"), None);
     }
 
     #[test]

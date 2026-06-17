@@ -123,14 +123,19 @@ enum Source {
 pub fn run(file: Option<PathBuf>, number: usize) -> Result<()> {
     let source = resolve_source(file)?;
     let (label, text) = match &source {
-        Source::Stdin => ("piped input".to_string(), read_stdin()?),
+        Source::Stdin => (
+            "piped input".to_string(),
+            read_capped(std::io::stdin().lock())?,
+        ),
         Source::File(p) => (
             p.display().to_string(),
-            std::fs::read_to_string(p).with_context(|| format!("read {}", p.display()))?,
+            read_capped(std::fs::File::open(p).with_context(|| format!("open {}", p.display()))?)
+                .with_context(|| format!("read {}", p.display()))?,
         ),
         Source::History(p) => (
             p.display().to_string(),
-            std::fs::read_to_string(p).with_context(|| format!("read {}", p.display()))?,
+            read_capped(std::fs::File::open(p).with_context(|| format!("open {}", p.display()))?)
+                .with_context(|| format!("read {}", p.display()))?,
         ),
     };
 
@@ -155,11 +160,17 @@ fn resolve_source(file: Option<PathBuf>) -> Result<Source> {
         .context("couldn't find a shell history file — pass one with --file, or pipe commands in")
 }
 
-fn read_stdin() -> Result<String> {
+/// Largest input we'll scan. A shell history is far smaller; this just stops a
+/// `--file /dev/zero` (or an endless pipe) from reading until it exhausts memory.
+const MAX_INPUT: u64 = 16 * 1024 * 1024;
+
+/// Read at most [`MAX_INPUT`] bytes as UTF-8, so pathological inputs can't OOM us.
+fn read_capped<R: Read>(reader: R) -> Result<String> {
     let mut buf = String::new();
-    std::io::stdin()
+    reader
+        .take(MAX_INPUT)
         .read_to_string(&mut buf)
-        .context("read stdin")?;
+        .context("read input")?;
     Ok(buf)
 }
 
@@ -341,6 +352,12 @@ mod tests {
             "secret leaked into dry-run output"
         );
         assert!(shown.contains("[redacted]"));
+    }
+
+    #[test]
+    fn read_capped_reads_normal_input() {
+        let s = read_capped(std::io::Cursor::new(b"git status\nrm -rf x\n".to_vec())).unwrap();
+        assert!(s.contains("rm -rf x"));
     }
 
     #[test]

@@ -71,6 +71,9 @@ pub enum HookKind {
     Codex,
     /// OpenCode JS plugin — `~/.config/opencode/plugin/kintsugi.js`.
     OpenCode,
+    /// Google Antigravity — a plugin `hooks.json` under
+    /// `~/.gemini/antigravity-cli/plugins/kintsugi/`, `PreToolUse` / `run_command`.
+    Antigravity,
 }
 
 impl Interception {
@@ -105,6 +108,14 @@ pub fn detect_agents(home: &Path) -> Vec<DetectedAgent> {
         ),
         (".cursor", "cursor", "Cursor CLI", HookKind::Cursor),
         (".codex", "codex", "Codex CLI", HookKind::Codex),
+        // Antigravity shares ~/.gemini with the Gemini CLI, but its own CLI
+        // subtree is the distinguishing marker (and a different hook mechanism).
+        (
+            ".gemini/antigravity-cli",
+            "antigravity",
+            "Google Antigravity",
+            HookKind::Antigravity,
+        ),
     ];
     for (dir, id, name, kind) in hooked {
         if probe(dir) {
@@ -246,6 +257,44 @@ pub fn copilot_hooks_config(hook_command: &str) -> Value {
                     "timeoutSec": 30
                 }
             ]
+        }
+    })
+}
+
+/// Google Antigravity wiring: the contents of the plugin
+/// `~/.gemini/antigravity-cli/plugins/kintsugi/hooks.json`.
+///
+/// Antigravity's `hooks.json` maps a hook name to its event configs. We register
+/// a `PreToolUse` hook on the `run_command` tool that runs `kintsugi-hook`, which
+/// reads the call on stdin and answers `{decision: allow|deny}` on stdout. A
+/// command hook is fail-closed by nature (a crash isn't an allow), matching the
+/// spine. Kintsugi owns this file, so it's written wholesale (idempotent).
+pub fn antigravity_hooks_config(hook_command: &str) -> Value {
+    json!({
+        "kintsugi-gate": {
+            "PreToolUse": [
+                {
+                    "matcher": "run_command",
+                    "hooks": [ { "type": "command", "command": hook_command } ]
+                }
+            ]
+        }
+    })
+}
+
+/// Google Antigravity MCP wiring: the `mcpServers` entry to add to
+/// `~/.gemini/config/mcp_config.json` (global) or `.agents/mcp_config.json`
+/// (workspace). The MCP server is the documented fallback when the native hook
+/// isn't desired — the agent calls Kintsugi's `kintsugi-exec` tool instead of
+/// running commands directly. `command`/`args`/`env` is Antigravity's stdio shape.
+pub fn antigravity_mcp_config(mcp_bin: &str) -> Value {
+    json!({
+        "mcpServers": {
+            "kintsugi": {
+                "command": mcp_bin,
+                "args": [],
+                "env": {}
+            }
         }
     })
 }
@@ -438,6 +487,44 @@ mod tests {
         std::fs::create_dir_all(tmp.path().join(".opencode")).unwrap();
         let found = detect_agents(tmp.path());
         assert!(found.iter().any(|a| a.id == "opencode"));
+    }
+
+    #[test]
+    fn detects_antigravity_via_its_cli_subtree_distinct_from_gemini() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Both the Gemini CLI dir and Antigravity's own subtree exist.
+        std::fs::create_dir_all(tmp.path().join(".gemini/antigravity-cli")).unwrap();
+        let found = detect_agents(tmp.path());
+        let ag = found
+            .iter()
+            .find(|a| a.id == "antigravity")
+            .expect("antigravity detected");
+        assert_eq!(ag.via, Interception::Hook(HookKind::Antigravity));
+        // The shared ~/.gemini dir also means the Gemini CLI is detected — they're
+        // distinct tools with distinct hooks, so both is correct.
+        assert!(found.iter().any(|a| a.id == "gemini"));
+    }
+
+    #[test]
+    fn antigravity_hooks_config_is_a_pretooluse_command_gate() {
+        let cfg = antigravity_hooks_config("kintsugi-hook --agent antigravity");
+        let pre = &cfg["kintsugi-gate"]["PreToolUse"][0];
+        assert_eq!(pre["matcher"], "run_command");
+        assert_eq!(pre["hooks"][0]["type"], "command");
+        assert_eq!(
+            pre["hooks"][0]["command"],
+            "kintsugi-hook --agent antigravity"
+        );
+    }
+
+    #[test]
+    fn antigravity_mcp_config_points_at_the_mcp_server() {
+        let cfg = antigravity_mcp_config("/usr/local/bin/kintsugi-mcp");
+        assert_eq!(
+            cfg["mcpServers"]["kintsugi"]["command"],
+            "/usr/local/bin/kintsugi-mcp"
+        );
+        assert!(cfg["mcpServers"]["kintsugi"]["args"].is_array());
     }
 
     fn merge_claude(existing: Option<Value>, cmd: &str) -> Value {

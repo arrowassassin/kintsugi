@@ -134,17 +134,22 @@ pub enum Mode {
 /// slice you're looking at) is the information, not decoration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
-    /// Everything, newest first — the full agent + human + watcher stream.
+    /// Agent + human command activity, newest first. Excludes the filesystem
+    /// backstop's firehose (that has its own tab) so this stays the signal view.
     Timeline,
     /// Only the destructive band (catastrophic + ambiguous) — the audit lens.
     Audit,
     /// Only passively-recorded human shell commands (agent = `shell`).
     Recorder,
+    /// The filesystem-watcher backstop's record of un-intercepted changes
+    /// (agent = `fs-watch`) — deletions and renames it caught beneath the work
+    /// tree. Kept apart from the Timeline so it never drowns out command activity.
+    Backstop,
 }
 
 impl Tab {
     /// All tabs in display order.
-    pub const ALL: [Tab; 3] = [Tab::Timeline, Tab::Audit, Tab::Recorder];
+    pub const ALL: [Tab; 4] = [Tab::Timeline, Tab::Audit, Tab::Recorder, Tab::Backstop];
 
     /// The short label shown in the tab bar.
     pub fn title(self) -> &'static str {
@@ -152,6 +157,7 @@ impl Tab {
             Tab::Timeline => "Timeline",
             Tab::Audit => "Audit",
             Tab::Recorder => "Recorder",
+            Tab::Backstop => "Backstop",
         }
     }
 
@@ -167,15 +173,21 @@ impl Tab {
             Tab::Recorder => {
                 "No recorded shell sessions. Install the hook: kintsugi record install."
             }
+            Tab::Backstop => {
+                "No un-intercepted changes caught. The watcher records deletions and renames here."
+            }
         }
     }
 
     /// Whether an event belongs in this tab's slice.
     fn includes(self, e: &LoggedEvent) -> bool {
         match self {
-            Tab::Timeline => true,
-            Tab::Audit => e.class != kintsugi_core::Class::Safe,
+            // The Timeline is command activity; the backstop firehose has its own
+            // tab so a busy work tree never buries the agent/human commands.
+            Tab::Timeline => e.agent != "fs-watch",
+            Tab::Audit => e.class != kintsugi_core::Class::Safe && e.agent != "fs-watch",
             Tab::Recorder => e.agent == "shell",
+            Tab::Backstop => e.agent == "fs-watch",
         }
     }
 
@@ -183,7 +195,8 @@ impl Tab {
         match self {
             Tab::Timeline => Tab::Audit,
             Tab::Audit => Tab::Recorder,
-            Tab::Recorder => Tab::Timeline,
+            Tab::Recorder => Tab::Backstop,
+            Tab::Backstop => Tab::Timeline,
         }
     }
 }
@@ -665,6 +678,7 @@ impl App {
             KeyCode::Char('1') => self.select_tab(Tab::Timeline),
             KeyCode::Char('2') => self.select_tab(Tab::Audit),
             KeyCode::Char('3') => self.select_tab(Tab::Recorder),
+            KeyCode::Char('4') => self.select_tab(Tab::Backstop),
             KeyCode::Char('u') => return Action::Undo,
             KeyCode::Char('a') => return self.resolve_selected(true),
             KeyCode::Char('d') => return self.resolve_selected(false),
@@ -942,11 +956,14 @@ mod tests {
             ev("qwen", "make build", Class::Ambiguous, Decision::Hold),
             // A passively-recorded human command (agent = shell).
             ev("shell", "psql prod", Class::Safe, Decision::Allow),
+            // A backstop observation (agent = fs-watch) — its own tab, not Timeline.
+            ev("fs-watch", "removed /tmp/x", Class::Safe, Decision::Allow),
         ]);
 
-        // Timeline shows everything.
+        // Timeline shows command activity, but not the backstop firehose.
         assert_eq!(app.tab, Tab::Timeline);
         assert_eq!(app.visible().len(), 4);
+        assert!(app.visible().iter().all(|e| e.agent != "fs-watch"));
 
         // Audit = destructive band only (catastrophic + ambiguous).
         app.on_key(KeyCode::Char('2'));
@@ -960,7 +977,13 @@ mod tests {
         assert_eq!(app.visible().len(), 1);
         assert_eq!(app.visible()[0].command, "psql prod");
 
-        // Tab cycles back to Timeline.
+        // Backstop = the fs-watch slice only.
+        app.on_key(KeyCode::Char('4'));
+        assert_eq!(app.tab, Tab::Backstop);
+        assert_eq!(app.visible().len(), 1);
+        assert_eq!(app.visible()[0].command, "removed /tmp/x");
+
+        // Tab cycles back to Timeline (four tabs).
         app.on_key(KeyCode::Tab);
         assert_eq!(app.tab, Tab::Timeline);
 
