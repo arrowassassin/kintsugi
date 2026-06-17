@@ -18,7 +18,10 @@ kintsugi-daemon.workspace = true
 anyhow.workspace = true
 ratatui = "0.30.1"
 crossterm = "0.29.0"
-time = { workspace = true }
+# `local-offset` lets the timeline render timestamps in the viewer's local zone
+# (events are stored in UTC). The offset is read once at startup while the process
+# is single-threaded, which is the only context the time crate proves sound.
+time = { workspace = true, features = ["local-offset"] }
 zeroize.workspace = true
 
 [dev-dependencies]

@@ -94,6 +94,243 @@ fn undo_restores_a_snapshotted_file() {
 }
 
 #[test]
+fn enforce_shell_install_status_remove_round_trip() {
+    let tmp = tempfile::tempdir().unwrap();
+    let etc = tmp.path().join("etc");
+    std::fs::create_dir_all(&etc).unwrap();
+    let common = |c: &mut Command| {
+        c.env("KINTSUGI_DATA_DIR", tmp.path())
+            .env("KINTSUGI_DB", tmp.path().join("events.db"))
+            .env("KINTSUGI_SOCKET", tmp.path().join("none.sock"))
+            // Vault path under our temp dir → "unprovisioned" so removal isn't
+            // gated on a password we'd need to type. Honest scope is tested
+            // separately in admin_cmd's vault flows.
+            .env("KINTSUGI_VAULT", tmp.path().join("vault.bin"))
+            .env("KINTSUGI_ETC_DIR", &etc)
+            .env("NO_COLOR", "1");
+    };
+
+    // Off by default.
+    let mut s = kintsugi();
+    s.args(["admin", "enforce-shell", "--status"]);
+    common(&mut s);
+    let out = s.output().unwrap();
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stdout).contains("off"));
+
+    // Install — writes the managed block.
+    let mut i = kintsugi();
+    i.args(["admin", "enforce-shell"]);
+    common(&mut i);
+    let out = i.output().unwrap();
+    assert!(
+        out.status.success(),
+        "install failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let zshenv = std::fs::read_to_string(etc.join("zshenv")).unwrap();
+    assert!(zshenv.contains("kintsugi enforced shell wiring"));
+    assert!(
+        zshenv.contains("shims"),
+        "wiring should reference the shim dir"
+    );
+
+    // Status now reports on, and `kintsugi status` surfaces it too.
+    let mut st = kintsugi();
+    st.arg("status");
+    common(&mut st);
+    let out = st.output().unwrap();
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("enforced system-wide"),
+        "kintsugi status should surface enforcement"
+    );
+
+    // Remove — vault is unprovisioned, so it proceeds without a password prompt.
+    let mut r = kintsugi();
+    r.args(["admin", "enforce-shell", "--remove"]);
+    common(&mut r);
+    let out = r.output().unwrap();
+    assert!(out.status.success());
+    let zshenv = std::fs::read_to_string(etc.join("zshenv")).unwrap();
+    assert!(
+        !zshenv.contains("kintsugi enforced"),
+        "block should be gone"
+    );
+}
+
+#[test]
+fn status_reports_backstop_off_and_shim_drift() {
+    let tmp = tempfile::tempdir().unwrap();
+    // The shim dir exists but is deliberately not on PATH → loud drift warning.
+    std::fs::create_dir_all(tmp.path().join("shims")).unwrap();
+    let out = kintsugi()
+        .arg("status")
+        .env("KINTSUGI_DATA_DIR", tmp.path())
+        .env("KINTSUGI_DB", tmp.path().join("events.db"))
+        .env("KINTSUGI_SOCKET", tmp.path().join("none.sock"))
+        .env("PATH", "/usr/bin:/bin")
+        .env("NO_COLOR", "1")
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(s.contains("backstop: off"), "got:\n{s}");
+    assert!(s.contains("NOT on PATH"), "got:\n{s}");
+}
+
+#[test]
+fn status_reports_backstop_on_from_a_live_pid_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    // watch.pid sits next to the daemon pid (KINTSUGI_DB's parent). Point it at
+    // this test process, which is alive, so the backstop reads as on.
+    std::fs::write(
+        tmp.path().join("watch.pid"),
+        format!(
+            "{}\n{}\n",
+            std::process::id(),
+            tmp.path().join("repo").display()
+        ),
+    )
+    .unwrap();
+    let out = kintsugi()
+        .arg("status")
+        .env("KINTSUGI_DATA_DIR", tmp.path())
+        .env("KINTSUGI_DB", tmp.path().join("events.db"))
+        .env("KINTSUGI_SOCKET", tmp.path().join("none.sock"))
+        .env("NO_COLOR", "1")
+        .output()
+        .unwrap();
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(s.contains("backstop: watching"), "got:\n{s}");
+}
+
+#[test]
+fn stop_kills_the_backstop_watcher() {
+    let tmp = tempfile::tempdir().unwrap();
+    // A stand-in long-running watcher process.
+    let mut child = Command::new("sleep").arg("60").spawn().unwrap();
+    std::fs::write(
+        tmp.path().join("watch.pid"),
+        format!("{}\n{}\n", child.id(), tmp.path().display()),
+    )
+    .unwrap();
+
+    let out = kintsugi()
+        .arg("stop")
+        .env("KINTSUGI_DATA_DIR", tmp.path())
+        .env("KINTSUGI_DB", tmp.path().join("events.db"))
+        .env("KINTSUGI_SOCKET", tmp.path().join("none.sock"))
+        .env("NO_COLOR", "1")
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(s.contains("backstop watcher"), "got:\n{s}");
+    assert!(
+        !tmp.path().join("watch.pid").exists(),
+        "watch.pid should be removed"
+    );
+    // Reap the (now-terminated) stand-in process.
+    let _ = child.wait();
+}
+
+#[test]
+fn guard_forwards_exit_code_and_prepends_shim_to_path() {
+    let tmp = tempfile::tempdir().unwrap();
+    let common = |c: &mut Command| {
+        c.env("KINTSUGI_DATA_DIR", tmp.path())
+            .env("KINTSUGI_SOCKET", tmp.path().join("none.sock"))
+            .env("KINTSUGI_NO_AUTOSTART", "1") // don't spawn a daemon in the test
+            .env("NO_COLOR", "1");
+    };
+
+    // The child's exit code is forwarded faithfully.
+    let mut exit7 = kintsugi();
+    exit7.args(["guard", "--", "sh", "-c", "exit 7"]);
+    common(&mut exit7);
+    assert_eq!(exit7.output().unwrap().status.code(), Some(7));
+
+    // The child sees the shim dir at the front of PATH.
+    let mut showpath = kintsugi();
+    showpath.args(["guard", "--", "sh", "-c", "printf %s \"$PATH\""]);
+    common(&mut showpath);
+    let out = showpath.output().unwrap();
+    let path = String::from_utf8_lossy(&out.stdout);
+    let shim = tmp.path().join("shims");
+    assert!(
+        path.starts_with(&shim.display().to_string()),
+        "shim dir should be first on PATH, got: {path}"
+    );
+}
+
+#[test]
+fn guard_requires_a_command() {
+    let out = kintsugi().arg("guard").output().unwrap();
+    // clap rejects the missing required trailing arg with a non-zero exit.
+    assert!(!out.status.success());
+}
+
+#[test]
+fn dry_run_flags_dangerous_commands_from_stdin() {
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut child = kintsugi()
+        .arg("dry-run")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"git status\nrm -rf ./build\ncargo test\ngit push --force\n")
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success());
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(s.contains("dry-run"));
+    assert!(s.contains("would have been held or blocked"));
+    assert!(s.contains("rm -rf ./build"));
+    assert!(s.contains("git push --force"));
+}
+
+#[test]
+fn dry_run_redacts_secrets_before_printing() {
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut child = kintsugi()
+        .arg("dry-run")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"PGPASSWORD=hunter2 rm -rf /var/data\n")
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !s.contains("hunter2"),
+        "a secret leaked into dry-run output"
+    );
+    assert!(s.contains("[redacted]"));
+}
+
+#[test]
+fn limits_prints_the_honest_threat_scope() {
+    let out = kintsugi().arg("limits").output().unwrap();
+    assert!(out.status.success());
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(s.contains("seatbelt"));
+    assert!(s.contains("undo cannot bring back"));
+    assert!(s.contains("admin-lock"));
+}
+
+#[test]
 fn queue_without_daemon_is_graceful() {
     let tmp = tempfile::tempdir().unwrap();
     let out = kintsugi()
@@ -428,6 +665,9 @@ fn init_starts_daemon_and_status_reports_running() {
             .env("KINTSUGI_DATA_DIR", &data)
             .env("KINTSUGI_DB", data.join("events.db"))
             .env("XDG_RUNTIME_DIR", &run)
+            // Don't spawn the default-on backstop watcher in this test (it would
+            // watch the crate's working dir and linger as a stray process).
+            .env("KINTSUGI_NO_WATCH", "1")
             .env("KINTSUGI_CONFIG", tmp.path().join("none.toml"));
     };
 

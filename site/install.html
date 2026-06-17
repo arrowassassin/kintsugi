@@ -246,9 +246,12 @@ deny  = ["git push * --force", "kubectl * --context=prod"]</pre
             ><span class="ttl">kintsugi --help</span>
           </div>
           <pre>
-<span class="t-grn">kintsugi init</span>           detect agents, wire interception, start daemon
-<span class="t-grn">kintsugi stop</span>           stop the background daemon (inverse of init)
-<span class="t-grn">kintsugi status</span>         daemon / socket / log / chain / scorer / kill-switch
+<span class="t-grn">kintsugi init</span>           detect agents, wire interception, start daemon + backstop
+<span class="t-grn">kintsugi stop</span>           stop the background daemon + backstop (inverse of init)
+<span class="t-grn">kintsugi status</span>         daemon / backstop / shim-on-PATH / log / chain / scorer
+<span class="t-grn">kintsugi guard</span> &lt;cmd&gt;    launch an agent with interception forced on (yolo-safe)
+<span class="t-grn">kintsugi dry-run</span>       what Kintsugi would've caught in your history (runs nothing)
+<span class="t-grn">kintsugi limits</span>        the honest threat scope — what it can &amp; can't protect
 <span class="t-grn">kintsugi update</span>         check GitHub for a newer release &amp; install in place
 <span class="t-grn">kintsugi model</span> &lt;cmd&gt;    status · use &lt;path&gt; · pick · install · remove (local model)
 <span class="t-grn">kintsugi log</span> [-n N]     recent command timeline
@@ -257,8 +260,10 @@ deny  = ["git push * --force", "kubectl * --context=prod"]</pre
 <span class="t-grn">kintsugi approve</span> &lt;id&gt;   release a held command (agent proceeds)
 <span class="t-grn">kintsugi deny</span> &lt;id&gt;      reject a held command
 <span class="t-grn">kintsugi undo</span> [--session] restore snapshotted files
-<span class="t-grn">kintsugi watch</span> &lt;path&gt;   FS-watcher backstop for un-intercepted changes
+<span class="t-grn">kintsugi watch</span> &lt;path&gt;   extend the FS-watcher backstop to more paths
 <span class="t-grn">kintsugi panic</span> / <span class="t-grn">resume</span>  kill-switch on / off
+<span class="t-grn">kintsugi admin enforce-shell</span>  lock the shim wiring in root-owned /etc files
+                              (a normal user can't remove; root + admin pw can)
 </pre>
         </div>
       </section>

@@ -9,9 +9,11 @@
 use kintsugi_core::{Class, Decision, LoggedEvent};
 use ratatui::prelude::*;
 use ratatui::widgets::{
-    Block, BorderType, Borders, Cell, Gauge, Paragraph, Row, Table, TableState, Wrap,
+    Block, BorderType, Borders, Cell, Gauge, Paragraph, Row, Scrollbar, ScrollbarOrientation,
+    ScrollbarState, Table, TableState, Wrap,
 };
 use time::macros::format_description;
+use time::UtcOffset;
 
 use crate::app::{outcome_word, App, Mode, Screen, Tab, MIN_HEIGHT, MIN_WIDTH};
 
@@ -224,6 +226,8 @@ fn render_header(f: &mut Frame, app: &App, area: Rect) {
             spans.push(Span::styled(" · ", dim(app)));
         }
         let active = *tab == app.tab;
+        // The active tab is bracketed *and* bold/accent, so it reads as selected
+        // without color (NO_COLOR-safe); each tab carries its row count as a badge.
         let label = if active {
             format!("[{}]", tab.title())
         } else {
@@ -235,6 +239,7 @@ fn render_header(f: &mut Frame, app: &App, area: Rect) {
             dim(app)
         };
         spans.push(Span::styled(label, style));
+        spans.push(Span::styled(format!(" {}", app.tab_total(*tab)), dim(app)));
     }
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 
@@ -322,9 +327,40 @@ fn decision_color(d: Decision) -> Color {
     }
 }
 
-fn fmt_time(ev: &LoggedEvent) -> String {
+/// `HH:MM:SS` in the viewer's local zone (events are stored in UTC).
+fn fmt_time(ev: &LoggedEvent, offset: UtcOffset) -> String {
     let f = format_description!("[hour]:[minute]:[second]");
-    ev.ts.format(&f).unwrap_or_else(|_| "--:--:--".into())
+    ev.ts
+        .to_offset(offset)
+        .format(&f)
+        .unwrap_or_else(|_| "--:--:--".into())
+}
+
+/// `Mon DD` in the viewer's local zone — the day a row's command happened. Used
+/// as a group label: shown only when the date changes down the list.
+fn fmt_date(ev: &LoggedEvent, offset: UtcOffset) -> String {
+    let f = format_description!("[month repr:short] [day]");
+    ev.ts
+        .to_offset(offset)
+        .format(&f)
+        .unwrap_or_else(|_| "------".into())
+}
+
+/// Full `YYYY-MM-DD HH:MM:SS ±HH:MM` for the detail pane — unambiguous, with the
+/// offset spelled out so there's no doubt which zone it's in.
+fn fmt_datetime(ev: &LoggedEvent, offset: UtcOffset) -> String {
+    let f = format_description!(
+        "[year]-[month]-[day] [hour]:[minute]:[second] [offset_hour sign:mandatory]:[offset_minute]"
+    );
+    ev.ts
+        .to_offset(offset)
+        .format(&f)
+        .unwrap_or_else(|_| "—".into())
+}
+
+/// The local calendar day of an event, for deciding when to print a date label.
+fn local_day(ev: &LoggedEvent, offset: UtcOffset) -> time::Date {
+    ev.ts.to_offset(offset).date()
 }
 
 fn short_session(ev: &LoggedEvent) -> String {
@@ -334,60 +370,86 @@ fn short_session(ev: &LoggedEvent) -> String {
     }
 }
 
+// Fixed column widths (the command column flexes to fill the rest).
+const W_DATE: u16 = 6; // "Jun 17"
+const W_TIME: u16 = 8; // "11:43:30"
+const W_AGENT: u16 = 12;
+const W_SESSION: u16 = 8;
+const W_OUTCOME: u16 = 7; // "allowed"
+
 fn render_list(f: &mut Frame, app: &App, area: Rect) {
     let visible = app.visible();
+    let offset = app.local_offset;
     // Show a session column when there's room; the detail pane always has the
     // full id, so on narrow terminals we drop the column rather than scroll.
     let show_session = area.width >= 92;
 
-    let mut head = vec!["time", "agent"];
+    let mut head = vec!["date", "time", "agent"];
     if show_session {
         head.push("session");
     }
     head.push("outcome");
     head.push("command");
-    let header = Row::new(head).style(dim(app)).height(1);
+    let n_cols = head.len() as u16;
+    let header = Row::new(head)
+        .style(dim(app).add_modifier(Modifier::BOLD))
+        .height(1);
 
-    let rows = visible.iter().map(|ev| {
-        let outcome = Cell::from(Span::styled(
-            outcome_word(ev.decision),
-            accent_fg(app, decision_color(ev.decision)),
-        ));
-        let command = Line::from(vec![
-            Span::styled(
-                class_tag(ev.class),
+    // Budget for the flexing command column, so we can ellipsize cleanly instead
+    // of letting ratatui hard-clip mid-word at the panel edge.
+    let fixed = W_DATE + W_TIME + W_AGENT + W_OUTCOME + if show_session { W_SESSION } else { 0 };
+    let chrome = 2 /* borders */ + 2 /* highlight symbol */ + (n_cols - 1) /* column gaps */;
+    let cmd_width = area.width.saturating_sub(fixed + chrome).max(8) as usize;
+
+    let mut prev_day: Option<time::Date> = None;
+    let rows: Vec<Row> = visible
+        .iter()
+        .map(|ev| {
+            // Group by day: print the date only when it changes down the list, so
+            // a long run of same-day rows reads as one block (git-log style).
+            let day = local_day(ev, offset);
+            let date_cell = if prev_day != Some(day) {
+                Cell::from(Span::styled(fmt_date(ev, offset), dim(app)))
+            } else {
+                Cell::from("")
+            };
+            prev_day = Some(day);
+
+            let outcome = Cell::from(Span::styled(
+                outcome_word(ev.decision),
                 accent_fg(app, decision_color(ev.decision)),
-            ),
-            Span::raw(ev.command.clone()),
-        ]);
-        let mut cells = vec![
-            Cell::from(fmt_time(ev)),
-            Cell::from(truncate(&ev.agent, 12)),
-        ];
-        if show_session {
-            cells.push(Cell::from(Span::styled(short_session(ev), dim(app))));
-        }
-        cells.push(outcome);
-        cells.push(Cell::from(command));
-        Row::new(cells)
-    });
+            ));
+            let tag = class_tag(ev.class);
+            let body = ellipsize(&ev.command, cmd_width.saturating_sub(tag.len()));
+            let command = Line::from(vec![
+                Span::styled(tag, accent_fg(app, decision_color(ev.decision))),
+                Span::raw(body),
+            ]);
+            let mut cells = vec![
+                date_cell,
+                Cell::from(fmt_time(ev, offset)),
+                Cell::from(truncate(&ev.agent, W_AGENT as usize)),
+            ];
+            if show_session {
+                cells.push(Cell::from(Span::styled(short_session(ev), dim(app))));
+            }
+            cells.push(outcome);
+            cells.push(Cell::from(command));
+            Row::new(cells)
+        })
+        .collect();
 
-    let widths: Vec<Constraint> = if show_session {
-        vec![
-            Constraint::Length(8),
-            Constraint::Length(12),
-            Constraint::Length(9),
-            Constraint::Length(8),
-            Constraint::Min(10),
-        ]
-    } else {
-        vec![
-            Constraint::Length(8),
-            Constraint::Length(12),
-            Constraint::Length(8),
-            Constraint::Min(10),
-        ]
-    };
+    let mut widths = vec![
+        Constraint::Length(W_DATE),
+        Constraint::Length(W_TIME),
+        Constraint::Length(W_AGENT),
+    ];
+    if show_session {
+        widths.push(Constraint::Length(W_SESSION));
+    }
+    widths.push(Constraint::Length(W_OUTCOME));
+    widths.push(Constraint::Min(10));
+
     let highlight = if app.color {
         Style::default()
             .bg(Color::Indexed(236))
@@ -395,14 +457,56 @@ fn render_list(f: &mut Frame, app: &App, area: Rect) {
     } else {
         Style::default().add_modifier(Modifier::REVERSED)
     };
+    // Title carries the position so the count is always in view: "timeline 42/830".
+    let title = format!(
+        " {} {}/{} ",
+        app.tab.title().to_lowercase(),
+        (app.selected + 1).min(visible.len()),
+        visible.len()
+    );
     let table = Table::new(rows, widths)
         .header(header)
-        .block(panel(app, &format!(" {} ", app.tab.title().to_lowercase())))
+        .block(panel(app, &title))
         .row_highlight_style(highlight)
         .highlight_symbol("› ");
 
     let mut state = TableState::default().with_selected(Some(app.selected));
     f.render_stateful_widget(table, area, &mut state);
+
+    // A scrollbar on the right border when the list overflows the viewport, so
+    // there's a visible sense of position and how much is off-screen. Drawn on
+    // the border itself (not over data); calm in monochrome too. The viewport is
+    // derived from the render area (height minus the two borders and the header
+    // row), not the event loop's page_rows, so it's correct in any render path.
+    let rows_on_screen = area.height.saturating_sub(3).max(1) as usize;
+    if visible.len() > rows_on_screen {
+        let mut sb_state = ScrollbarState::new(visible.len())
+            .viewport_content_length(rows_on_screen)
+            .position(app.selected);
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(Some("↑"))
+            .end_symbol(Some("↓"))
+            .track_symbol(Some("│"))
+            .thumb_symbol("█")
+            .style(dim(app));
+        f.render_stateful_widget(
+            scrollbar,
+            area.inner(Margin {
+                vertical: 1,
+                horizontal: 0,
+            }),
+            &mut sb_state,
+        );
+    }
+}
+
+/// Truncate a single-line string to `max` display columns, appending '…' when it
+/// doesn't fit. `max == 0` yields an empty string.
+fn ellipsize(s: &str, max: usize) -> String {
+    if max == 0 {
+        return String::new();
+    }
+    truncate(s, max)
 }
 
 fn render_detail(f: &mut Frame, app: &App, area: Rect, full: bool) {
@@ -458,7 +562,10 @@ fn render_detail(f: &mut Frame, app: &App, area: Rect, full: bool) {
             Span::raw(session.clone()),
         ]));
     }
-    lines.push(Line::from(vec![label("when"), Span::raw(fmt_time(ev))]));
+    lines.push(Line::from(vec![
+        label("when"),
+        Span::raw(fmt_datetime(ev, app.local_offset)),
+    ]));
     lines.push(Line::from(vec![
         label("reason"),
         Span::raw(ev.reason.clone()),
@@ -522,12 +629,16 @@ fn gauge_rect(area: Rect) -> Rect {
 
 fn render_footer(f: &mut Frame, app: &App, area: Rect) {
     let rows = Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).split(area);
-    let help = "j/k move · tab · detail · a/d resolve · u undo · s settings · / filter · q quit";
-    // Right-aligned "row N/M" indicator so paging has a frame of reference — but
-    // only when it fits without crowding the help (narrow terminals show help alone).
+    let help = "j/k move · space/b page · tab · a/d resolve · u undo · / filter · q quit";
+    // Right-aligned position indicator so paging has a frame of reference — both
+    // the row and the page of the current viewport — shown only when it fits
+    // without crowding the help (narrow terminals show help alone).
     let total = app.visible().len();
     let pos = if total > 0 {
-        format!("row {}/{}", app.selected + 1, total)
+        let per = app.page_rows.max(1);
+        let page = app.selected / per + 1;
+        let pages = total.div_ceil(per);
+        format!("row {}/{} · pg {}/{}", app.selected + 1, total, page, pages)
     } else {
         String::new()
     };
@@ -737,6 +848,92 @@ mod tests {
         assert!(!text.contains("secret"), "raw password must never render");
         assert!(text.contains("incorrect password"));
         assert!(text.contains("esc quit"));
+    }
+
+    fn ev_at(ts: time::OffsetDateTime, agent: &str, raw: &str) -> LoggedEvent {
+        let mut e = ev(agent, raw, Class::Safe, Decision::Allow);
+        e.ts = ts;
+        e
+    }
+
+    #[test]
+    fn time_and_date_render_in_the_local_offset() {
+        use time::macros::datetime;
+        let e = ev_at(datetime!(2026-06-17 23:30:00 UTC), "shell", "ls");
+        // UTC: late evening on the 17th.
+        assert_eq!(fmt_time(&e, UtcOffset::UTC), "23:30:00");
+        assert_eq!(fmt_date(&e, UtcOffset::UTC), "Jun 17");
+        // +02:00 rolls both the clock and the calendar day forward.
+        let plus2 = UtcOffset::from_hms(2, 0, 0).unwrap();
+        assert_eq!(fmt_time(&e, plus2), "01:30:00");
+        assert_eq!(fmt_date(&e, plus2), "Jun 18");
+        assert!(fmt_datetime(&e, plus2).contains("+02:00"));
+    }
+
+    #[test]
+    fn date_column_groups_by_day() {
+        use time::macros::datetime;
+        let mut app = App::new(false);
+        app.set_events(vec![
+            ev_at(datetime!(2026-06-16 09:00:00 UTC), "shell", "older"),
+            ev_at(datetime!(2026-06-17 09:00:00 UTC), "shell", "first-today"),
+            ev_at(datetime!(2026-06-17 10:00:00 UTC), "shell", "second-today"),
+        ]);
+        let text = buffer_text(&app, 100, 24);
+        // Each day is labelled once; the second same-day row repeats no date.
+        assert_eq!(
+            text.matches("Jun 17").count(),
+            1,
+            "consecutive same-day rows share one date label"
+        );
+        assert!(text.contains("Jun 16"));
+    }
+
+    #[test]
+    fn scrollbar_shows_only_when_the_list_overflows() {
+        let mut app = App::new(false);
+        let many: Vec<LoggedEvent> = (0..50)
+            .map(|_| ev("shell", "ls", Class::Safe, Decision::Allow))
+            .collect();
+        app.set_events(many);
+        let overflow = buffer_text(&app, 80, 12);
+        assert!(
+            overflow.contains('█') || overflow.contains('↓'),
+            "an overflowing list must show a scrollbar"
+        );
+
+        app.set_events(vec![ev("shell", "ls", Class::Safe, Decision::Allow)]);
+        let fits = buffer_text(&app, 80, 24);
+        assert!(
+            !fits.contains('█') && !fits.contains('↓'),
+            "no scrollbar when everything fits"
+        );
+    }
+
+    #[test]
+    fn footer_shows_row_and_page_position() {
+        let mut app = App::new(false);
+        app.page_rows = 5;
+        let many: Vec<LoggedEvent> = (0..12)
+            .map(|_| ev("shell", "ls", Class::Safe, Decision::Allow))
+            .collect();
+        app.set_events(many);
+        let text = buffer_text(&app, 100, 14);
+        assert!(text.contains("row 1/12"));
+        assert!(text.contains("pg 1/3"));
+    }
+
+    #[test]
+    fn tab_bar_shows_count_badges() {
+        let mut app = App::new(false);
+        app.set_events(vec![
+            ev("claude-code", "ls", Class::Safe, Decision::Allow),
+            ev("shim", "rm -rf /", Class::Catastrophic, Decision::Hold),
+        ]);
+        let text = buffer_text(&app, 100, 24);
+        // Timeline holds both; Audit holds only the catastrophic one.
+        assert!(text.contains("Timeline] 2"));
+        assert!(text.contains("Audit  1") || text.contains("Audit 1"));
     }
 
     #[test]

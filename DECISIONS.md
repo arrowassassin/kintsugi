@@ -417,3 +417,44 @@ the locked product decisions this build implements.
   reimplementing the HF picker + engine build in Rust. The MCP server binary is
   named `kintsugi-mcp` everywhere (the consolidation's transient `kintsugi-exec`
   name broke the release archive lookup).
+- Visibility/UX: `kintsugi dry-run` classifies a batch of already-run commands
+  (shell history / `--file` / stdin) and reports what *would* have been held —
+  running, logging, and sending nothing; flagged lines pass through secret
+  redaction before display (spine #6). `kintsugi limits` states the honest threat
+  scope in-product (spine #7). `kintsugi status` gained a saves counter. These add
+  no dependencies and don't touch the spine — they only surface existing data.
+- TUI polish: timestamps render in the viewer's local offset (read once at startup
+  while single-threaded via `time`'s `local-offset`; events stay stored in UTC),
+  with a day-grouped date column, a right-border scrollbar (sized from the render
+  area, drawn on the border not over data, monochrome-safe), a row+page footer
+  indicator, and per-tab count badges. Honors the existing NO_COLOR / single-accent
+  / reflow rules.
+- Backstop default-on: `kintsugi init` starts the filesystem-watcher backstop for
+  the work tree as a managed background process (pid+scope in `watch.pid`),
+  forwarding observations over IPC so the daemon stays the single hash-chain
+  writer. Opt out with `--no-watch` / `KINTSUGI_NO_WATCH`; scope via
+  `KINTSUGI_WATCH_DIR`. `status` reports the backstop and warns when the shim dir
+  is not on `PATH` (a reverted shell profile is now loud, not silent). This flips
+  a guardrail default (watcher opt-in → opt-out) by deliberate decision; the
+  watcher still only records, never gates.
+- Enterprise shell enforcement: `kintsugi admin enforce-shell` writes the shim
+  PATH wiring into root-owned system files (Unix: `/etc/zshenv` and
+  `/etc/profile.d/kintsugi.sh` when that dir exists, else `/etc/profile`;
+  Windows: machine-level PATH via PowerShell). The OS file-permission gate is the
+  install gate (a non-root write fails with an actionable "needs sudo" message).
+  Removal needs root **and** the admin-vault password when locked, so root running
+  a kintsugi command must still prove they're the admin — they can still
+  `rm /etc/zshenv` by hand, which is a different, more visible action. The
+  installed block is idempotent (managed BEGIN/END markers) and preserves
+  surrounding file contents. Tests use `KINTSUGI_ETC_DIR` to exercise the logic
+  without touching real `/etc`. Honest scope: binds users below root, not root —
+  stated in `kintsugi limits` and the install message.
+- Guarded launch: `kintsugi guard <command…>` forces the shim dir to the front of
+  the launched child's `PATH` so an auto-approve/"yolo" agent's by-name shell-outs
+  still hit the gate, ensures the daemon is up, and forwards the child's exit code
+  (and terminating signal, on Unix). OS-level sandboxing (Landlock/Seatbelt/
+  seccomp-unotify) is deferred to a dedicated spike rather than rushed into the
+  default path — the seccomp layer needs `unsafe`/FFI and the rulesets need
+  per-OS tuning, exactly the "spike the riskiest cross-platform primitive first"
+  rule. The launcher + default-on backstop close much of the yolo gap with no
+  unsafe code and no new dependencies.

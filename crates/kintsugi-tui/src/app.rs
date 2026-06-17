@@ -328,6 +328,10 @@ pub struct App {
     pub settings_selected: usize,
     /// Transient result/error line on the Settings screen.
     pub settings_status: Option<String>,
+    /// The viewer's local UTC offset, captured once at startup. Events are stored
+    /// in UTC; the timeline renders them in this offset. Defaults to UTC (also the
+    /// value tests run with, for deterministic formatting).
+    pub local_offset: time::UtcOffset,
 }
 
 impl App {
@@ -355,7 +359,20 @@ impl App {
             settings: None,
             settings_selected: 0,
             settings_status: None,
+            local_offset: time::UtcOffset::UTC,
         }
+    }
+
+    /// Set the local UTC offset used to render timestamps (called once at startup
+    /// from [`crate::run`], where the process is single-threaded).
+    pub fn set_local_offset(&mut self, offset: time::UtcOffset) {
+        self.local_offset = offset;
+    }
+
+    /// How many events fall in a tab's slice (ignoring the active filter) — for
+    /// the count badges in the tab bar.
+    pub fn tab_total(&self, tab: Tab) -> usize {
+        self.events.iter().filter(|e| tab.includes(e)).count()
     }
 
     /// Whether locked settings can be edited (provisioned + authenticated).

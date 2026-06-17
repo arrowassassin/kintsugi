@@ -29,3 +29,10 @@ pub use snapshot::{capture as capture_snapshot, restore as restore_snapshot, Man
 pub use types::{Class, Decision, Mode, ProposedCommand, Verdict};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Marker for the start of the managed shell enforcement block.
+pub const START: &str =
+    "# >>> kintsugi enforced shell wiring (root-owned — a normal user cannot edit this) >>>";
+
+/// Marker for the end of the managed shell enforcement block.
+pub const END: &str = "# <<< kintsugi enforced shell wiring <<<";

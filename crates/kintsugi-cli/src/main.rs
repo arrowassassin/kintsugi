@@ -5,11 +5,14 @@
 //! later phases.
 
 mod admin_cmd;
+mod dryrun;
 mod init;
 mod logview;
 mod model_cmd;
 mod record;
 mod service;
+mod shell_enforce;
+mod watcher;
 
 use std::io::IsTerminal;
 use std::path::PathBuf;
@@ -44,6 +47,10 @@ enum Command {
         /// gate + reversible undo, no admin machinery).
         #[arg(long)]
         enterprise: bool,
+        /// Don't start the default-on filesystem-watcher backstop (it records
+        /// changes that bypass interception, so undo stays complete).
+        #[arg(long)]
+        no_watch: bool,
     },
     /// Show daemon, socket, log, and interception status.
     Status,
@@ -128,6 +135,34 @@ enum Command {
     Test {
         /// The command line to classify (quote it).
         command: String,
+    },
+    /// "What would Kintsugi have caught?" — classify a batch of commands you've
+    /// already run (your shell history by default, a `--file`, or piped stdin)
+    /// and report which would have been held or blocked. Runs nothing, logs
+    /// nothing, sends nothing. The proof-before-trust command.
+    DryRun {
+        /// Read commands from this file (one per line) instead of shell history.
+        #[arg(long, value_name = "FILE")]
+        file: Option<PathBuf>,
+        /// How many of the most recent commands to scan.
+        #[arg(short = 'n', long, default_value_t = 200)]
+        number: usize,
+    },
+    /// What Kintsugi can and can't protect — its honest threat scope, in plain
+    /// English. A safety tool that names its own blind spots is one you can trust.
+    Limits,
+    /// Launch an agent (or any command) with interception forced on, so even an
+    /// agent in an auto-approve / "yolo" mode is guarded: the shim directory is
+    /// forced to the front of the child's PATH (its shell-outs hit the gate even
+    /// if it skips its own hook), the daemon is ensured up, and the default-on
+    /// backstop records anything that still slips past. The child's exit code
+    /// (and terminating signal, on Unix) is forwarded faithfully.
+    ///
+    /// Example: `kintsugi guard claude`  ·  `kintsugi guard -- npm run dev`.
+    Guard {
+        /// The command to launch and everything to pass to it, verbatim.
+        #[arg(trailing_var_arg = true, required = true)]
+        command: Vec<String>,
     },
     /// List commands held for approval.
     Queue,
@@ -278,6 +313,19 @@ enum AdminCmd {
         #[arg(long)]
         password_file: Option<std::path::PathBuf>,
     },
+    /// Install Kintsugi's shell wiring in **root-owned system files** so a normal
+    /// user cannot remove it by editing their own `~/.bashrc` — only root (or the
+    /// admin password) can. `--remove` uninstalls it; `--status` shows where it
+    /// lives. Needs sudo / Administrator. Honest scope: this binds users below
+    /// root, not root itself; see `kintsugi limits`.
+    EnforceShell {
+        /// Remove the system-level wiring (root / admin password required).
+        #[arg(long)]
+        remove: bool,
+        /// Show whether enforcement is on, and which files carry it.
+        #[arg(long)]
+        status: bool,
+    },
 }
 
 /// `kintsugi service` subcommands.
@@ -398,12 +446,13 @@ fn main() -> Result<()> {
             no_daemon,
             print_path,
             enterprise,
+            no_watch,
         }) => {
             if print_path {
                 println!("export PATH=\"{}:$PATH\"", shim_dir().display());
                 Ok(())
             } else {
-                cmd_init(no_daemon, enterprise)
+                cmd_init(no_daemon, enterprise, no_watch)
             }
         }
         Some(Command::Status) => cmd_status(),
@@ -421,6 +470,7 @@ fn main() -> Result<()> {
                 value,
                 password_file,
             } => admin_cmd::set(&key, &value, password_file),
+            AdminCmd::EnforceShell { remove, status } => cmd_enforce_shell(remove, status),
         },
         Some(Command::Service { cmd }) => match cmd {
             ServiceCmd::Install => service::install(),
@@ -444,6 +494,9 @@ fn main() -> Result<()> {
         Some(Command::Watch { paths }) => kintsugi_daemon::watch::run(&paths),
         Some(Command::Tui) => kintsugi_tui::run(&default_db_path(), &snapshot_dir()),
         Some(Command::Test { command }) => cmd_test(&command),
+        Some(Command::DryRun { file, number }) => dryrun::run(file, number),
+        Some(Command::Limits) => cmd_limits(),
+        Some(Command::Guard { command }) => cmd_guard(&command),
         Some(Command::Queue) => cmd_queue(),
         Some(Command::Approve { id }) => cmd_resolve_pending(&id, true),
         Some(Command::Deny { id }) => cmd_resolve_pending(&id, false),
@@ -525,6 +578,188 @@ fn cmd_test(raw: &str) -> Result<()> {
 
     println!();
     println!("Dry run: nothing was executed, logged, or sent anywhere.");
+    Ok(())
+}
+
+/// `kintsugi limits` — the honest threat scope. Operationalizes security-spine
+/// rule #7 ("nothing is unrecoverable", NOT "nothing runs un-warned") as an
+/// in-product page, so the boundary is something the user reads before they hit
+/// it the hard way. Pure text; reads and runs nothing.
+fn cmd_limits() -> Result<()> {
+    let color = logview::use_color(
+        std::env::var_os("NO_COLOR").is_some(),
+        std::io::stdout().is_terminal(),
+    );
+    let h = |s: &str| {
+        if color {
+            format!("\x1b[1m{s}\x1b[0m")
+        } else {
+            s.to_string()
+        }
+    };
+
+    println!("Kintsugi is a seatbelt, not a kernel firewall.");
+    println!(
+        "The honest guarantee is \"nothing is unrecoverable\" — not \"nothing runs un-warned.\""
+    );
+    println!("Here is exactly where that line falls.\n");
+
+    println!("{}", h("What it protects well"));
+    println!("  • Commands an agent runs through a wired hook, the MCP server, or the");
+    println!("    $PATH shim are classified before they run; catastrophic ones are blocked.");
+    println!("  • The decision is made by deterministic rules — never the model, which can");
+    println!("    only add caution, never unblock. So it can't be talked past by a prompt.");
+    println!("  • Destructive actions are snapshotted first, so `kintsugi undo` rolls them back.");
+    println!(
+        "  • The audit log is append-only and hash-chained: editing the past is detectable.\n"
+    );
+
+    println!("{}", h("What can step around the warning"));
+    println!("  • An agent in a \"yolo\" / auto-approve mode that skips its own hook.");
+    println!("  • A process that calls a tool by absolute path (/bin/rm), dodging the shim.");
+    println!("  • A statically-linked binary or a direct syscall.");
+    println!("  → For these, the filesystem-watcher backstop is your net: it records changes");
+    println!("    so the audit trail stays complete. It's on by default after `kintsugi init`");
+    println!("    for your work tree; `kintsugi status` shows whether it's running.\n");
+
+    println!("{}", h("What undo cannot bring back"));
+    println!("  • Anything off the filesystem: a sent network request, a force-pushed commit,");
+    println!("    an email, a deleted cloud resource.");
+    println!(
+        "  • A dropped/truncated remote database table — use your DB's point-in-time recovery."
+    );
+    println!("  • Unbounded targets (a glob, a $VARIABLE, the filesystem root, a device node)");
+    println!("    can't be fully snapshotted; Kintsugi says so before you confirm, and the");
+    println!("    watcher backstop is the fallback there, not a clean per-command undo.\n");
+
+    println!("{}", h("What the admin-lock does and doesn't stop"));
+    println!("  • It stops an agent, or a normal user, from quietly turning Kintsugi off.");
+    println!("  • With `kintsugi admin enforce-shell`, the shim wiring sits in root-owned");
+    println!("    system files (e.g. /etc/zshenv, /etc/profile.d/kintsugi.sh) — a normal");
+    println!("    user cannot remove it by editing their own ~/.bashrc.");
+    println!("  • It does NOT stop a determined process running as root, who can edit those");
+    println!("    same files directly. It guards against mistakes and ordinary users,");
+    println!("    reversibly — not a privileged adversary.\n");
+
+    println!("If a catastrophic command ever slips through to \"safe,\" that's a bug we treat");
+    println!("as critical — please report it: https://github.com/arrowassassin/kintsugi/issues");
+    Ok(())
+}
+
+/// Compose the child's PATH with the shim dir forced to the front, so commands
+/// the launched agent runs by name (the common case, even in auto-approve mode)
+/// resolve to Kintsugi's shim first and get classified. Pure, for testing.
+fn guarded_path(
+    shim: &std::path::Path,
+    current: Option<std::ffi::OsString>,
+) -> Result<std::ffi::OsString> {
+    match current {
+        Some(p) => {
+            let mut dirs = vec![shim.to_path_buf()];
+            // Drop any pre-existing copy of the shim dir so it isn't listed twice.
+            dirs.extend(std::env::split_paths(&p).filter(|d| d != shim));
+            std::env::join_paths(dirs).context("compose PATH")
+        }
+        None => Ok(shim.as_os_str().to_os_string()),
+    }
+}
+
+/// `kintsugi guard <command...>` — launch a command under Kintsugi.
+fn cmd_guard(command: &[String]) -> Result<()> {
+    let (prog, args) = command
+        .split_first()
+        .context("nothing to launch — try `kintsugi guard claude`")?;
+
+    // Ensure the gate is live, so the child's shell-outs get a real verdict
+    // rather than failing open. Skippable for tests / deliberate offline use.
+    if !Client::is_daemon_running() && std::env::var_os("KINTSUGI_NO_AUTOSTART").is_none() {
+        let _ = start_daemon();
+    }
+    let daemon_up = Client::is_daemon_running();
+
+    // Force the shim dir to the front of the child's PATH. Create the shims if
+    // `init` hasn't run yet (best-effort — the PATH prepend helps regardless).
+    let shim = shim_dir();
+    if !shim.exists() {
+        let shim_bin = init::sibling_bin("kintsugi-shim");
+        let _ = init::create_shims(&shim, &shim_bin, init::SHIM_COMMANDS);
+    }
+    let path = guarded_path(&shim, std::env::var_os("PATH"))?;
+
+    eprintln!(
+        "kintsugi: guarding `{}` — shim on PATH{}; backstop recording.",
+        command.join(" "),
+        if daemon_up {
+            ""
+        } else {
+            " (daemon down: shell-outs fail open unless KINTSUGI_FAIL_CLOSED=1)"
+        }
+    );
+    // Honest scope: this covers commands run by name. A tool invoked by absolute
+    // path (/bin/rm) still bypasses the shim — the backstop is the net there.
+    // Deep OS sandboxing (Landlock/seccomp) is a deliberate follow-up, not faked.
+
+    let status = std::process::Command::new(prog)
+        .args(args)
+        .env("PATH", &path)
+        .status()
+        .with_context(|| format!("launch {prog}"))?;
+
+    // Forward the child's fate faithfully: its exit code, or 128+signal on Unix.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(sig) = status.signal() {
+            std::process::exit(128 + sig);
+        }
+    }
+    std::process::exit(status.code().unwrap_or(1));
+}
+
+/// `kintsugi admin enforce-shell` — install/remove/status the system-level shell
+/// wiring. The point is to put the wiring in files a normal user can't edit, so
+/// only root (or the admin password) can take it out.
+fn cmd_enforce_shell(remove: bool, status_only: bool) -> Result<()> {
+    if status_only {
+        return shell_enforce::status();
+    }
+    if remove {
+        // Gate removal on the admin vault when one exists, so even root running
+        // `kintsugi admin enforce-shell --remove` has to prove they're the admin.
+        // (Root can still edit /etc by hand — see `kintsugi limits`; this is the
+        // boundary we publish, not a claim about binding root.)
+        if !admin_cmd::allow_admin("Admin password to remove shell enforcement: ") {
+            return Ok(());
+        }
+        let removed = shell_enforce::uninstall()?;
+        if removed.is_empty() {
+            println!("kintsugi: nothing to remove — system-level wiring not installed.");
+        } else {
+            println!("kintsugi: removed system-level shell wiring:");
+            for p in removed {
+                println!("  - {}", p.display());
+            }
+        }
+        return Ok(());
+    }
+
+    let shim = shim_dir();
+    if !shim.exists() {
+        // The shim dir must exist for the wiring to point at something real; run
+        // init's shim-creation first so this command works on a fresh host.
+        let shim_bin = init::sibling_bin("kintsugi-shim");
+        init::create_shims(&shim, &shim_bin, init::SHIM_COMMANDS)
+            .context("create $PATH shims before enforcing")?;
+    }
+    let written = shell_enforce::install(&shim)?;
+    println!("kintsugi: enforced shell wiring at the system level:");
+    for p in &written {
+        println!("  - {}", p.display());
+    }
+    println!();
+    println!("  A user cannot remove this by editing their own ~/.bashrc.");
+    println!("  Only root (or `kintsugi admin enforce-shell --remove` + admin password) can.");
+    println!("  Existing shells need to be re-opened to pick the wiring up.");
     Ok(())
 }
 
@@ -881,7 +1116,7 @@ fn shim_dir() -> PathBuf {
     std::env::temp_dir().join("kintsugi-shims")
 }
 
-fn cmd_init(no_daemon: bool, enterprise: bool) -> Result<()> {
+fn cmd_init(no_daemon: bool, enterprise: bool, no_watch: bool) -> Result<()> {
     println!(
         "kintsugi init{}",
         if enterprise { " (enterprise)" } else { "" }
@@ -959,6 +1194,22 @@ fn cmd_init(no_daemon: bool, enterprise: bool) -> Result<()> {
         }
     }
 
+    // 4. Backstop watcher (default-on): record changes that bypass interception,
+    // so `kintsugi undo` and the audit trail stay complete even for an agent in
+    // auto-approve mode or a tool called by absolute path. Skipped without a
+    // daemon (nothing would receive the observations) or when opted out.
+    if !no_daemon && !no_watch {
+        let root = watcher::default_root();
+        match watcher::start(&root) {
+            Ok(true) => println!(
+                "  ✓ backstop: watching {} for un-intercepted changes",
+                root.display()
+            ),
+            Ok(false) => {}
+            Err(e) => println!("  • backstop watcher not started ({e})"),
+        }
+    }
+
     println!();
     if enterprise {
         // Enterprise posture: guide the operator. These are MANUAL follow-ups —
@@ -968,7 +1219,11 @@ fn cmd_init(no_daemon: bool, enterprise: bool) -> Result<()> {
         println!("       kintsugi admin provision");
         println!("  2. Install the auto-restart watchdog (a kill relaunches the daemon):");
         println!("       kintsugi service install");
-        println!("  3. Record human shell sessions for a tamper-evident audit trail:");
+        println!("  3. Put the shim wiring in root-owned system files so a normal user");
+        println!("     can't remove it by editing their own ~/.bashrc (sudo required):");
+        println!("       sudo kintsugi admin enforce-shell");
+        println!("       (removal needs root AND the admin password)");
+        println!("  4. Record human shell sessions for a tamper-evident audit trail:");
         println!("       kintsugi record install --write ~/.bashrc   # or ~/.zshrc");
         println!("       (filesystem undo for rm/overwrites; DB DROP/TRUNCATE → use PITR/backups)");
         println!(
@@ -1127,6 +1382,9 @@ pub(crate) fn cmd_stop() -> Result<()> {
     if !admin_cmd::allow_stop() {
         return Ok(());
     }
+    if let Some(root) = watcher::stop() {
+        println!("kintsugi: stopped the backstop watcher ({root}).");
+    }
     let pid_path = kintsugi_daemon::pid_file_path();
     let pid = std::fs::read_to_string(&pid_path)
         .ok()
@@ -1163,6 +1421,11 @@ fn stop_via_daemon() -> Result<()> {
 
     match Client::shutdown("shutdown", &nonce_hex, &proof_hex) {
         Ok(()) => {
+            // Authenticated: tear down the backstop watcher alongside the daemon
+            // (same authorization — a locked host required the password above).
+            if let Some(root) = watcher::stop() {
+                println!("kintsugi: stopped the backstop watcher ({root}).");
+            }
             println!("kintsugi: stopped the daemon.");
         }
         Err(e) => {
@@ -1399,6 +1662,42 @@ fn cmd_status() -> Result<()> {
         }
     }
 
+    // Reversibility backstop: the net for changes that bypass interception. State
+    // it plainly so "nothing is unrecoverable" matches the actual configuration.
+    match watcher::running() {
+        Some((_, root)) if !root.is_empty() => println!("  backstop: watching {root}"),
+        Some(_) => println!("  backstop: on"),
+        None => {
+            println!("  backstop: off — un-intercepted changes won't be recorded for undo");
+            println!("            enable it: kintsugi init   (or: kintsugi watch <path>)");
+        }
+    }
+
+    // Interception drift: if the shim dir isn't actually on PATH, raw shell-outs
+    // (and tools called by absolute path) run unguarded. Say so loudly — a shell
+    // profile edited or reverted by hand should never silently disable the gate.
+    let shim = shim_dir();
+    if shim.exists() {
+        let on_path = std::env::var_os("PATH")
+            .map(|p| std::env::split_paths(&p).any(|d| d == shim))
+            .unwrap_or(false);
+        if on_path {
+            println!("  shim:    on PATH ({})", shim.display());
+        } else {
+            println!("  shim:    NOT on PATH — raw shell-outs are unguarded");
+            println!(
+                "            add: export PATH=\"{}:$PATH\"  (or re-run `kintsugi init`)",
+                shim.display()
+            );
+        }
+    }
+
+    // Shell enforcement: when on, the wiring sits in root-owned system files a
+    // normal user can't edit out — only root (or the admin password) can remove.
+    if shell_enforce::is_enforced() {
+        println!("  shell:   enforced system-wide (only root/admin can remove)");
+    }
+
     // The panic kill-switch is the loudest state — surface it prominently.
     if kintsugi_daemon::kill_switch_path().exists() {
         println!("  KILL-SWITCH: ENGAGED — all actions denied (run `kintsugi resume`)");
@@ -1412,6 +1711,27 @@ fn cmd_status() -> Result<()> {
                 let count = log.count().unwrap_or(0);
                 let chain = log.verify_chain()?;
                 println!("  events:  {count}");
+                // Saves: what Kintsugi has actually done for you — the invisible
+                // wins made visible. Catastrophic commands it flagged, ambiguous
+                // ones it held, and snapshots it can still roll back.
+                let cata = log
+                    .count_matching(&kintsugi_core::Filter {
+                        class: Some(Class::Catastrophic),
+                        ..Default::default()
+                    })
+                    .unwrap_or(0);
+                let amb = log
+                    .count_matching(&kintsugi_core::Filter {
+                        class: Some(Class::Ambiguous),
+                        ..Default::default()
+                    })
+                    .unwrap_or(0);
+                let reversible = log.unreverted_snapshots().map(|v| v.len()).unwrap_or(0);
+                if cata > 0 || amb > 0 || reversible > 0 {
+                    println!(
+                        "  saves:   {cata} catastrophic flagged · {amb} ambiguous held · {reversible} reversible"
+                    );
+                }
                 println!(
                     "  chain:   {}",
                     if chain.is_intact() {
@@ -1618,6 +1938,30 @@ mod filter_tests {
         let c = tty_code();
         assert_eq!(c.len(), 4);
         assert!(c.chars().all(|ch| ch.is_ascii_hexdigit()), "got {c}");
+    }
+
+    #[test]
+    fn guarded_path_forces_the_shim_to_the_front_without_duplicating() {
+        let shim = std::path::Path::new("/k/shims");
+        // The shim dir lands first, the rest follow in order.
+        let current = std::env::join_paths(["/usr/bin", "/bin"]).unwrap();
+        let out = guarded_path(shim, Some(current)).unwrap();
+        let dirs: Vec<_> = std::env::split_paths(&out).collect();
+        assert_eq!(dirs.first().unwrap(), shim);
+        assert_eq!(dirs.len(), 3);
+
+        // An already-present shim dir is not listed twice.
+        let with_shim = std::env::join_paths(["/k/shims", "/usr/bin"]).unwrap();
+        let out = guarded_path(shim, Some(with_shim)).unwrap();
+        let dirs: Vec<_> = std::env::split_paths(&out).collect();
+        assert_eq!(dirs, vec![shim.to_path_buf(), "/usr/bin".into()]);
+
+        // No prior PATH → just the shim dir.
+        let out = guarded_path(shim, None).unwrap();
+        assert_eq!(
+            std::env::split_paths(&out).collect::<Vec<_>>(),
+            vec![shim.to_path_buf()]
+        );
     }
 
     #[test]

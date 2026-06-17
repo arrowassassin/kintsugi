@@ -34,6 +34,11 @@ const SPLASH_TICK: Duration = Duration::from_millis(60);
 pub fn run(db_path: &Path, snapshot_dir: &Path) -> Result<()> {
     let color = std::env::var_os("NO_COLOR").is_none();
     let mut app = App::new(color);
+    // Read the local timezone offset now, before ratatui spawns anything: the
+    // time crate only proves `current_local_offset` sound while single-threaded.
+    // Events are stored in UTC; this renders them in the viewer's zone. Falls
+    // back to UTC if the offset can't be determined safely.
+    app.set_local_offset(time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC));
     // A locked settings vault gates the app behind the admin password.
     if let kintsugi_core::admin::VaultState::Locked(v) =
         kintsugi_core::admin::load_vault(&kintsugi_core::admin::default_vault_path())
