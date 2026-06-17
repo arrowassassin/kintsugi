@@ -11,6 +11,7 @@ mod logview;
 mod model_cmd;
 mod record;
 mod service;
+mod watcher;
 
 use std::io::IsTerminal;
 use std::path::PathBuf;
@@ -45,6 +46,10 @@ enum Command {
         /// gate + reversible undo, no admin machinery).
         #[arg(long)]
         enterprise: bool,
+        /// Don't start the default-on filesystem-watcher backstop (it records
+        /// changes that bypass interception, so undo stays complete).
+        #[arg(long)]
+        no_watch: bool,
     },
     /// Show daemon, socket, log, and interception status.
     Status,
@@ -414,12 +419,13 @@ fn main() -> Result<()> {
             no_daemon,
             print_path,
             enterprise,
+            no_watch,
         }) => {
             if print_path {
                 println!("export PATH=\"{}:$PATH\"", shim_dir().display());
                 Ok(())
             } else {
-                cmd_init(no_daemon, enterprise)
+                cmd_init(no_daemon, enterprise, no_watch)
             }
         }
         Some(Command::Status) => cmd_status(),
@@ -584,7 +590,8 @@ fn cmd_limits() -> Result<()> {
     println!("  • A process that calls a tool by absolute path (/bin/rm), dodging the shim.");
     println!("  • A statically-linked binary or a direct syscall.");
     println!("  → For these, the filesystem-watcher backstop is your net: it records changes");
-    println!("    so `kintsugi undo` can still recover files. Turn it on for your work tree.\n");
+    println!("    so the audit trail stays complete. It's on by default after `kintsugi init`");
+    println!("    for your work tree; `kintsugi status` shows whether it's running.\n");
 
     println!("{}", h("What undo cannot bring back"));
     println!("  • Anything off the filesystem: a sent network request, a force-pushed commit,");
@@ -959,7 +966,7 @@ fn shim_dir() -> PathBuf {
     std::env::temp_dir().join("kintsugi-shims")
 }
 
-fn cmd_init(no_daemon: bool, enterprise: bool) -> Result<()> {
+fn cmd_init(no_daemon: bool, enterprise: bool, no_watch: bool) -> Result<()> {
     println!(
         "kintsugi init{}",
         if enterprise { " (enterprise)" } else { "" }
@@ -1034,6 +1041,22 @@ fn cmd_init(no_daemon: bool, enterprise: bool) -> Result<()> {
     if !no_daemon {
         if let Some(label) = active_scorer_label() {
             println!("  ✓ scoring with: {label}");
+        }
+    }
+
+    // 4. Backstop watcher (default-on): record changes that bypass interception,
+    // so `kintsugi undo` and the audit trail stay complete even for an agent in
+    // auto-approve mode or a tool called by absolute path. Skipped without a
+    // daemon (nothing would receive the observations) or when opted out.
+    if !no_daemon && !no_watch {
+        let root = watcher::default_root();
+        match watcher::start(&root) {
+            Ok(true) => println!(
+                "  ✓ backstop: watching {} for un-intercepted changes",
+                root.display()
+            ),
+            Ok(false) => {}
+            Err(e) => println!("  • backstop watcher not started ({e})"),
         }
     }
 
@@ -1205,6 +1228,9 @@ pub(crate) fn cmd_stop() -> Result<()> {
     if !admin_cmd::allow_stop() {
         return Ok(());
     }
+    if let Some(root) = watcher::stop() {
+        println!("kintsugi: stopped the backstop watcher ({root}).");
+    }
     let pid_path = kintsugi_daemon::pid_file_path();
     let pid = std::fs::read_to_string(&pid_path)
         .ok()
@@ -1241,6 +1267,11 @@ fn stop_via_daemon() -> Result<()> {
 
     match Client::shutdown("shutdown", &nonce_hex, &proof_hex) {
         Ok(()) => {
+            // Authenticated: tear down the backstop watcher alongside the daemon
+            // (same authorization — a locked host required the password above).
+            if let Some(root) = watcher::stop() {
+                println!("kintsugi: stopped the backstop watcher ({root}).");
+            }
             println!("kintsugi: stopped the daemon.");
         }
         Err(e) => {
@@ -1474,6 +1505,36 @@ fn cmd_status() -> Result<()> {
         match Client::status_scorer() {
             Ok(name) => println!("  model:   {}", describe_scorer(&name)),
             Err(_) => println!("  model:   (daemon not answering)"),
+        }
+    }
+
+    // Reversibility backstop: the net for changes that bypass interception. State
+    // it plainly so "nothing is unrecoverable" matches the actual configuration.
+    match watcher::running() {
+        Some((_, root)) if !root.is_empty() => println!("  backstop: watching {root}"),
+        Some(_) => println!("  backstop: on"),
+        None => {
+            println!("  backstop: off — un-intercepted changes won't be recorded for undo");
+            println!("            enable it: kintsugi init   (or: kintsugi watch <path>)");
+        }
+    }
+
+    // Interception drift: if the shim dir isn't actually on PATH, raw shell-outs
+    // (and tools called by absolute path) run unguarded. Say so loudly — a shell
+    // profile edited or reverted by hand should never silently disable the gate.
+    let shim = shim_dir();
+    if shim.exists() {
+        let on_path = std::env::var_os("PATH")
+            .map(|p| std::env::split_paths(&p).any(|d| d == shim))
+            .unwrap_or(false);
+        if on_path {
+            println!("  shim:    on PATH ({})", shim.display());
+        } else {
+            println!("  shim:    NOT on PATH — raw shell-outs are unguarded");
+            println!(
+                "            add: export PATH=\"{}:$PATH\"  (or re-run `kintsugi init`)",
+                shim.display()
+            );
         }
     }
 

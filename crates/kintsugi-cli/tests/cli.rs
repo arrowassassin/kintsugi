@@ -94,6 +94,82 @@ fn undo_restores_a_snapshotted_file() {
 }
 
 #[test]
+fn status_reports_backstop_off_and_shim_drift() {
+    let tmp = tempfile::tempdir().unwrap();
+    // The shim dir exists but is deliberately not on PATH → loud drift warning.
+    std::fs::create_dir_all(tmp.path().join("shims")).unwrap();
+    let out = kintsugi()
+        .arg("status")
+        .env("KINTSUGI_DATA_DIR", tmp.path())
+        .env("KINTSUGI_DB", tmp.path().join("events.db"))
+        .env("KINTSUGI_SOCKET", tmp.path().join("none.sock"))
+        .env("PATH", "/usr/bin:/bin")
+        .env("NO_COLOR", "1")
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(s.contains("backstop: off"), "got:\n{s}");
+    assert!(s.contains("NOT on PATH"), "got:\n{s}");
+}
+
+#[test]
+fn status_reports_backstop_on_from_a_live_pid_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    // watch.pid sits next to the daemon pid (KINTSUGI_DB's parent). Point it at
+    // this test process, which is alive, so the backstop reads as on.
+    std::fs::write(
+        tmp.path().join("watch.pid"),
+        format!(
+            "{}\n{}\n",
+            std::process::id(),
+            tmp.path().join("repo").display()
+        ),
+    )
+    .unwrap();
+    let out = kintsugi()
+        .arg("status")
+        .env("KINTSUGI_DATA_DIR", tmp.path())
+        .env("KINTSUGI_DB", tmp.path().join("events.db"))
+        .env("KINTSUGI_SOCKET", tmp.path().join("none.sock"))
+        .env("NO_COLOR", "1")
+        .output()
+        .unwrap();
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(s.contains("backstop: watching"), "got:\n{s}");
+}
+
+#[test]
+fn stop_kills_the_backstop_watcher() {
+    let tmp = tempfile::tempdir().unwrap();
+    // A stand-in long-running watcher process.
+    let mut child = Command::new("sleep").arg("60").spawn().unwrap();
+    std::fs::write(
+        tmp.path().join("watch.pid"),
+        format!("{}\n{}\n", child.id(), tmp.path().display()),
+    )
+    .unwrap();
+
+    let out = kintsugi()
+        .arg("stop")
+        .env("KINTSUGI_DATA_DIR", tmp.path())
+        .env("KINTSUGI_DB", tmp.path().join("events.db"))
+        .env("KINTSUGI_SOCKET", tmp.path().join("none.sock"))
+        .env("NO_COLOR", "1")
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(s.contains("backstop watcher"), "got:\n{s}");
+    assert!(
+        !tmp.path().join("watch.pid").exists(),
+        "watch.pid should be removed"
+    );
+    // Reap the (now-terminated) stand-in process.
+    let _ = child.wait();
+}
+
+#[test]
 fn dry_run_flags_dangerous_commands_from_stdin() {
     use std::io::Write;
     use std::process::Stdio;
@@ -488,6 +564,9 @@ fn init_starts_daemon_and_status_reports_running() {
             .env("KINTSUGI_DATA_DIR", &data)
             .env("KINTSUGI_DB", data.join("events.db"))
             .env("XDG_RUNTIME_DIR", &run)
+            // Don't spawn the default-on backstop watcher in this test (it would
+            // watch the crate's working dir and linger as a stray process).
+            .env("KINTSUGI_NO_WATCH", "1")
             .env("KINTSUGI_CONFIG", tmp.path().join("none.toml"));
     };
 
