@@ -13,6 +13,47 @@ All notable changes to Kintsugi are documented here. The format loosely follows
 
 ## [Unreleased]
 
+### Make the protection visible and trustworthy
+- **`kintsugi dry-run`** — point Kintsugi at commands you've already run (your
+  shell history by default, or `--file <path>` / piped stdin) and see which would
+  have been held or blocked. It runs nothing, logs nothing, and sends nothing;
+  flagged commands are secret-redacted before display. The proof-before-trust
+  command — see Kintsugi's value against your own work before wiring it in.
+- **`kintsugi limits`** — the honest threat scope in plain English (seatbelt, not
+  a kernel firewall): what it protects well, what can step around the warning,
+  what undo can't bring back, and what the admin-lock does and doesn't stop.
+- **`kintsugi status` saves counter** — surfaces what Kintsugi has done for you
+  (catastrophic flagged · ambiguous held · reversible snapshots).
+
+### Default-on reversibility backstop + honest drift detection
+- **The filesystem-watcher backstop is now on by default.** `kintsugi init` starts
+  it for your work tree, so changes that bypass interception — an agent in an
+  auto-approve mode, or a tool called by absolute path like `/bin/rm` — are
+  recorded for the audit trail. Opt out with `--no-watch` (or `KINTSUGI_NO_WATCH`);
+  set the scope with `KINTSUGI_WATCH_DIR`. `kintsugi stop` tears it down.
+- **`kintsugi status` states the backstop plainly** (watching `<root>` / off) and
+  **warns loudly when the shim dir isn't on `PATH`** — a hand-edited or reverted
+  shell profile no longer silently leaves raw shell-outs unguarded.
+
+### `kintsugi guard` — launch an agent with interception forced on
+- **New command** `kintsugi guard <command…>` (e.g. `kintsugi guard claude`).
+  Forces the shim dir to the front of the launched child's `PATH`, so even an
+  agent in an auto-approve / "yolo" mode has the commands it runs by name hit the
+  gate; ensures the daemon is up; and forwards the child's exit code (and
+  terminating signal, on Unix) faithfully. Honest scope: a tool invoked by
+  absolute path still bypasses the shim — the default-on backstop is the net there.
+
+### TUI — an enterprise-grade timeline
+- **Local time + dates.** Timestamps render in your local timezone (events are
+  stored in UTC), with a day-grouped date column so a run of same-day rows reads
+  as one block, and a full, offset-qualified datetime in the detail pane.
+- **Visible scrolling & paging.** A scrollbar appears on the right border when the
+  list overflows, and the footer shows both row and page position (`row 42/830 ·
+  pg 3/40`).
+- **Tab count badges** (`Timeline 83 · Audit 12 · Recorder 40`) and clean command
+  ellipsis instead of hard-clipping. Still NO_COLOR-safe, single-accent, and
+  reflowing at any size.
+
 ### `kintsugi model` — manage the local model from the CLI
 - **New command** `kintsugi model status | use <path> | pick | install | remove`.
   `use` points the daemon at any local GGUF (swap models anytime, no Kintsugi

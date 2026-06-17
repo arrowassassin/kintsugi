@@ -96,6 +96,26 @@ kintsugi test 'echo "$(git push --force)"'      # ⛔ — caught inside the subs
 exact commands Kintsugi sees inside your line — without executing, logging, or
 contacting anything.
 
+**See what it would have caught in your own work** — `kintsugi dry-run` classifies
+your recent shell history (or `--file` / piped stdin), running nothing:
+
+```sh
+kintsugi dry-run                  # scan recent shell history
+history | kintsugi dry-run        # or pipe commands in
+```
+
+**Guard an agent even in auto-approve mode** — `kintsugi guard` forces the shim
+onto the agent's PATH so its shell-outs hit the gate even if it skips its hook:
+
+```sh
+kintsugi guard claude             # launch an agent, guarded
+kintsugi guard -- npm run dev      # or guard any command
+```
+
+And `kintsugi limits` prints the honest threat scope — what Kintsugi can and
+can't protect — because a safety tool that names its blind spots is one you can
+trust.
+
 ## Status
 
 All build phases are implemented (see
