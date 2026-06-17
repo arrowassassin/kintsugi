@@ -24,8 +24,10 @@ use anyhow::{Context, Result};
 
 /// Markers for the managed block we own inside a shared system file. Re-running
 /// install replaces the block in place (idempotent); remove deletes just it.
+#[cfg(unix)]
 const BEGIN: &str =
     "# >>> kintsugi enforced shell wiring (root-owned — a normal user cannot edit this) >>>";
+#[cfg(unix)]
 const END: &str = "# <<< kintsugi enforced shell wiring <<<";
 
 /// The system config root. `/etc` in production; overridable for tests.
