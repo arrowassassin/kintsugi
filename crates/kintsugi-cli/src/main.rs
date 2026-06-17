@@ -1541,16 +1541,24 @@ fn binary_version(bin: &std::path::Path) -> Option<String> {
     if !out.status.success() {
         return None;
     }
-    String::from_utf8_lossy(&out.stdout)
-        .split_whitespace()
-        .last()
-        .map(str::to_string)
+    Some(version_token(&String::from_utf8_lossy(&out.stdout)))?
+}
+
+/// The version token from a `--version` line, e.g. `kintsugi 0.1.5` → `0.1.5`.
+/// Pure, so the parse is unit-tested without spawning a process.
+fn version_token(stdout: &str) -> Option<String> {
+    stdout.split_whitespace().last().map(str::to_string)
 }
 
 /// The first `name` found on `PATH` — what an interactive shell would resolve.
 fn first_on_path(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path)
+    first_in_path_value(&std::env::var_os("PATH")?, name)
+}
+
+/// Inner form taking an explicit `PATH` value, so the lookup is unit-testable
+/// without mutating the process environment.
+fn first_in_path_value(path: &std::ffi::OsStr, name: &str) -> Option<PathBuf> {
+    std::env::split_paths(path)
         .map(|d| d.join(name))
         .find(|p| p.is_file())
 }
@@ -2032,6 +2040,34 @@ mod filter_tests {
             std::env::split_paths(&out).collect::<Vec<_>>(),
             vec![shim.to_path_buf()]
         );
+    }
+
+    #[test]
+    fn version_token_takes_the_last_word() {
+        assert_eq!(version_token("kintsugi 0.1.5").as_deref(), Some("0.1.5"));
+        assert_eq!(
+            version_token("kintsugi v0.1.5\n").as_deref(),
+            Some("v0.1.5")
+        );
+        assert_eq!(version_token("   ").as_deref(), None);
+    }
+
+    #[test]
+    fn first_in_path_value_resolves_the_first_hit() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = tmp.path().join("a");
+        let b = tmp.path().join("b");
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        // Only dir `b` holds the binary → it's found there, not in `a`.
+        std::fs::write(b.join("kintsugi"), b"x").unwrap();
+        let path = std::env::join_paths([&a, &b]).unwrap();
+        assert_eq!(
+            first_in_path_value(&path, "kintsugi"),
+            Some(b.join("kintsugi"))
+        );
+        // Absent everywhere → None.
+        assert_eq!(first_in_path_value(&path, "nope-not-here"), None);
     }
 
     #[test]
