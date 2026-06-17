@@ -11,6 +11,7 @@ mod logview;
 mod model_cmd;
 mod record;
 mod service;
+mod shell_enforce;
 mod watcher;
 
 use std::io::IsTerminal;
@@ -312,6 +313,19 @@ enum AdminCmd {
         #[arg(long)]
         password_file: Option<std::path::PathBuf>,
     },
+    /// Install Kintsugi's shell wiring in **root-owned system files** so a normal
+    /// user cannot remove it by editing their own `~/.bashrc` — only root (or the
+    /// admin password) can. `--remove` uninstalls it; `--status` shows where it
+    /// lives. Needs sudo / Administrator. Honest scope: this binds users below
+    /// root, not root itself; see `kintsugi limits`.
+    EnforceShell {
+        /// Remove the system-level wiring (root / admin password required).
+        #[arg(long)]
+        remove: bool,
+        /// Show whether enforcement is on, and which files carry it.
+        #[arg(long)]
+        status: bool,
+    },
 }
 
 /// `kintsugi service` subcommands.
@@ -456,6 +470,7 @@ fn main() -> Result<()> {
                 value,
                 password_file,
             } => admin_cmd::set(&key, &value, password_file),
+            AdminCmd::EnforceShell { remove, status } => cmd_enforce_shell(remove, status),
         },
         Some(Command::Service { cmd }) => match cmd {
             ServiceCmd::Install => service::install(),
@@ -619,8 +634,12 @@ fn cmd_limits() -> Result<()> {
 
     println!("{}", h("What the admin-lock does and doesn't stop"));
     println!("  • It stops an agent, or a normal user, from quietly turning Kintsugi off.");
-    println!("  • It does NOT stop a determined process running as root. It guards against");
-    println!("    mistakes, reversibly — not a privileged adversary.\n");
+    println!("  • With `kintsugi admin enforce-shell`, the shim wiring sits in root-owned");
+    println!("    system files (e.g. /etc/zshenv, /etc/profile.d/kintsugi.sh) — a normal");
+    println!("    user cannot remove it by editing their own ~/.bashrc.");
+    println!("  • It does NOT stop a determined process running as root, who can edit those");
+    println!("    same files directly. It guards against mistakes and ordinary users,");
+    println!("    reversibly — not a privileged adversary.\n");
 
     println!("If a catastrophic command ever slips through to \"safe,\" that's a bug we treat");
     println!("as critical — please report it: https://github.com/arrowassassin/kintsugi/issues");
@@ -695,6 +714,53 @@ fn cmd_guard(command: &[String]) -> Result<()> {
         }
     }
     std::process::exit(status.code().unwrap_or(1));
+}
+
+/// `kintsugi admin enforce-shell` — install/remove/status the system-level shell
+/// wiring. The point is to put the wiring in files a normal user can't edit, so
+/// only root (or the admin password) can take it out.
+fn cmd_enforce_shell(remove: bool, status_only: bool) -> Result<()> {
+    if status_only {
+        return shell_enforce::status();
+    }
+    if remove {
+        // Gate removal on the admin vault when one exists, so even root running
+        // `kintsugi admin enforce-shell --remove` has to prove they're the admin.
+        // (Root can still edit /etc by hand — see `kintsugi limits`; this is the
+        // boundary we publish, not a claim about binding root.)
+        if !admin_cmd::allow_admin("Admin password to remove shell enforcement: ") {
+            return Ok(());
+        }
+        let removed = shell_enforce::uninstall()?;
+        if removed.is_empty() {
+            println!("kintsugi: nothing to remove — system-level wiring not installed.");
+        } else {
+            println!("kintsugi: removed system-level shell wiring:");
+            for p in removed {
+                println!("  - {}", p.display());
+            }
+        }
+        return Ok(());
+    }
+
+    let shim = shim_dir();
+    if !shim.exists() {
+        // The shim dir must exist for the wiring to point at something real; run
+        // init's shim-creation first so this command works on a fresh host.
+        let shim_bin = init::sibling_bin("kintsugi-shim");
+        init::create_shims(&shim, &shim_bin, init::SHIM_COMMANDS)
+            .context("create $PATH shims before enforcing")?;
+    }
+    let written = shell_enforce::install(&shim)?;
+    println!("kintsugi: enforced shell wiring at the system level:");
+    for p in &written {
+        println!("  - {}", p.display());
+    }
+    println!();
+    println!("  A user cannot remove this by editing their own ~/.bashrc.");
+    println!("  Only root (or `kintsugi admin enforce-shell --remove` + admin password) can.");
+    println!("  Existing shells need to be re-opened to pick the wiring up.");
+    Ok(())
 }
 
 fn cmd_queue() -> Result<()> {
@@ -1153,7 +1219,11 @@ fn cmd_init(no_daemon: bool, enterprise: bool, no_watch: bool) -> Result<()> {
         println!("       kintsugi admin provision");
         println!("  2. Install the auto-restart watchdog (a kill relaunches the daemon):");
         println!("       kintsugi service install");
-        println!("  3. Record human shell sessions for a tamper-evident audit trail:");
+        println!("  3. Put the shim wiring in root-owned system files so a normal user");
+        println!("     can't remove it by editing their own ~/.bashrc (sudo required):");
+        println!("       sudo kintsugi admin enforce-shell");
+        println!("       (removal needs root AND the admin password)");
+        println!("  4. Record human shell sessions for a tamper-evident audit trail:");
         println!("       kintsugi record install --write ~/.bashrc   # or ~/.zshrc");
         println!("       (filesystem undo for rm/overwrites; DB DROP/TRUNCATE → use PITR/backups)");
         println!(
@@ -1620,6 +1690,12 @@ fn cmd_status() -> Result<()> {
                 shim.display()
             );
         }
+    }
+
+    // Shell enforcement: when on, the wiring sits in root-owned system files a
+    // normal user can't edit out — only root (or the admin password) can remove.
+    if shell_enforce::is_enforced() {
+        println!("  shell:   enforced system-wide (only root/admin can remove)");
     }
 
     // The panic kill-switch is the loudest state — surface it prominently.

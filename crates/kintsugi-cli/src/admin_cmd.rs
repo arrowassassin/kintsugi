@@ -239,19 +239,26 @@ fn print_settings(s: &LockedSettings) {
 /// Whether `kintsugi stop` is allowed to proceed. Unprovisioned → yes; Locked →
 /// only with the correct password; Degraded → refuse (fail-closed).
 pub fn allow_stop() -> bool {
+    allow_admin("Admin password to stop Kintsugi: ")
+}
+
+/// Gate an admin action behind the locked vault: allow when unprovisioned, refuse
+/// when degraded, and require the admin password when locked. Shared by `stop` and
+/// by removing the enforced shell wiring, so both honor the same lock.
+pub fn allow_admin(prompt: &str) -> bool {
     match admin::load_vault(&vault_path()) {
         VaultState::Unprovisioned => true,
         VaultState::Degraded(reason) => {
             eprintln!(
-                "kintsugi: admin vault is degraded ({reason}); refusing to stop.\n  \
+                "kintsugi: admin vault is degraded ({reason}); refusing.\n  \
                  Restore the vault, or re-provision with the recovery key."
             );
             false
         }
-        VaultState::Locked(vault) => match read_password_tty("Admin password to stop Kintsugi: ") {
+        VaultState::Locked(vault) => match read_password_tty(prompt) {
             Ok(pw) if vault.verify_password(&pw) => true,
             Ok(_) => {
-                eprintln!("kintsugi: wrong admin password — not stopping.");
+                eprintln!("kintsugi: wrong admin password.");
                 false
             }
             Err(e) => {

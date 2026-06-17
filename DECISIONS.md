@@ -437,6 +437,18 @@ the locked product decisions this build implements.
   is not on `PATH` (a reverted shell profile is now loud, not silent). This flips
   a guardrail default (watcher opt-in → opt-out) by deliberate decision; the
   watcher still only records, never gates.
+- Enterprise shell enforcement: `kintsugi admin enforce-shell` writes the shim
+  PATH wiring into root-owned system files (Unix: `/etc/zshenv` and
+  `/etc/profile.d/kintsugi.sh` when that dir exists, else `/etc/profile`;
+  Windows: machine-level PATH via PowerShell). The OS file-permission gate is the
+  install gate (a non-root write fails with an actionable "needs sudo" message).
+  Removal needs root **and** the admin-vault password when locked, so root running
+  a kintsugi command must still prove they're the admin — they can still
+  `rm /etc/zshenv` by hand, which is a different, more visible action. The
+  installed block is idempotent (managed BEGIN/END markers) and preserves
+  surrounding file contents. Tests use `KINTSUGI_ETC_DIR` to exercise the logic
+  without touching real `/etc`. Honest scope: binds users below root, not root —
+  stated in `kintsugi limits` and the install message.
 - Guarded launch: `kintsugi guard <command…>` forces the shim dir to the front of
   the launched child's `PATH` so an auto-approve/"yolo" agent's by-name shell-outs
   still hit the gate, ensures the daemon is up, and forwards the child's exit code

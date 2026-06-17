@@ -262,6 +262,8 @@ deny  = ["git push * --force", "kubectl * --context=prod"]</pre
 <span class="t-grn">kintsugi undo</span> [--session] restore snapshotted files
 <span class="t-grn">kintsugi watch</span> &lt;path&gt;   extend the FS-watcher backstop to more paths
 <span class="t-grn">kintsugi panic</span> / <span class="t-grn">resume</span>  kill-switch on / off
+<span class="t-grn">kintsugi admin enforce-shell</span>  lock the shim wiring in root-owned /etc files
+                              (a normal user can't remove; root + admin pw can)
 </pre>
         </div>
       </section>

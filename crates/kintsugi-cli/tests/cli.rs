@@ -94,6 +94,71 @@ fn undo_restores_a_snapshotted_file() {
 }
 
 #[test]
+fn enforce_shell_install_status_remove_round_trip() {
+    let tmp = tempfile::tempdir().unwrap();
+    let etc = tmp.path().join("etc");
+    std::fs::create_dir_all(&etc).unwrap();
+    let common = |c: &mut Command| {
+        c.env("KINTSUGI_DATA_DIR", tmp.path())
+            .env("KINTSUGI_DB", tmp.path().join("events.db"))
+            .env("KINTSUGI_SOCKET", tmp.path().join("none.sock"))
+            // Vault path under our temp dir → "unprovisioned" so removal isn't
+            // gated on a password we'd need to type. Honest scope is tested
+            // separately in admin_cmd's vault flows.
+            .env("KINTSUGI_VAULT", tmp.path().join("vault.bin"))
+            .env("KINTSUGI_ETC_DIR", &etc)
+            .env("NO_COLOR", "1");
+    };
+
+    // Off by default.
+    let mut s = kintsugi();
+    s.args(["admin", "enforce-shell", "--status"]);
+    common(&mut s);
+    let out = s.output().unwrap();
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stdout).contains("off"));
+
+    // Install — writes the managed block.
+    let mut i = kintsugi();
+    i.args(["admin", "enforce-shell"]);
+    common(&mut i);
+    let out = i.output().unwrap();
+    assert!(
+        out.status.success(),
+        "install failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let zshenv = std::fs::read_to_string(etc.join("zshenv")).unwrap();
+    assert!(zshenv.contains("kintsugi enforced shell wiring"));
+    assert!(
+        zshenv.contains("shims"),
+        "wiring should reference the shim dir"
+    );
+
+    // Status now reports on, and `kintsugi status` surfaces it too.
+    let mut st = kintsugi();
+    st.arg("status");
+    common(&mut st);
+    let out = st.output().unwrap();
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("enforced system-wide"),
+        "kintsugi status should surface enforcement"
+    );
+
+    // Remove — vault is unprovisioned, so it proceeds without a password prompt.
+    let mut r = kintsugi();
+    r.args(["admin", "enforce-shell", "--remove"]);
+    common(&mut r);
+    let out = r.output().unwrap();
+    assert!(out.status.success());
+    let zshenv = std::fs::read_to_string(etc.join("zshenv")).unwrap();
+    assert!(
+        !zshenv.contains("kintsugi enforced"),
+        "block should be gone"
+    );
+}
+
+#[test]
 fn status_reports_backstop_off_and_shim_drift() {
     let tmp = tempfile::tempdir().unwrap();
     // The shim dir exists but is deliberately not on PATH → loud drift warning.

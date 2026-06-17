@@ -35,6 +35,18 @@ All notable changes to Kintsugi are documented here. The format loosely follows
   **warns loudly when the shim dir isn't on `PATH`** — a hand-edited or reverted
   shell profile no longer silently leaves raw shell-outs unguarded.
 
+### Enterprise: shell wiring a normal user can't remove
+- **New** `kintsugi admin enforce-shell` — install the shim PATH wiring in
+  **root-owned system files** (Unix: `/etc/zshenv` and `/etc/profile.d/kintsugi.sh`
+  or `/etc/profile`; Windows: the machine-level PATH) so a normal user cannot
+  disable Kintsugi by editing their own `~/.bashrc`. Install needs sudo /
+  Administrator; `--remove` needs root AND the admin password. `--status` shows
+  where the wiring lives and whether the files are actually root-owned.
+- `kintsugi status` now reports `shell: enforced system-wide` when the wiring is
+  locked in, and the enterprise-init guidance points to the new command.
+- Honest scope (also in `kintsugi limits`): this stops a normal user (or an agent
+  running as them); it does NOT bind root, who can edit those system files directly.
+
 ### `kintsugi guard` — launch an agent with interception forced on
 - **New command** `kintsugi guard <command…>` (e.g. `kintsugi guard claude`).
   Forces the shim dir to the front of the launched child's `PATH`, so even an
