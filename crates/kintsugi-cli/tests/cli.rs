@@ -170,6 +170,42 @@ fn stop_kills_the_backstop_watcher() {
 }
 
 #[test]
+fn guard_forwards_exit_code_and_prepends_shim_to_path() {
+    let tmp = tempfile::tempdir().unwrap();
+    let common = |c: &mut Command| {
+        c.env("KINTSUGI_DATA_DIR", tmp.path())
+            .env("KINTSUGI_SOCKET", tmp.path().join("none.sock"))
+            .env("KINTSUGI_NO_AUTOSTART", "1") // don't spawn a daemon in the test
+            .env("NO_COLOR", "1");
+    };
+
+    // The child's exit code is forwarded faithfully.
+    let mut exit7 = kintsugi();
+    exit7.args(["guard", "--", "sh", "-c", "exit 7"]);
+    common(&mut exit7);
+    assert_eq!(exit7.output().unwrap().status.code(), Some(7));
+
+    // The child sees the shim dir at the front of PATH.
+    let mut showpath = kintsugi();
+    showpath.args(["guard", "--", "sh", "-c", "printf %s \"$PATH\""]);
+    common(&mut showpath);
+    let out = showpath.output().unwrap();
+    let path = String::from_utf8_lossy(&out.stdout);
+    let shim = tmp.path().join("shims");
+    assert!(
+        path.starts_with(&shim.display().to_string()),
+        "shim dir should be first on PATH, got: {path}"
+    );
+}
+
+#[test]
+fn guard_requires_a_command() {
+    let out = kintsugi().arg("guard").output().unwrap();
+    // clap rejects the missing required trailing arg with a non-zero exit.
+    assert!(!out.status.success());
+}
+
+#[test]
 fn dry_run_flags_dangerous_commands_from_stdin() {
     use std::io::Write;
     use std::process::Stdio;
