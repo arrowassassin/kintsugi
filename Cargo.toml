@@ -10,7 +10,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 license = "MIT"
 authors = ["arrowassassin"]
@@ -27,11 +27,11 @@ rust-version = "1.96"
 # These must allow the published workspace version — 0.2.x is a new semver series
 # (^0.1 would NOT match 0.2.0), so they're pinned to the 0.2 floor and bumped in
 # lockstep with the workspace version on each minor release.
-kintsugi-core = { path = "crates/kintsugi-core", version = "0.2.0" }
-kintsugi-daemon = { path = "crates/kintsugi-daemon", version = "0.2.0" }
-kintsugi-intercept = { path = "crates/kintsugi-intercept", version = "0.2.0" }
-kintsugi-model = { path = "crates/kintsugi-model", version = "0.2.0" }
-kintsugi-tui = { path = "crates/kintsugi-tui", version = "0.2.0" }
+kintsugi-core = { path = "crates/kintsugi-core", version = "0.2.1" }
+kintsugi-daemon = { path = "crates/kintsugi-daemon", version = "0.2.1" }
+kintsugi-intercept = { path = "crates/kintsugi-intercept", version = "0.2.1" }
+kintsugi-model = { path = "crates/kintsugi-model", version = "0.2.1" }
+kintsugi-tui = { path = "crates/kintsugi-tui", version = "0.2.1" }
 
 # Serialization / data
 serde = { version = "1.0.228", features = ["derive"] }

@@ -3,6 +3,69 @@
 All notable changes to Kintsugi are documented here. The format loosely follows
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.2.1] — 2026-06-17
+
+Pre-rollout security & robustness hardening from an audit. No new features —
+this release closes a catastrophic-classification bypass, strengthens the admin
+auth proof, and makes several failure modes fail closed or fail loud instead of
+silent.
+
+> **Upgrade note:** the admin vault scheme is bumped to v2 (asymmetric auth
+> proof). A pre-v2 vault has no stored public key, so password-to-stop/unlock
+> proofs fail closed until you **re-run `kintsugi admin provision`** after
+> upgrading. Existing settings are unaffected; only the stop/unlock proof needs
+> the new key material.
+
+### Security fixes
+- **Closed a catastrophic-as-SAFE `git -c` bypass.** An inline
+  `git -c core.pager='rm -rf /' log` (and `git --config-env=…`) was read as a
+  plain `git log` — the `-c <key=value>` pair was skipped by subcommand
+  detection — so the injected pager/ssh/alias/hook ran arbitrary code on the
+  SAFE fast path. Inline exec-config injection is now hard-blocked before the
+  subcommand is dispatched, and is never classified safe (defense in depth). The
+  exec-key set also gained `core.hooksPath` and `*.insteadOf`.
+- **Catastrophic flags now match GNU `--flag=value` form**, so
+  `rm --recursive=true /etc` and `git push --force=please` are no longer a
+  bypass.
+- **Asymmetric (ed25519) admin auth proof.** The v1 "password to stop/unlock"
+  proof was a symmetric tag keyed by the verifier — which is *stored in the
+  vault* — so anyone who could read the vault file (a same-user agent) could
+  forge a proof without knowing the password. v2 derives an ed25519 key from the
+  password and stores only the public key; the private seed is never persisted.
+
+### Robustness fixes
+- **Audit log failure fails closed.** If a command can't be written to the
+  append-only log, the daemon now downgrades an Allow to Deny rather than letting
+  it run unrecorded (spine #4).
+- **`kintsugi resume` (kill-switch clear) is now password-gated** like `stop`
+  when a vault is provisioned; engaging the kill-switch stays ungated.
+- **Atomic undo restore.** `restore` stages each path to a temp sibling and
+  rename-swaps it into place (rolling back on failure), so an interrupted undo
+  can't leave a path half-written.
+- **Honest reversibility warning.** An allowed destructive command whose target
+  couldn't be snapshotted (or can't be fully captured) now carries a `⚠` note in
+  its verdict instead of implying a clean undo.
+- **Backstop degradation is surfaced, not silent.** A failed per-root watch, an
+  OS event-queue overflow, or a watch-stream error now records a
+  `backstop-degraded` marker on the timeline.
+- **Split-brain guard.** A second daemon refuses to start if one is already
+  reachable, so two writers can't race on the hash chain.
+- **Windows confirm reads the real console.** The interactive run-confirmation
+  prompt reads from `CONIN$`/`CONOUT$` (the physical console), not stdin (which
+  the agent controls), failing closed when no console is attached.
+- **Quiet session recorder.** The shell recorder hook now runs its
+  fire-and-forget `kintsugi ingest` inside a detached subshell, so interactive
+  shells no longer print job-control notices (`[1] 12345` / `[1]  + done …`)
+  after every command. Re-run `kintsugi record install` to refresh the snippet
+  in your rc file.
+
+### CI / tests
+- The latency gate now asserts the **median (p50) < 10ms** instead of a brittle
+  mean < 1ms that a single CI scheduler hiccup could trip.
+- The coverage job is renamed and documented honestly: **line coverage is gated**
+  (floor = below-target regression guard), **branch coverage is tracked, not
+  gated** (it needs a nightly toolchain).
+
 ## [0.2.0] — 2026-06-17
 
 First minor release: the protection is now visible and trustworthy, the backstop

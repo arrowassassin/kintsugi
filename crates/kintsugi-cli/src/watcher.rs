@@ -42,13 +42,32 @@ fn running_at(pid_file: &Path) -> Option<(String, String)> {
     Some((pid, root))
 }
 
-/// The default scope to watch: `KINTSUGI_WATCH_DIR` if set, else the current dir
-/// (where the user ran `init` — their work tree).
+/// The default scope to watch: `KINTSUGI_WATCH_DIR` if set, else the enclosing
+/// project (git) root, else the current dir.
 pub fn default_root() -> PathBuf {
     if let Some(d) = std::env::var_os("KINTSUGI_WATCH_DIR") {
         return PathBuf::from(d);
     }
-    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    project_root_of(&cwd)
+}
+
+/// The enclosing project root: the nearest ancestor of `start` containing a
+/// `.git`, else `start` itself. Prefer it so the backstop watches the work tree,
+/// not an arbitrarily broad parent like `$HOME` (which floods the log with OS
+/// churn — macOS `~/Library` renames, app-container temp files).
+fn project_root_of(start: &Path) -> PathBuf {
+    let mut dir = start;
+    loop {
+        if dir.join(".git").exists() {
+            return dir.to_path_buf();
+        }
+        match dir.parent() {
+            Some(p) => dir = p,
+            None => break,
+        }
+    }
+    start.to_path_buf()
 }
 
 /// Whether the backstop has been opted out for this invocation.
@@ -118,6 +137,27 @@ fn pid_alive(pid: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn project_root_prefers_the_git_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        let sub = repo.join("sub");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::create_dir_all(&sub).unwrap();
+        // From a subdir, the watch root walks up to the repo (work tree).
+        assert_eq!(project_root_of(&sub), repo);
+        assert_eq!(project_root_of(&repo), repo);
+    }
+
+    #[test]
+    fn project_root_falls_back_to_start_without_git() {
+        let tmp = tempfile::tempdir().unwrap();
+        let plain = tmp.path().join("no-vcs");
+        std::fs::create_dir_all(&plain).unwrap();
+        // No `.git` anywhere up to the temp root → the start dir itself.
+        assert_eq!(project_root_of(&plain), plain);
+    }
 
     #[test]
     fn running_is_none_when_pid_file_is_absent() {

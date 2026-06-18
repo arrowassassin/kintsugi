@@ -46,6 +46,11 @@ const IGNORED_DIRS: &[&str] = &[
     ".gradle",
     ".terraform",
     ".DS_Store",
+    // macOS ~/Library + Unity/Xcode churn: renames/removes here are pure OS noise,
+    // not user activity, and otherwise bury real events in the timeline.
+    "Library",
+    "Caches",
+    "DerivedData",
 ];
 
 /// Map a notify event kind to a stable label, or `None` to ignore it.
@@ -103,20 +108,51 @@ pub fn run(roots: &[PathBuf]) -> Result<()> {
     })
     .context("create filesystem watcher")?;
 
+    let mut registered = 0usize;
     for root in roots {
-        watcher
-            .watch(root, RecursiveMode::Recursive)
-            .with_context(|| format!("watch {}", root.display()))?;
-        eprintln!("kintsugi-watch: watching {}", root.display());
+        match watcher.watch(root, RecursiveMode::Recursive) {
+            Ok(()) => {
+                registered += 1;
+                eprintln!("kintsugi-watch: watching {}", root.display());
+            }
+            // A single root we can't watch is a partial blind spot, not a reason
+            // to abandon the others — record the gap and carry on.
+            Err(e) => record_marker(&format!("cannot watch {}: {e}", root.display())),
+        }
+    }
+    if registered == 0 {
+        anyhow::bail!("could not watch any of the requested paths");
     }
 
     for res in rx {
         match res {
-            Ok(event) => forward(&event),
-            Err(e) => eprintln!("kintsugi-watch: watch error: {e}"),
+            Ok(event) => {
+                // The OS dropped events (queue overflow): the backstop missed
+                // changes in this window. Surface it instead of silently losing
+                // coverage — the honest guarantee depends on knowing the gap.
+                if event.need_rescan() {
+                    record_marker("event queue overflow — some changes were not recorded");
+                }
+                forward(&event);
+            }
+            Err(e) => record_marker(&format!("watch error: {e}")),
         }
     }
     Ok(())
+}
+
+/// Surface a backstop degradation: log it and record a `backstop-degraded`
+/// observation so the timeline shows the watcher's coverage was reduced rather
+/// than failing silently.
+fn record_marker(reason: &str) {
+    eprintln!("kintsugi-watch: backstop degraded: {reason}");
+    let obs = Observation {
+        kind: "backstop-degraded".into(),
+        path: reason.into(),
+    };
+    if let Err(e) = Client::observe(&obs) {
+        eprintln!("kintsugi-watch: could not record degradation marker: {e}");
+    }
 }
 
 /// Forward one notify event's interesting paths to the daemon.
@@ -178,6 +214,11 @@ mod tests {
         assert!(is_ignored(Path::new("/home/u/proj/src/.main.rs.swp")));
         assert!(is_ignored(Path::new("/home/u/proj/.DS_Store")));
         assert!(is_ignored(Path::new("/home/u/proj/src/main.rs~")));
+        // macOS OS churn under ~/Library is ignored (pure noise, not user activity).
+        assert!(is_ignored(Path::new(
+            "/Users/x/Library/Preferences/foo.plist"
+        )));
+        assert!(is_ignored(Path::new("/Users/x/Library/Caches/bar")));
         // A real source file is not ignored.
         assert!(!is_ignored(Path::new("/home/u/proj/src/main.rs")));
         assert!(!is_ignored(Path::new("/home/u/proj/data/users.sql")));
@@ -186,5 +227,55 @@ mod tests {
     #[test]
     fn empty_roots_is_an_error() {
         assert!(run(&[]).is_err());
+    }
+
+    /// Point the IPC client at a socket that can't exist, so the degradation
+    /// marker's `Client::observe` fails fast and is never written to a real daemon
+    /// (these tests assert the fail-soft path, not delivery).
+    fn isolate_socket() {
+        std::env::set_var(
+            "KINTSUGI_SOCKET",
+            "/kintsugi-nonexistent-test-socket-xyzzy.sock",
+        );
+    }
+
+    #[test]
+    fn unwatchable_root_records_a_marker_and_bails() {
+        // A path that can't be watched (it doesn't exist) is a partial blind spot:
+        // the per-root `.watch()` Err arm records a degradation marker, and with no
+        // root successfully registered `run` bails rather than watching nothing.
+        isolate_socket();
+        let bogus = PathBuf::from("/kintsugi-nonexistent-watch-root-xyzzy");
+        assert!(
+            run(&[bogus]).is_err(),
+            "no watchable root must be an error, not a silent no-op"
+        );
+    }
+
+    #[test]
+    fn record_marker_is_resilient_without_a_daemon() {
+        // The degradation marker is best-effort: with no daemon listening, the
+        // Client::observe send fails and is logged, but record_marker must not
+        // panic (the watcher keeps running).
+        isolate_socket();
+        record_marker("test degradation reason");
+    }
+
+    #[test]
+    fn forward_skips_ignored_and_non_destructive_events_without_panic() {
+        isolate_socket();
+        // A non-destructive kind (create) is dropped before any path work.
+        let create = notify::Event::new(EventKind::Create(notify::event::CreateKind::File))
+            .add_path(PathBuf::from("/work/tree/new.rs"));
+        forward(&create);
+        // A destructive event under an ignored dir is skipped per-path.
+        let in_ignored = notify::Event::new(EventKind::Remove(notify::event::RemoveKind::File))
+            .add_path(PathBuf::from("/work/tree/node_modules/x.js"));
+        forward(&in_ignored);
+        // A destructive event on a real path is forwarded (observe fails soft with
+        // no daemon — the point is it walks the happy path without panicking).
+        let real = notify::Event::new(EventKind::Remove(notify::event::RemoveKind::File))
+            .add_path(PathBuf::from("/work/tree/src/main.rs"));
+        forward(&real);
     }
 }

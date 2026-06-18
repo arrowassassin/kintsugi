@@ -32,7 +32,9 @@ _kintsugi_record() {
   case "$1" in
     *kintsugi\ ingest*|kintsugi\ ingest*) return ;;   # never record our own plumbing
   esac
-  command kintsugi ingest --cwd "$PWD" -- "$1" >/dev/null 2>&1 &
+  # Run detached in a subshell so the interactive shell never prints job-control
+  # notices ("[1] 12345" / "[1]  + done …") for our fire-and-forget recorder.
+  ( command kintsugi ingest --cwd "$PWD" -- "$1" >/dev/null 2>&1 & )
 }
 if [ -n "$ZSH_VERSION" ]; then
   autoload -Uz add-zsh-hook 2>/dev/null && add-zsh-hook preexec _kintsugi_record

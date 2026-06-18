@@ -481,3 +481,43 @@ the locked product decisions this build implements.
   per-OS tuning, exactly the "spike the riskiest cross-platform primitive first"
   rule. The launcher + default-on backstop close much of the yolo gap with no
   unsafe code and no new dependencies.
+
+## 0.2.1 — pre-rollout security & robustness hardening
+
+- Audit-hardening summary: 0.2.1 is a security/robustness pass before rollout. It
+  closes a catastrophic-classified-as-SAFE bypass (`git -c <exec-key>=…` /
+  `--config-env` inline config exec, plus GNU `--flag=value` not matching the
+  catastrophic flag set), replaces the symmetric admin auth proof with an
+  asymmetric one, and converts several silent failure modes to fail-closed /
+  fail-loud. No new product surface — bug-and-spine fixes only.
+- FLAGGED dependency — `ed25519-dalek` (2.x), added to `kintsugi-core`: required
+  to make the "password to stop/unlock" proof asymmetric. The v1 proof was a
+  symmetric tag keyed by the password *verifier*, which is stored in the vault, so
+  a same-user agent who could read the vault file could forge a proof without the
+  password. v2 stores only the password-derived ed25519 public key; the private
+  seed is never persisted. This is a new third-party crypto dependency outside the
+  prior allowlist — accepted deliberately because rolling our own asymmetric
+  signature is the worse option, and dalek is the de-facto audited Rust ed25519.
+  Vault scheme bumped to v2; a pre-v2 vault fails proofs closed until the user
+  re-runs `kintsugi admin provision`.
+- Fail-closed on audit-log write failure: spine #4 says a command we can't record
+  must not run unrecorded, so the daemon now downgrades an Allow to Deny when
+  `log_event` fails (rather than the prior best-effort log-and-continue).
+- Backstop-degraded marker: the FS watcher now emits a `backstop-degraded`
+  observation (a real timeline entry) on a failed per-root watch, an OS event
+  overflow, or a watch-stream error — the honest "nothing is unrecoverable"
+  guarantee requires the user to know when coverage was reduced, not lose it
+  silently. A second daemon also refuses to start (split-brain guard) so two
+  writers can't race on the hash chain.
+- Coverage-bar honesty (sign-off): line coverage stays gated via the
+  `--fail-under-lines` floor, which is explicitly a *below-target regression
+  guard*, not the 90% target; branch coverage is *tracked, not gated* in CI
+  because cargo-llvm-cov only emits branch counts on nightly, which CI doesn't
+  pin. This is the honest statement of where we are vs. the CLAUDE.md 90%
+  line-AND-branch target, signed off here rather than silently lowering the bar.
+- Consciously deferred (not done in 0.2.1): the daemon's single-threaded request
+  loop (concurrency hardening deferred); a heredoc-redaction backstop for secrets
+  smuggled through here-docs; turning off console echo while reading the Windows
+  confirm code; and upstream verification of the exact hook payload format for
+  Codex / Copilot / Gemini (the adapters are written to the documented shapes but
+  not yet round-trip-verified against each upstream).

@@ -345,6 +345,12 @@ pub struct App {
     /// in UTC; the timeline renders them in this offset. Defaults to UTC (also the
     /// value tests run with, for deterministic formatting).
     pub local_offset: time::UtcOffset,
+    /// Last log seq we loaded at (so we only reload when the log grows). -1 forces
+    /// the first load. Set to -1 to force a reload after an action (e.g. undo).
+    pub last_seq: i64,
+    /// The filter string in effect at the last load (so toggling the filter, which
+    /// changes how deep we must load, forces a reload even if seq didn't change).
+    pub last_filter: String,
 }
 
 impl App {
@@ -373,6 +379,8 @@ impl App {
             settings_selected: 0,
             settings_status: None,
             local_offset: time::UtcOffset::UTC,
+            last_seq: -1,
+            last_filter: String::new(),
         }
     }
 

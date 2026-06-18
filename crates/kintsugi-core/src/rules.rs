@@ -680,7 +680,17 @@ fn program_name(arg0: &str) -> String {
 
 /// Per-program catastrophic detection.
 fn catastrophic_segment(prog: &str, args: &[&str], seg: &str) -> Option<&'static str> {
-    let has = |flags: &[&str]| args.iter().any(|a| flags.contains(a));
+    // Match `--flag` whether bare or in GNU `--flag=value` form.
+    let has = |flags: &[&str]| {
+        args.iter().any(|a| {
+            let norm = if a.starts_with("--") {
+                a.split('=').next().unwrap_or(a)
+            } else {
+                *a
+            };
+            flags.contains(&norm)
+        })
+    };
     let has_short = |c: char| {
         args.iter().any(|a| {
             a.len() >= 2 && a.starts_with('-') && !a.starts_with("--") && a[1..].contains(c)
@@ -700,6 +710,11 @@ fn catastrophic_segment(prog: &str, args: &[&str], seg: &str) -> Option<&'static
         }
         "rmdir" if targets_dangerous_path(args) => return Some("rmdir:root"),
         "git" => {
+            // Inline `-c <exec-key>=…` / `--config-env` injects code regardless of
+            // the subcommand — check before dispatching, or it reads as `git log`.
+            if git_inline_config_exec(args) {
+                return Some("git:inline-config-exec");
+            }
             let sub = git_subcommand(args);
             match sub.as_deref() {
                 Some("config") if config_sets_exec(args) => return Some("git:config-exec"),
@@ -905,21 +920,55 @@ fn config_sets_exec(args: &[&str]) -> bool {
     if reading {
         return false;
     }
-    args.iter().any(|a| {
-        let k = a.trim_matches(['"', '\'']).to_lowercase();
-        k == "core.pager"
-            || k == "core.sshcommand"
-            || k == "core.editor"
-            || k == "core.fsmonitor"
-            || k == "sequence.editor"
-            || k == "diff.external"
-            || k.starts_with("alias.")
-            || k.starts_with("filter.")
-            || k.ends_with(".command")
-            || k.ends_with(".helper")
-            || k.ends_with(".sshcommand")
-            || k.ends_with(".pager")
-    })
+    args.iter()
+        .any(|a| is_exec_config_key(a.trim_matches(['"', '\''])))
+}
+
+/// Whether a git config *key* names an execution primitive git will run as a
+/// shell command, or that redirects git's network/hook behavior.
+fn is_exec_config_key(raw: &str) -> bool {
+    let k = raw.to_lowercase();
+    k == "core.pager"
+        || k == "core.sshcommand"
+        || k == "core.editor"
+        || k == "core.fsmonitor"
+        || k == "core.hookspath"
+        || k == "sequence.editor"
+        || k == "diff.external"
+        || k.starts_with("alias.")
+        || k.starts_with("filter.")
+        || k.ends_with(".command")
+        || k.ends_with(".helper")
+        || k.ends_with(".sshcommand")
+        || k.ends_with(".pager")
+        || k.ends_with(".insteadof")
+        || k.ends_with(".pushinsteadof")
+}
+
+/// Whether a git invocation injects an execution primitive *inline* via a global
+/// option — `git -c core.pager='rm -rf /' log` or `git --config-env=…`. Without
+/// this, git_subcommand skips the `-c <k=v>` pair, the command reads as `git log`,
+/// and the injected pager/ssh/alias runs arbitrary code on the SAFE fast path.
+fn git_inline_config_exec(args: &[&str]) -> bool {
+    let mut i = 0;
+    while i < args.len() {
+        let a = args[i];
+        let key = if (a == "-c" || a == "--config-env") && i + 1 < args.len() {
+            i += 1;
+            Some(args[i])
+        } else {
+            a.strip_prefix("--config-env=")
+                .or_else(|| a.strip_prefix("-c="))
+        };
+        if let Some(kv) = key {
+            let name = kv.trim_matches(['"', '\'']).split('=').next().unwrap_or("");
+            if is_exec_config_key(name) {
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
 }
 
 /// Whether the token stream truncates (`>`/`>|`) a known secret file — clobbering
@@ -1040,6 +1089,10 @@ fn is_safe(prog: &str, args: &[&str]) -> bool {
 }
 
 fn is_safe_git(args: &[&str]) -> bool {
+    // Defense in depth: an inline exec-config injection is never safe.
+    if git_inline_config_exec(args) {
+        return false;
+    }
     match git_subcommand(args).as_deref() {
         Some(
             "status" | "diff" | "log" | "show" | "remote" | "describe" | "rev-parse" | "ls-files"
@@ -1427,6 +1480,36 @@ mod tests {
         // Ordinary config stays safe; reading a risky key stays safe.
         assert_eq!(class_of("git config user.name 'Bob'"), Class::Safe);
         assert_eq!(class_of("git config --get core.pager"), Class::Safe);
+    }
+
+    #[test]
+    fn git_inline_config_exec_is_catastrophic_not_safe() {
+        for s in [
+            "git -c core.pager='rm -rf /' log",
+            "git -c core.pager=\"rm -rf /\" diff",
+            "git -c core.sshCommand=touch\\ /tmp/pwned fetch origin",
+            "git -c alias.x='!rm -rf /' status",
+            "git -c core.hooksPath=/tmp/evil status",
+            "git --config-env=core.pager=EVIL log",
+            "git -c=core.pager=rm log",
+        ] {
+            assert_eq!(
+                class_of(s),
+                Class::Catastrophic,
+                "inline exec must hard-block: {s}"
+            );
+        }
+        assert_eq!(class_of("git -c color.ui=always log"), Class::Safe);
+        assert_eq!(class_of("git -c user.name=Bob log"), Class::Safe);
+    }
+
+    #[test]
+    fn long_flag_with_attached_value_is_not_a_bypass() {
+        assert_eq!(
+            class_of("rm --recursive=true --force=yes /etc"),
+            Class::Catastrophic
+        );
+        assert_eq!(class_of("git push --force=please"), Class::Catastrophic);
     }
 
     #[test]

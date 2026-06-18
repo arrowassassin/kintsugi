@@ -221,29 +221,60 @@ pub fn capture(store_root: &Path, cmd: &ProposedCommand) -> std::io::Result<Opti
 }
 
 /// Restore every captured path back to its original location.
+///
+/// Each entry is restored atomically: the stored copy is staged to a temp
+/// sibling, the live path is moved aside, then the staged copy is rename-swapped
+/// into place. If the swap fails, the original is rolled back — an interrupted
+/// undo never leaves a path half-written.
 pub fn restore(store_root: &Path, manifest: &Manifest) -> std::io::Result<()> {
     let dir = store_root.join(&manifest.id);
-    for entry in &manifest.entries {
+    for (idx, entry) in manifest.entries.iter().enumerate() {
         let src = dir.join(&entry.stored);
         let dst = &entry.original;
-        // Clear whatever is there now, then restore from the store.
-        if dst.exists() {
-            if dst.is_dir() {
-                std::fs::remove_dir_all(dst)?;
-            } else {
-                std::fs::remove_file(dst)?;
-            }
-        }
         if let Some(parent) = dst.parent() {
             std::fs::create_dir_all(parent)?;
         }
+        let tmp = restore_tmp_path(dst, &manifest.id, idx);
+        let _ = remove_path(&tmp);
         if entry.is_dir {
-            copy_tree(&src, dst)?;
+            copy_tree(&src, &tmp)?;
         } else {
-            copy_file(&src, dst)?;
+            copy_file(&src, &tmp)?;
+        }
+        if dst.exists() {
+            let bak = restore_tmp_path(dst, &manifest.id, idx).with_extension("bak");
+            let _ = remove_path(&bak);
+            std::fs::rename(dst, &bak)?;
+            if let Err(e) = std::fs::rename(&tmp, dst) {
+                std::fs::rename(&bak, dst).ok();
+                let _ = remove_path(&tmp);
+                return Err(e);
+            }
+            let _ = remove_path(&bak);
+        } else {
+            std::fs::rename(&tmp, dst)?;
         }
     }
     Ok(())
+}
+
+fn restore_tmp_path(dst: &Path, id: &str, idx: usize) -> std::path::PathBuf {
+    let name = dst
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "path".into());
+    let parent = dst.parent().unwrap_or_else(|| Path::new("."));
+    parent.join(format!(".kintsugi-restore-{id}-{idx}-{name}"))
+}
+
+fn remove_path(p: &Path) -> std::io::Result<()> {
+    if p.is_dir() {
+        std::fs::remove_dir_all(p)
+    } else if p.exists() {
+        std::fs::remove_file(p)
+    } else {
+        Ok(())
+    }
 }
 
 /// Copy a single file, preferring reflink CoW, falling back to a plain copy.

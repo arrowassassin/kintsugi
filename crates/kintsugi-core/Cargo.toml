@@ -28,6 +28,9 @@ brush-parser.workspace = true
 reflink-copy = "0.1.29"
 argon2.workspace = true
 chacha20poly1305.workspace = true
+# Asymmetric auth proof (admin.rs): the vault stores only the password-derived
+# ed25519 public key, so reading the file can't forge a "password to stop" proof.
+ed25519-dalek = "2"
 zeroize.workspace = true
 getrandom.workspace = true
 

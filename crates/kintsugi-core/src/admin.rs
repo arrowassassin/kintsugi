@@ -32,11 +32,16 @@
 use argon2::{Algorithm, Argon2, Params, Version};
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
+use ed25519_dalek::{Signer, SigningKey, VerifyingKey, SIGNATURE_LENGTH};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 /// Bumped if the KDF/seal scheme changes; old vaults keep their stored version.
-const SCHEME_VERSION: u32 = 1;
+/// v2 replaced the symmetric auth-proof (which stored the MAC key in the vault,
+/// so anyone who could read the file could forge a proof without the password)
+/// with a password-derived ed25519 signature: the vault holds only the public
+/// key, so reading it no longer lets a same-user agent forge a stop/unlock proof.
+const SCHEME_VERSION: u32 = 2;
 /// AEAD associated data context label — binds a blob to this exact use.
 const CONTEXT: &[u8] = b"kintsugi.admin.settings.v1";
 const SALT_LEN: usize = 16;
@@ -133,6 +138,13 @@ pub struct SealedVault {
     /// argon2id(password, verifier_salt) — proves knowledge of the password.
     verifier_salt: String,
     verifier: String,
+    /// Salt for the auth signing key: seed = argon2id(password, auth_salt). Only
+    /// the *public* key is stored; the private seed is never persisted. (Empty on a
+    /// pre-v2 vault → all proofs fail closed until re-provisioned.)
+    #[serde(default)]
+    auth_salt: String,
+    #[serde(default)]
+    auth_pubkey: String,
     /// AEAD of the settings under argon2id(password, seal_salt).
     seal_salt: String,
     seal_nonce: String,
@@ -217,30 +229,27 @@ fn to_key(bytes: &[u8]) -> Result<[u8; KEY_LEN], AdminError> {
     Ok(k)
 }
 
-/// A deterministic MAC built from the AEAD: the Poly1305 tag over an empty
-/// message, keyed by `key`, with the challenge `nonce` and `op` bound as AAD.
-/// Same key + nonce + op → same tag on both sides, so it works as a
-/// challenge-response proof without a separate HMAC dependency.
-fn auth_mac(key: &[u8; KEY_LEN], nonce: &[u8], op: &[u8]) -> Result<Vec<u8>, AdminError> {
-    if nonce.len() != NONCE_LEN {
-        return Err(AdminError::Decode);
-    }
-    // AAD binds both the nonce and the operation so the tag can't be reused for a
-    // different challenge or a different privileged action.
-    let mut aad = Vec::with_capacity(CONTEXT.len() + nonce.len() + 1 + op.len());
-    aad.extend_from_slice(CONTEXT);
-    aad.extend_from_slice(nonce);
-    aad.push(0x1f);
-    aad.extend_from_slice(op);
-    aead(key)
-        .encrypt(
-            XNonce::from_slice(nonce),
-            Payload {
-                msg: b"",
-                aad: &aad,
-            },
-        )
-        .map_err(|_| AdminError::Kdf)
+/// The exact bytes a proof signs: context label, the daemon's challenge nonce,
+/// and the op — separator-delimited. Binding both makes a proof un-replayable.
+fn auth_message(nonce: &[u8], op: &[u8]) -> Vec<u8> {
+    let mut msg = Vec::with_capacity(CONTEXT.len() + nonce.len() + 1 + op.len());
+    msg.extend_from_slice(CONTEXT);
+    msg.extend_from_slice(nonce);
+    msg.push(0x1f);
+    msg.extend_from_slice(op);
+    msg
+}
+
+/// Derive the ed25519 signing key from the password and the vault's auth_salt.
+/// The 32-byte argon2id output is the seed; the private key is never written.
+fn auth_signing_key(
+    params: KdfParams,
+    password: &str,
+    auth_salt_hex: &str,
+) -> Result<SigningKey, AdminError> {
+    let salt = hex::decode(auth_salt_hex).map_err(|_| AdminError::Decode)?;
+    let seed = params.derive(password.as_bytes(), &salt)?;
+    Ok(SigningKey::from_bytes(&seed))
 }
 
 /// A fresh random challenge nonce (24 bytes, matching the AEAD nonce width).
@@ -258,9 +267,12 @@ pub fn compute_proof(
     nonce: &[u8],
     op: &[u8],
 ) -> Result<Vec<u8>, AdminError> {
-    let salt = hex::decode(salt_hex).map_err(|_| AdminError::Decode)?;
-    let key = params.derive(password.as_bytes(), &salt)?;
-    auth_mac(&key, nonce, op)
+    if nonce.len() != NONCE_LEN {
+        return Err(AdminError::Decode);
+    }
+    // `salt_hex` is the vault's auth_salt, handed out in the daemon's challenge.
+    let signing = auth_signing_key(params, password, salt_hex)?;
+    Ok(signing.sign(&auth_message(nonce, op)).to_bytes().to_vec())
 }
 
 /// Constant-time byte comparison (avoid leaking the verifier via timing).
@@ -289,6 +301,12 @@ fn provision_with(
     // 1. Verifier (independent salt → domain-separated from the sealing key).
     let verifier_salt = random_bytes::<SALT_LEN>()?;
     let verifier = params.derive(pw, &verifier_salt)?;
+    // 1b. Auth signing key (independent salt). Only the public key is stored.
+    let auth_salt = random_bytes::<SALT_LEN>()?;
+    let auth_seed = params.derive(pw, &auth_salt)?;
+    let auth_pubkey = SigningKey::from_bytes(&auth_seed)
+        .verifying_key()
+        .to_bytes();
     // 2. Sealing key (independent salt), seal the settings.
     let seal_salt = random_bytes::<SALT_LEN>()?;
     let seal_key = params.derive(pw, &seal_salt)?;
@@ -304,6 +322,8 @@ fn provision_with(
             params,
             verifier_salt: hex::encode(verifier_salt),
             verifier: hex::encode(verifier.as_ref()),
+            auth_salt: hex::encode(auth_salt),
+            auth_pubkey: hex::encode(auth_pubkey),
             seal_salt: hex::encode(seal_salt),
             seal_nonce,
             seal_ct,
@@ -332,7 +352,7 @@ impl SealedVault {
     /// The inputs a client needs to compute an auth proof: the verifier salt and
     /// the KDF params. Handed out by the daemon in a challenge — neither is secret.
     pub fn auth_challenge(&self) -> (String, KdfParams) {
-        (self.verifier_salt.clone(), self.params)
+        (self.auth_salt.clone(), self.params)
     }
 
     /// Verify a challenge-response proof for operation `op` under `nonce`. The
@@ -341,16 +361,26 @@ impl SealedVault {
     /// password never crosses the wire and a captured proof can't be replayed for a
     /// different nonce/op. Compared constant-time.
     pub fn verify_proof(&self, nonce: &[u8], op: &[u8], proof: &[u8]) -> bool {
-        let Ok(verifier) = hex::decode(&self.verifier) else {
+        if nonce.len() != NONCE_LEN || proof.len() != SIGNATURE_LENGTH {
+            return false;
+        }
+        // Pre-v2 vault has no public key → no proof valid → fail closed.
+        let Ok(pk_bytes) = hex::decode(&self.auth_pubkey) else {
             return false;
         };
-        let Ok(key) = to_key(&verifier) else {
+        let Ok(pk_arr) = to_key(&pk_bytes) else {
             return false;
         };
-        let Ok(want) = auth_mac(&key, nonce, op) else {
+        let Ok(pk) = VerifyingKey::from_bytes(&pk_arr) else {
             return false;
         };
-        ct_eq(&want, proof)
+        let mut sig = [0u8; SIGNATURE_LENGTH];
+        sig.copy_from_slice(proof);
+        pk.verify_strict(
+            &auth_message(nonce, op),
+            &ed25519_dalek::Signature::from_bytes(&sig),
+        )
+        .is_ok()
     }
 
     /// Derive the sealing key from the password (or error on wrong password).
@@ -522,6 +552,43 @@ mod tests {
 
         // Same proof for a DIFFERENT op → rejected (bound to the operation).
         assert!(!v.verify_proof(&nonce, b"unhook", &proof));
+    }
+
+    #[test]
+    fn vault_contents_cannot_forge_a_proof_without_the_password() {
+        use ed25519_dalek::{Signer, SigningKey};
+        let p = provision_fast(&pw("secret"), &LockedSettings::default());
+        let v = &p.vault;
+        let (salt, params) = v.auth_challenge();
+        let nonce = random_auth_nonce().unwrap();
+        let op = b"shutdown";
+        let msg = auth_message(&nonce, op);
+        let verifier: [u8; KEY_LEN] = hex::decode(&v.verifier).unwrap().try_into().unwrap();
+        let forged = SigningKey::from_bytes(&verifier)
+            .sign(&msg)
+            .to_bytes()
+            .to_vec();
+        assert!(
+            !v.verify_proof(&nonce, op, &forged),
+            "verifier must not be a usable signing key"
+        );
+        let pk: [u8; KEY_LEN] = hex::decode(&v.auth_pubkey).unwrap().try_into().unwrap();
+        let forged2 = SigningKey::from_bytes(&pk).sign(&msg).to_bytes().to_vec();
+        assert!(!v.verify_proof(&nonce, op, &forged2));
+        let real = compute_proof(&pw("secret"), &salt, params, &nonce, op).unwrap();
+        assert!(v.verify_proof(&nonce, op, &real));
+    }
+
+    #[test]
+    fn pre_v2_vault_without_pubkey_fails_proofs_closed() {
+        let p = provision_fast(&pw("ok"), &LockedSettings::default());
+        let mut v = p.vault.clone();
+        v.auth_pubkey = String::new();
+        v.auth_salt = String::new();
+        let (salt, params) = p.vault.auth_challenge();
+        let nonce = random_auth_nonce().unwrap();
+        let proof = compute_proof(&pw("ok"), &salt, params, &nonce, b"shutdown").unwrap();
+        assert!(!v.verify_proof(&nonce, b"shutdown", &proof));
     }
 
     #[test]
