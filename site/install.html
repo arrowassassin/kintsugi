@@ -269,6 +269,41 @@ deny  = ["git push * --force", "kubectl * --context=prod"]</pre
         </div>
       </section>
 
+      <section id="env">
+        <h2><span class="n">&gt;</span> 5 · environment variables</h2>
+        <p class="lead">
+          Kintsugi works with zero configuration; these overrides are for tests,
+          packaging, and the locked enterprise posture. Paths default to your
+          per-user data dir.
+        </p>
+        <div class="term">
+          <div class="bar">
+            <i class="dot r"></i><i class="dot y"></i><i class="dot g"></i
+            ><span class="ttl">env</span>
+          </div>
+          <pre>
+<span class="t-grn">KINTSUGI_FAIL_CLOSED</span>=1     block raw shell-outs when the daemon is down (default: fail open)
+<span class="t-grn">KINTSUGI_NO_WATCH</span>=1        don't start the FS-watcher backstop with the daemon
+<span class="t-grn">KINTSUGI_WATCH_DIR</span>=&lt;path&gt;  backstop scope (default: the current directory)
+<span class="t-grn">KINTSUGI_NO_AUTOSTART</span>=1    don't auto-start the daemon from the CLI
+<span class="t-grn">KINTSUGI_APPROVAL_TIMEOUT</span>=&lt;secs&gt;  MCP: wait in-band this long for an approval
+<span class="t-grn">KINTSUGI_DATA_DIR</span>=&lt;path&gt;   base dir for the log, socket, snapshots, model
+<span class="t-grn">KINTSUGI_DB</span>=&lt;path&gt;         event-log SQLite file
+<span class="t-grn">KINTSUGI_SOCKET</span>=&lt;path&gt;     daemon IPC socket (else $XDG_RUNTIME_DIR/kintsugi.sock)
+<span class="t-grn">KINTSUGI_CONFIG</span>=&lt;path&gt;     global policy TOML (per-repo .kintsugi.toml still applies)
+<span class="t-grn">KINTSUGI_VAULT</span>=&lt;path&gt;      admin vault location (enterprise lock)
+<span class="t-grn">KINTSUGI_ETC_DIR</span>=&lt;path&gt;    system config root for enforce-shell (default: /etc)
+<span class="t-grn">KINTSUGI_MODEL_FILE</span>=&lt;path&gt; force a specific GGUF; <span class="t-grn">KINTSUGI_MODEL_DIR</span> sets the search dir
+<span class="t-grn">NO_COLOR</span>=1                disable color in the CLI and TUI
+</pre>
+        </div>
+        <p class="muted">
+          Fail-closed is one-way once locked: a root-owned marker (or
+          <span class="muted">kintsugi admin</span>) wins over the env var, so an
+          agent can't re-open the gate with <span class="muted">KINTSUGI_FAIL_CLOSED=0</span>.
+        </p>
+      </section>
+
       <section id="docs">
         <h2><span class="n">&gt;</span> docs</h2>
         <div class="cols two">

@@ -172,6 +172,29 @@ dmn  → <span class="t-grn">Ack — daemon exits</span>   <span class="t-dim">#
       rule-based block into an allow.
     </div>
 
+    <h3 style="font-family:'Press Start 2P';font-size:12px;color:var(--gold);margin:26px 0 10px">system-wide shell enforcement</h3>
+    <p class="lead">A per-user shim only guards the users who ran
+      <span class="muted">kintsugi init</span>.
+      <span class="muted">sudo kintsugi admin enforce-shell</span> installs the shim
+      <em>system-wide</em>: a root-owned <span class="muted">/etc/profile.d</span>
+      snippet prepends the shim dir to every login shell's
+      <span class="muted">PATH</span>, so raw shell-outs across the host hit the gate —
+      including agents and accounts that never opted in. It's idempotent (re-sourcing a
+      profile never double-lists it), and only root — or
+      <span class="muted">kintsugi admin enforce-shell --remove</span> with the admin
+      password — can take it back off. Check the current state with
+      <span class="muted">kintsugi admin enforce-shell --status</span>.</p>
+    <div class="spine">
+      <b>The backstop is on by default.</b> Independent of any shim, the
+      filesystem-watcher backstop runs from <span class="muted">kintsugi init</span>
+      onward and records the destructive changes (deletes, renames) of anything that
+      dodged the hook/shim/MCP entirely — so the honest guarantee is "nothing is
+      unrecoverable", not "nothing runs un-warned". If its coverage is ever reduced
+      (a path it couldn't watch, an OS event-queue overflow) it records a
+      <span class="muted">backstop-degraded</span> marker on the timeline rather than
+      going quiet.
+    </div>
+
     <h3 style="font-family:'Press Start 2P';font-size:12px;color:var(--gold);margin:26px 0 10px">honest scope of the lock</h3>
     <p class="lead">One honest sentence, taken straight from the design doc:</p>
     <div class="spine" style="border-left-color:var(--gold)">

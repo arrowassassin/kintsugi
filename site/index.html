@@ -64,6 +64,28 @@
     </figure>
   </section>
 
+  <section id="quickstart">
+    <h2><span class="n">&gt;</span> quickstart</h2>
+    <p class="muted">Three commands: install, wire your agents, watch it work. Nothing
+      leaves your machine.</p>
+    <div class="cmd">
+      <button class="copy">copy</button>
+      <pre>
+# 1 · install (prebuilt, or builds from source if none)
+curl -fsSL https://github.com/arrowassassin/kintsugi/releases/latest/download/install.sh | sh
+
+# 2 · detect &amp; wire every agent on this machine (Claude Code, Codex, Gemini,
+#     Antigravity, Copilot, Cursor, Qwen, OpenCode — plus a $PATH shim)
+kintsugi init
+
+# 3 · see the live timeline / TUI
+kintsugi tui</pre
+      >
+    </div>
+    <p class="note">Full walkthrough, per-repo policy, and the Claude Code plugin →
+      <a href="install.html">install &amp; setup</a>.</p>
+  </section>
+
   <section id="what">
     <h2><span class="n">&gt;</span> what is it</h2>
     <p class="lead">AI coding agents now run real commands on real machines —
@@ -80,8 +102,9 @@
       always shown verbatim. The log is append-only and hash-chained.
     </div>
     <p class="muted">Agent-agnostic from day one, with a <em>native pre-tool hook</em>
-      for each: Claude Code, Qwen Code, Gemini CLI, GitHub Copilot CLI, Cursor CLI,
-      Codex CLI, and OpenCode — plus any custom/MCP agent and <em>any raw shell</em>
+      for each: Claude Code, Qwen Code, Gemini CLI, Google Antigravity, GitHub
+      Copilot CLI, Cursor CLI, Codex CLI, and OpenCode — plus any custom/MCP agent
+      and <em>any raw shell</em>
       via the $PATH shim. <code>kintsugi init</code> detects what you have and wires
       each one. Protection lives at the process layer, not inside any one tool.</p>
   </section>
@@ -134,7 +157,7 @@
           Zero catastrophic-as-safe, enforced by a golden corpus + property tests.</p></div>
       <div class="card"><h3>Works with every agent</h3>
         <p><span class="k">Native hooks</span> for Claude Code, Cursor, Codex, Qwen,
-          Gemini, Copilot &amp; OpenCode — <span class="k">or any raw shell</span>.
+          Gemini, Antigravity, Copilot &amp; OpenCode — <span class="k">or any raw shell</span>.
           One layer at the process level, wired in a single <span class="k">kintsugi init</span>.</p></div>
       <div class="card"><h3>Reversible by default</h3>
         <p>Snapshots before destructive ops (reflink CoW). <span class="k">kintsugi undo</span>
