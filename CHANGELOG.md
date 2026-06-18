@@ -53,6 +53,11 @@ silent.
 - **Windows confirm reads the real console.** The interactive run-confirmation
   prompt reads from `CONIN$`/`CONOUT$` (the physical console), not stdin (which
   the agent controls), failing closed when no console is attached.
+- **Quiet session recorder.** The shell recorder hook now runs its
+  fire-and-forget `kintsugi ingest` inside a detached subshell, so interactive
+  shells no longer print job-control notices (`[1] 12345` / `[1]  + done …`)
+  after every command. Re-run `kintsugi record install` to refresh the snippet
+  in your rc file.
 
 ### CI / tests
 - The latency gate now asserts the **median (p50) < 10ms** instead of a brittle
