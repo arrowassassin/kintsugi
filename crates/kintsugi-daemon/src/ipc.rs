@@ -332,6 +332,15 @@ pub struct Server {
 impl Server {
     /// Bind the listener, clearing any stale Unix socket file first.
     pub fn bind() -> Result<Self> {
+        // Refuse to start a second daemon: two writers would race on the event
+        // log's prev_hash and split the timeline. Clearing the stale socket below
+        // would otherwise let a second instance silently steal the endpoint.
+        if Client::is_daemon_running() {
+            anyhow::bail!(
+                "a kintsugi daemon is already running on {}",
+                socket_path().display()
+            );
+        }
         #[cfg(unix)]
         {
             let path = socket_path();
