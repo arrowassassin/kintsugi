@@ -440,7 +440,19 @@ impl Daemon {
     /// if held — enqueue it for approval. Returns the verdict.
     pub fn handle(&self, cmd: ProposedCommand) -> Verdict {
         let mut verdict = self.decide(&cmd);
-        let snapshot_id = self.maybe_snapshot(&cmd, &verdict);
+        let (snapshot_id, snapshot_failed) = self.maybe_snapshot(&cmd, &verdict);
+        if verdict.decision == Decision::Allow && verdict.class != kintsugi_core::Class::Safe {
+            let note = if snapshot_failed {
+                Some("snapshot failed — NOT reversible by undo")
+            } else if !kintsugi_core::snapshot::is_fully_reversible(&cmd) {
+                Some("target can't be fully snapshotted — undo may not restore everything")
+            } else {
+                None
+            };
+            if let Some(n) = note {
+                verdict.reason = format!("{} [⚠ {n}]", verdict.reason);
+            }
+        }
         if let Err(e) = self.log.log_event(&cmd, &verdict, snapshot_id.as_deref()) {
             // Spine #4: a command we cannot write to the append-only log must not run
             // unrecorded. Fail closed — refuse an Allow rather than execute it dark.
@@ -498,22 +510,22 @@ impl Daemon {
 
     /// Snapshot the paths a command will touch, when it is allowed and not Safe.
     /// Returns the snapshot id to attach to the event, if one was taken.
-    fn maybe_snapshot(&self, cmd: &ProposedCommand, verdict: &Verdict) -> Option<String> {
+    fn maybe_snapshot(&self, cmd: &ProposedCommand, verdict: &Verdict) -> (Option<String>, bool) {
         if verdict.decision != Decision::Allow || verdict.class == kintsugi_core::Class::Safe {
-            return None;
+            return (None, false);
         }
         match kintsugi_core::capture_snapshot(&self.snapshot_dir, cmd) {
             Ok(Some(manifest)) => {
                 if let Err(e) = self.log.record_snapshot(&manifest) {
                     eprintln!("kintsugi-daemon: failed to record snapshot: {e}");
-                    return None;
+                    return (None, true);
                 }
-                Some(manifest.id)
+                (Some(manifest.id), false)
             }
-            Ok(None) => None,
+            Ok(None) => (None, false),
             Err(e) => {
                 eprintln!("kintsugi-daemon: snapshot failed: {e}");
-                None
+                (None, true)
             }
         }
     }
@@ -544,7 +556,7 @@ impl Daemon {
         };
         let verdict = Verdict::rules(m.class, resolution.decision, reason);
         // Snapshot before a human-approved destructive command runs.
-        let snapshot_id = self.maybe_snapshot(cmd, &verdict);
+        let (snapshot_id, _) = self.maybe_snapshot(cmd, &verdict);
         self.log.log_event(cmd, &verdict, snapshot_id.as_deref())?;
 
         if remember && resolution.decision != Decision::Hold {
@@ -628,7 +640,7 @@ impl Daemon {
         // DROP/TRUNCATE is not a file, so it's flagged/recorded but recovery there
         // is your DB's PITR/backups. The honest guarantee is "recoverable", not
         // transactional.
-        let snapshot_id = self.maybe_snapshot(&cmd, &verdict);
+        let (snapshot_id, _) = self.maybe_snapshot(&cmd, &verdict);
         self.log.log_event(&cmd, &verdict, snapshot_id.as_deref())?;
         Ok(())
     }
