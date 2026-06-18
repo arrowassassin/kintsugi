@@ -40,7 +40,7 @@ jobs:
       - run: cargo test --workspace
 
   coverage:
-    name: coverage (line + branch)
+    name: coverage (line; branch tracked)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -49,9 +49,15 @@ jobs:
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@cargo-llvm-cov
-      # Target is >= 90% line AND branch per `CLAUDE.md`. The floor below guards
-      # against regressions; the remaining gap is concentrated in code that needs
-      # a live environment CI can't provide, exercised manually / by the demo:
+      # Honest coverage posture (see DECISIONS.md sign-off):
+      #   - LINE coverage is gated here. The `--fail-under-lines` floor below is a
+      #     below-target regression guard, NOT the 90% target itself — it trips if
+      #     coverage slips, and is raised back toward 90 as the gaps close.
+      #   - BRANCH coverage is TRACKED, NOT GATED: cargo-llvm-cov only emits branch
+      #     counts on a nightly toolchain, which we don't pin in CI, so gating on it
+      #     here would be misleading. It is measured locally and reviewed.
+      # The remaining line gap is concentrated in code that needs a live environment
+      # CI can't provide, exercised manually / by the demo:
       #   - thin binary entrypoints (daemon `main.rs`, the `src/bin/*` launchers):
       #     arg-dispatch shells, run at the process level, not line-attributable;
       #   - `kintsugi-tui/src/lib.rs`: the ratatui run-loop + terminal init/teardown,
