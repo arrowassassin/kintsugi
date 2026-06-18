@@ -459,8 +459,10 @@ impl Daemon {
             eprintln!("kintsugi-daemon: failed to record event: {e}");
             if verdict.decision == Decision::Allow {
                 verdict.decision = Decision::Deny;
-                verdict.reason =
-                    format!("audit-log write failed; denied fail-closed ({})", verdict.reason);
+                verdict.reason = format!(
+                    "audit-log write failed; denied fail-closed ({})",
+                    verdict.reason
+                );
             }
         }
         if verdict.decision == Decision::Hold {

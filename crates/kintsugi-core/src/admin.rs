@@ -564,7 +564,10 @@ mod tests {
         let op = b"shutdown";
         let msg = auth_message(&nonce, op);
         let verifier: [u8; KEY_LEN] = hex::decode(&v.verifier).unwrap().try_into().unwrap();
-        let forged = SigningKey::from_bytes(&verifier).sign(&msg).to_bytes().to_vec();
+        let forged = SigningKey::from_bytes(&verifier)
+            .sign(&msg)
+            .to_bytes()
+            .to_vec();
         assert!(
             !v.verify_proof(&nonce, op, &forged),
             "verifier must not be a usable signing key"
