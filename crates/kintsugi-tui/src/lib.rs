@@ -23,8 +23,14 @@ pub use app::{Action, App, Mode, Screen};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// How many recent events to show, and how often to poll for new ones.
-const TAIL: usize = 500;
+/// The fs-watch backstop is a firehose; cap its live view. Full history is on
+/// the append-only log (`kintsugi log`) and reachable by filtering (below).
+const BACKSTOP_TAIL: usize = 500;
+/// Commands / audit / recorder are low-volume; load effectively all and let the
+/// in-view scroll paginate, so backstop noise can never evict a command row.
+/// Also the depth the backstop is loaded to while a filter is active.
+const TIMELINE_TAIL: usize = 5000;
+/// How often to poll for new events.
 const POLL: Duration = Duration::from_millis(250);
 /// Frame cadence while the launch splash animates (≈60ms → ~1.8s total).
 const SPLASH_TICK: Duration = Duration::from_millis(60);
@@ -130,11 +136,45 @@ fn reload(app: &mut App, db_path: &Path, log: &mut Option<EventLog>) {
         *log = EventLog::open(db_path).ok();
     }
     if let Some(l) = log.as_ref() {
-        if let Ok(mut events) = l.tail(TAIL) {
-            // `tail` is chronological (oldest-first); show newest at the top.
-            events.reverse();
-            app.set_events(events);
+        let seq = l.latest_seq().unwrap_or(0);
+        // Skip the heavy load when nothing that affects it changed: the log didn't
+        // grow AND the filter is unchanged. Keeps the 250ms poll near-free when idle.
+        if seq == app.last_seq && app.filter == app.last_filter {
+            return;
         }
+        let filtering = !app.filter.trim().is_empty();
+        // 500 cap is for the idle live tail; while the user is actively filtering,
+        // load the backstop as deep as the command tabs so the universal filter
+        // reaches the same depth on every tab (Timeline/Audit/Recorder/Backstop).
+        let backstop_limit = if filtering {
+            TIMELINE_TAIL
+        } else {
+            BACKSTOP_TAIL
+        };
+
+        // Two windows: the command timeline (everything except fs-watch) and the
+        // backstop. Unioned, they feed the existing tab partitioning, so a noisy
+        // backstop can no longer push commands out of the fetch window.
+        use kintsugi_core::log::Filter;
+        let mut events = l
+            .query(&Filter {
+                agent_not: Some("fs-watch".to_string()),
+                limit: Some(TIMELINE_TAIL),
+                ..Filter::default()
+            })
+            .unwrap_or_default();
+        if let Ok(mut backstop) = l.query(&Filter {
+            agent: Some("fs-watch".to_string()),
+            limit: Some(backstop_limit),
+            ..Filter::default()
+        }) {
+            events.append(&mut backstop);
+        }
+        // Newest-first for display (matches the prior tail().reverse() ordering).
+        events.sort_by_key(|e| std::cmp::Reverse(e.seq));
+        app.set_events(events);
+        app.last_seq = seq;
+        app.last_filter = app.filter.clone();
     }
 }
 
@@ -146,6 +186,7 @@ fn undo(app: &mut App, db_path: &Path, snapshot_dir: &Path, log: &mut Option<Eve
         Ok(None) => "nothing to undo".to_string(),
         Err(e) => format!("undo failed: {e}"),
     });
+    app.last_seq = -1; // force the gate to reload so the result shows immediately
     reload(app, db_path, log);
 }
 

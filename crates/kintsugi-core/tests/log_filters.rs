@@ -267,6 +267,52 @@ fn purge_matching_nothing_is_a_noop() {
 }
 
 #[test]
+fn agent_not_excludes_that_agent() {
+    let log = EventLog::open_in_memory().unwrap();
+    log.log_event(
+        &cmd("claude-code", Some("s1"), "git status"),
+        &allow(),
+        None,
+    )
+    .unwrap();
+    log.log_event(&cmd("fs-watch", None, "removed src/a.rs"), &allow(), None)
+        .unwrap();
+    log.log_event(&cmd("fs-watch", None, "renamed src/b.rs"), &allow(), None)
+        .unwrap();
+
+    // agent_not drops fs-watch — the command timeline window.
+    let commands = log
+        .query(&Filter {
+            agent_not: Some("fs-watch".into()),
+            ..Filter::default()
+        })
+        .unwrap();
+    assert_eq!(commands.len(), 1);
+    assert!(commands.iter().all(|e| e.agent != "fs-watch"));
+
+    // agent isolates the backstop window.
+    let backstop = log
+        .query(&Filter {
+            agent: Some("fs-watch".into()),
+            ..Filter::default()
+        })
+        .unwrap();
+    assert_eq!(backstop.len(), 2);
+    assert!(backstop.iter().all(|e| e.agent == "fs-watch"));
+}
+
+#[test]
+fn latest_seq_tracks_appends() {
+    let log = EventLog::open_in_memory().unwrap();
+    assert_eq!(log.latest_seq().unwrap(), 0, "empty log → 0");
+    for i in 1..=3 {
+        log.log_event(&cmd("shim", None, "ls"), &allow(), None)
+            .unwrap();
+        assert_eq!(log.latest_seq().unwrap(), i, "max seq tracks appends");
+    }
+}
+
+#[test]
 fn count_matching_respects_filter() {
     let log = seed();
     assert_eq!(

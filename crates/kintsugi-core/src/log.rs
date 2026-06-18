@@ -81,6 +81,8 @@ pub struct LoggedEvent {
 pub struct Filter {
     /// Restrict to one agent (`claude-code`, `cursor`, `shim`, …).
     pub agent: Option<String>,
+    /// Exclude one agent (e.g. drop `fs-watch` from the command timeline).
+    pub agent_not: Option<String>,
     /// Restrict to one session id.
     pub session: Option<String>,
     /// Only events at or after this instant.
@@ -108,6 +110,10 @@ impl Filter {
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
         if let Some(a) = &self.agent {
             clauses.push("events.agent = ?".into());
+            params.push(Box::new(a.clone()));
+        }
+        if let Some(a) = &self.agent_not {
+            clauses.push("events.agent != ?".into());
             params.push(Box::new(a.clone()));
         }
         if let Some(s) = &self.session {
@@ -878,6 +884,14 @@ impl EventLog {
         Ok(self
             .conn
             .query_row("SELECT COUNT(*) FROM events", [], |row| row.get(0))?)
+    }
+
+    /// The highest sequence number (0 if empty). O(1) via the rowid index — cheap
+    /// enough to poll so the TUI only reloads when the log actually grew.
+    pub fn latest_seq(&self) -> Result<i64, LogError> {
+        Ok(self
+            .conn
+            .query_row("SELECT COALESCE(MAX(seq), 0) FROM events", [], |r| r.get(0))?)
     }
 
     /// Walk the chain from genesis and confirm every link.

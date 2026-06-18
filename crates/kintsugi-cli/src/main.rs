@@ -399,6 +399,7 @@ impl FilterArgs {
         };
         Ok(kintsugi_core::Filter {
             agent: self.agent.clone(),
+            agent_not: None,
             session: self.session.clone(),
             class,
             grep: self.grep.clone(),
