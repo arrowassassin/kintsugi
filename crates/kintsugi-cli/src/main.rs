@@ -1021,6 +1021,11 @@ fn cmd_panic() -> Result<()> {
 }
 
 fn cmd_resume() -> Result<()> {
+    // Clearing the kill-switch loosens protection, so gate it like `stop`:
+    // needs the admin password when a vault is provisioned. Engaging stays ungated.
+    if !admin_cmd::allow_stop() {
+        return Ok(());
+    }
     let path = kintsugi_daemon::kill_switch_path();
     if path.exists() {
         std::fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;

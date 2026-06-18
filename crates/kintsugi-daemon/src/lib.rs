@@ -439,11 +439,17 @@ impl Daemon {
     /// Handle one proposal: decide, snapshot if destructive+allowed, record, and —
     /// if held — enqueue it for approval. Returns the verdict.
     pub fn handle(&self, cmd: ProposedCommand) -> Verdict {
-        let verdict = self.decide(&cmd);
+        let mut verdict = self.decide(&cmd);
         let snapshot_id = self.maybe_snapshot(&cmd, &verdict);
         if let Err(e) = self.log.log_event(&cmd, &verdict, snapshot_id.as_deref()) {
-            // Recording is best-effort at the IPC boundary; never crash the daemon.
+            // Spine #4: a command we cannot write to the append-only log must not run
+            // unrecorded. Fail closed — refuse an Allow rather than execute it dark.
             eprintln!("kintsugi-daemon: failed to record event: {e}");
+            if verdict.decision == Decision::Allow {
+                verdict.decision = Decision::Deny;
+                verdict.reason =
+                    format!("audit-log write failed; denied fail-closed ({})", verdict.reason);
+            }
         }
         if verdict.decision == Decision::Hold {
             if let Err(e) = self

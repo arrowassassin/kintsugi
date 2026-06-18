@@ -394,6 +394,10 @@ fn panic_engages_and_resume_clears_kill_switch() {
     let common = |c: &mut Command| {
         c.env("KINTSUGI_DB", &db)
             .env("KINTSUGI_SOCKET", tmp.path().join("none.sock"))
+            // `resume` is admin-gated like `stop`; point at an absent vault so the
+            // test stays in the unprovisioned (ungated) path and never touches the
+            // machine's real vault or a tty.
+            .env("KINTSUGI_VAULT", tmp.path().join("absent-vault.json"))
             .env("NO_COLOR", "1");
     };
 
