@@ -52,6 +52,12 @@ All notable changes to Kintsugi are documented here. The format loosely follows
   path; the reason is redacted (no credential can leak into the negotiation
   channel); and the audit log keeps the clean rule reason, not the model-facing
   instruction.
+- **Provenance trail over IPC (P6.4).** The daemon can now produce the
+  human-readable provenance chain for a command — the session's untrusted reads →
+  this command's sensitive read → egress sink → the trifecta rule that fired — and
+  exposes it over IPC (`Client::provenance`) for the CLI/TUI to render on a held
+  trifecta and for forensic replay ("everything descended from source X"). A clean
+  session has an empty trail; identifiers only, never secret contents.
 
 ## [0.2.1] — 2026-06-17
 

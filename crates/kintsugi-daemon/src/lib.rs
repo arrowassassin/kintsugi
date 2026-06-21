@@ -269,6 +269,43 @@ impl Daemon {
         self.taint.borrow().session_taint(session).cloned()
     }
 
+    /// Build the human-readable provenance trail for a command (P6.4): the session's
+    /// untrusted reads, then this command's sensitive read → egress sink → the
+    /// trifecta rule that fired. Identifiers only (no secret contents). This is the
+    /// forensic chain the CLI/TUI renders on a held trifecta and the audit replay
+    /// uses to reconstruct "everything descended from source X".
+    pub fn provenance_trail(&self, cmd: &ProposedCommand) -> Vec<kintsugi_core::ProvStep> {
+        use kintsugi_core::ProvStep;
+        let session = cmd.session.as_deref();
+        // The trail explains *untrusted-content provenance*. A clean session has
+        // none, so its trail is empty even if the command reads a secret or hits a
+        // sink — there is nothing for those legs to descend from, and no rule fires.
+        let Some(set) = session.and_then(|s| self.session_provenance(s)) else {
+            return Vec::new();
+        };
+        if !set.is_tainted() {
+            return Vec::new();
+        }
+        let mut trail = kintsugi_core::untrusted_trail(&set);
+        let sensitive = kintsugi_core::is_sensitive_read(cmd);
+        let egress = kintsugi_core::is_egress_sink(cmd);
+        if let Some(path) = &sensitive {
+            trail.push(ProvStep::SensitiveRead { path: path.clone() });
+        }
+        if let Some(target) = &egress {
+            trail.push(ProvStep::EgressSink {
+                target: target.clone(),
+            });
+        }
+        let outcome = kintsugi_core::evaluate_trifecta(true, sensitive.is_some(), egress.is_some());
+        if let Some(rule) = outcome.rule() {
+            trail.push(ProvStep::RuleFired {
+                rule: rule.to_string(),
+            });
+        }
+        trail
+    }
+
     /// Apply the Provenance trifecta as a deterministic class **floor**: a command
     /// in a tainted session that reads a secret and reaches an egress sink is the
     /// lethal trifecta and is forced to the catastrophic hard floor. Escalation
@@ -822,6 +859,10 @@ impl Daemon {
                 self.apply_taint(&observed.into_taint_event());
                 ipc::Response::Ack
             }
+            ipc::Request::Provenance(cmd) => ipc::Response::Provenance {
+                tainted: self.is_session_tainted(cmd.session.as_deref()),
+                trail: self.provenance_trail(&cmd),
+            },
             ipc::Request::Record(cmd) => match self.record_shell(&cmd) {
                 Ok(()) => ipc::Response::Ack,
                 Err(e) => ipc::Response::Error {

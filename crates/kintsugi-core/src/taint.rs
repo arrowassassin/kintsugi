@@ -313,6 +313,21 @@ pub enum ProvStep {
     RuleFired { rule: String },
 }
 
+/// The untrusted-read prefix of a provenance trail: one [`ProvStep::UntrustedRead`]
+/// per origin in a session's (or file's) taint set, in observation order. This is
+/// the forensic "everything descended from source X" chain; the daemon appends the
+/// per-command legs (sensitive read → egress sink → rule fired) to complete it.
+/// Identifiers only — never content.
+pub fn untrusted_trail(set: &TaintSet) -> Vec<ProvStep> {
+    set.labels()
+        .iter()
+        .map(|l| ProvStep::UntrustedRead {
+            source_kind: l.source_kind,
+            source_id: l.source_id.clone(),
+        })
+        .collect()
+}
+
 /// A persisted taint transition — the unit of durability.
 ///
 /// An ordered stream of these fully determines a [`TaintState`]: replaying them
@@ -657,6 +672,29 @@ mod tests {
             session: "s".to_string(),
         };
         assert_eq!(reset.with_redacted_source_id(), reset);
+    }
+
+    #[test]
+    fn untrusted_trail_lists_each_origin_as_a_step_in_order() {
+        let mut set = TaintSet::default();
+        set.add(label(SourceKind::Web, "https://evil.example/a", "s"));
+        set.add(label(SourceKind::Mcp, "mcp/github/get_issue", "s"));
+        let trail = untrusted_trail(&set);
+        assert_eq!(
+            trail,
+            vec![
+                ProvStep::UntrustedRead {
+                    source_kind: SourceKind::Web,
+                    source_id: "https://evil.example/a".to_string(),
+                },
+                ProvStep::UntrustedRead {
+                    source_kind: SourceKind::Mcp,
+                    source_id: "mcp/github/get_issue".to_string(),
+                },
+            ]
+        );
+        // A clean set has an empty trail.
+        assert!(untrusted_trail(&TaintSet::default()).is_empty());
     }
 
     #[test]

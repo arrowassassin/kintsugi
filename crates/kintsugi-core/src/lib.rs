@@ -32,8 +32,8 @@ pub use rules::{
 };
 pub use snapshot::{capture as capture_snapshot, restore as restore_snapshot, Manifest};
 pub use taint::{
-    evaluate_trifecta, ObservedIngest, ProvStep, SourceKind, TaintEvent, TaintLabel, TaintSet,
-    TaintState, TaintStore, Trifecta,
+    evaluate_trifecta, untrusted_trail, ObservedIngest, ProvStep, SourceKind, TaintEvent,
+    TaintLabel, TaintSet, TaintState, TaintStore, Trifecta,
 };
 pub use types::{Class, Decision, Mode, ProposedCommand, Verdict};
 

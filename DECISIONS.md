@@ -591,3 +591,15 @@ the locked product decisions this build implements.
   run through `redact` so no credential leaks into the negotiation channel (item
   G). The breaker only escalates messaging — a Safe command is still allowed even
   after it trips, and an Allow resets the streak.
+- P6.4 (provenance trail over IPC): `daemon.provenance_trail(cmd)` builds the
+  forensic chain — the session's untrusted reads (`untrusted_trail` over the taint
+  set, pure in kintsugi-core) + this command's sensitive-read → egress-sink →
+  trifecta-rule legs — and a read-only `Request::Provenance(cmd)` →
+  `Response::Provenance { tainted, trail }` exposes it (with `Client::provenance`).
+  Chose a dedicated IPC query over threading `provenance: Option<Vec<ProvStep>>`
+  through Verdict (30+ construction sites + wire-compat churn) — the trail is a
+  pull-on-demand view for the UI/replay, not part of every verdict. A clean session
+  yields an empty trail: the sensitive-read/sink legs are only emitted when the
+  session is actually tainted, so they always *descend from* an untrusted origin
+  (no misleading legs without a chain). Identifiers only — no secret contents, and
+  source_ids are already redacted at ingest (item G).
