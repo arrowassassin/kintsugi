@@ -30,6 +30,26 @@ fn App() -> Element {
     use_context_provider(Store::new);
     let store = use_context::<Store>();
 
+    // Live-refresh heartbeats. Every screen's data reads one of these ticks, so
+    // bumping them re-runs the reads. Fast (250ms) for light row lists + status;
+    // slow (2s) for heavy aggregates — see Store::tick docs.
+    let mut tick = store.tick;
+    use_future(move || async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            let v = *tick.peek();
+            tick.set(v.wrapping_add(1));
+        }
+    });
+    let mut slow_tick = store.slow_tick;
+    use_future(move || async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(2000)).await;
+            let v = *slow_tick.peek();
+            slow_tick.set(v.wrapping_add(1));
+        }
+    });
+
     let theme_vars = store.theme.read().root_vars();
     let unlocked = *store.unlocked.read();
     let panic = *store.panic.read();
@@ -56,6 +76,8 @@ fn App() -> Element {
                         }
                     }
                 }
+                // Per-activity detail drawer — overlays everything when a row is clicked.
+                screens::DetailDrawer {}
             }
         }
     }

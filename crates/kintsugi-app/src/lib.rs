@@ -82,6 +82,9 @@ fn timeline_row(e: kintsugi_core::LoggedEvent) -> TimelineRow {
         provenance_block: is_provenance_block(&e.reason),
         reason: e.reason,
         risk: e.risk,
+        summary: e.summary,
+        cwd: e.cwd,
+        tier: e.tier,
     }
 }
 
@@ -402,6 +405,9 @@ mod tests {
             reason: "safe:ls".into(),
             provenance_block: false,
             risk: None,
+            summary: None,
+            cwd: "/tmp".into(),
+            tier: 1,
         };
         let json = serde_json::to_value(&row).unwrap();
         assert_eq!(json["outcome"], "allowed");

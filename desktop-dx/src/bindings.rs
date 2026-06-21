@@ -26,14 +26,23 @@ pub fn status() -> EngineStatus {
 pub fn metrics() -> Metrics {
     app::metrics(&db()).unwrap_or_default()
 }
+/// Flip an oldest-first page into newest-first for display. `EventLog::query`
+/// selects the newest N rows but re-sorts them ascending; every list in the UI
+/// wants the freshest row at the top.
+fn newest_first(mut rows: Vec<TimelineRow>) -> Vec<TimelineRow> {
+    rows.reverse();
+    rows
+}
 pub fn timeline(limit: usize) -> Vec<TimelineRow> {
-    app::timeline(&db(), limit).unwrap_or_default()
+    newest_first(app::timeline(&db(), limit).unwrap_or_default())
 }
 pub fn audit(query: &str, limit: usize) -> Vec<TimelineRow> {
-    app::audit(&db(), query, limit).unwrap_or_default()
+    newest_first(app::audit(&db(), query, limit).unwrap_or_default())
 }
 pub fn queue() -> Vec<QueueRow> {
-    app::queue().unwrap_or_default()
+    let mut q = app::queue().unwrap_or_default();
+    q.reverse();
+    q
 }
 pub fn verify() -> Option<ChainVerify> {
     app::verify(&db()).ok()
@@ -133,8 +142,18 @@ pub fn stop_engine_with_password(password: &str) -> anyhow::Result<()> {
     let nonce_bytes = hex::decode(&nonce).map_err(|e| anyhow::anyhow!("bad nonce: {e}"))?;
     let proof = kintsugi_core::admin::compute_proof(password, &salt, params, &nonce_bytes, b"shutdown")
         .map_err(|e| anyhow::anyhow!("couldn't derive proof: {e:?}"))?;
-    Client::shutdown("shutdown", &nonce, &hex::encode(proof))
-        .map_err(|_| anyhow::anyhow!("wrong password"))
+    // Preserve the daemon's actual message. Only relabel the plain auth failure
+    // as "wrong password" — lockout, degraded-vault, and "no auth key" messages
+    // are distinct and actionable, and masking them sends the user down the
+    // wrong recovery path (and silent retries extend the lockout backoff).
+    Client::shutdown("shutdown", &nonce, &hex::encode(proof)).map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("authentication failed") {
+            anyhow::anyhow!("wrong password")
+        } else {
+            anyhow::anyhow!("{msg}")
+        }
+    })
 }
 
 // ---- snapshots / undo (the Undo screen) ------------------------------------
@@ -258,9 +277,10 @@ pub fn set_master_password(password: &str) -> anyhow::Result<String> {
 pub fn change_master_password(old: &str, new: &str) -> anyhow::Result<String> {
     match admin::load_vault(&admin::default_vault_path()) {
         VaultState::Locked(v) => {
-            let prov = v
-                .change_password(old, new)
-                .map_err(|_| anyhow::anyhow!("current password is wrong"))?;
+            let prov = v.change_password(old, new).map_err(|e| match e {
+                admin::AdminError::WrongPassword => anyhow::anyhow!("current password is wrong"),
+                other => anyhow::anyhow!("{other}"),
+            })?;
             admin::save_vault(&admin::default_vault_path(), &prov.vault)
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
             Ok(prov.recovery_key)
@@ -274,21 +294,22 @@ pub fn change_master_password(old: &str, new: &str) -> anyhow::Result<String> {
 
 /// Agent commands only — the main Activity feed, fs-watch excluded.
 pub fn commands(limit: usize) -> Vec<TimelineRow> {
-    app::timeline_excluding(&db(), "fs-watch", limit).unwrap_or_default()
+    newest_first(app::timeline_excluding(&db(), "fs-watch", limit).unwrap_or_default())
 }
 /// The filesystem-watcher backstop (its own quiet section).
 pub fn file_changes(limit: usize) -> Vec<TimelineRow> {
-    app::timeline_for_agent(&db(), "fs-watch", limit).unwrap_or_default()
+    newest_first(app::timeline_for_agent(&db(), "fs-watch", limit).unwrap_or_default())
 }
 /// The human shell-session recorder.
 pub fn shell_log(limit: usize) -> Vec<TimelineRow> {
-    app::timeline_for_agent(&db(), "shell", limit).unwrap_or_default()
+    newest_first(app::timeline_for_agent(&db(), "shell", limit).unwrap_or_default())
 }
 /// History as a destructive lens: non-safe agent commands (fs-watch excluded).
 pub fn history(limit: usize) -> Vec<TimelineRow> {
     let mut rows = app::timeline_excluding(&db(), "fs-watch", 500).unwrap_or_default();
     rows.retain(|r| r.class != "safe");
-    rows.truncate(limit);
+    rows.reverse(); // newest-first
+    rows.truncate(limit); // keep the freshest `limit`, not the oldest
     rows
 }
 

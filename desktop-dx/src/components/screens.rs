@@ -7,19 +7,151 @@ use crate::data;
 
 const FADE: &str = "animation:kfade .3s ease;";
 
-/// Short HH:MM:SS clock from an rfc3339 timestamp.
+/// Parse an rfc3339 (UTC) timestamp into (local date, local time) in the user's
+/// timezone. Falls back to a raw string split if it doesn't parse.
+fn local_datetime(ts: &str) -> (String, String) {
+    use chrono::{DateTime, Local};
+    if let Ok(dt) = DateTime::parse_from_rfc3339(ts) {
+        let l = dt.with_timezone(&Local);
+        return (l.format("%Y-%m-%d").to_string(), l.format("%H:%M:%S").to_string());
+    }
+    match ts.split_once('T') {
+        Some((date, rest)) => (date.to_string(), rest.get(..8).unwrap_or(rest).to_string()),
+        None => (ts.to_string(), String::new()),
+    }
+}
+
+/// Local date + time on one line — a bare clock is ambiguous across days.
 fn short_time(ts: &str) -> String {
-    ts.split('T').nth(1).map(|t| t[..t.len().min(8)].to_string()).unwrap_or_else(|| ts.to_string())
+    let (date, time) = local_datetime(ts);
+    if time.is_empty() { date } else { format!("{date} {time}") }
 }
 fn clock(ts: &str) -> String { short_time(ts) }
 /// Map a TimelineRow outcome to the key decision() understands.
 fn outcome_key(o: &str) -> &'static str {
     match o { "allowed" => "allowed", "held" => "held", "denied" => "blocked", _ => "blocked" }
 }
-// Aliases the per-screen agents reached for under different names.
-fn short_ts(ts: &str) -> String { short_time(ts) }
-fn rec_clock(ts: &str) -> String { short_time(ts) }
 fn outcome_decision(o: &str) -> &'static str { outcome_key(o) }
+
+/// A timestamp table cell: time on top (prominent), date dimmed below. Keeps the
+/// full date+time readable in a narrow column without the ugly mid-string wrap.
+#[component]
+fn TimeCell(ts: String) -> Element {
+    let (date, time) = local_datetime(&ts);
+    rsx! {
+        span { style: "display:inline-flex;flex-direction:column;line-height:1.25;font-family:'IBM Plex Mono',monospace;white-space:nowrap",
+            span { style: "font-size:11.5px;color:var(--ink)", "{time}" }
+            span { style: "font-size:9.5px;color:var(--dim)", "{date}" }
+        }
+    }
+}
+
+/// A centered loading spinner shown while a screen's first read is in flight.
+#[component]
+fn Loader(label: String) -> Element {
+    rsx! {
+        div { style: "display:flex;flex-direction:column;align-items:center;justify-content:center;gap:13px;padding:54px 18px",
+            span { style: "width:26px;height:26px;border-radius:50%;border:2.5px solid var(--line);border-top-color:var(--gold);animation:kspin .7s linear infinite" }
+            span { style: "font-size:12.5px;color:var(--dim)", "{label}" }
+        }
+    }
+}
+
+/// One label/value line in the detail drawer.
+#[component]
+fn DetailRow(label: String, value: String) -> Element {
+    rsx! {
+        div { style: "display:flex;gap:14px;padding:9px 0;border-bottom:1px solid var(--hair)",
+            span { style: "flex:none;width:104px;font-size:12px;color:var(--dim)", "{label}" }
+            span { style: "flex:1;min-width:0;font-size:12.5px;color:var(--ink);font-family:'IBM Plex Mono',monospace;word-break:break-all", "{value}" }
+        }
+    }
+}
+
+/// The full detail for one activity — a right-side drawer opened by clicking any
+/// row. Shows the verbatim command, the decision, the model's plain-English
+/// summary (when it scored), and the provenance hop. Renders nothing when closed.
+#[component]
+pub fn DetailDrawer() -> Element {
+    let mut store = use_store();
+    let row = store.detail.read().clone();
+    let Some(r) = row else { return rsx! {} };
+
+    let dec_key = outcome_key(&r.outcome);
+    let (glyph, color) = decision(dec_key);
+    let (class_label, class_st) = crate::data::risk_style(&r.class);
+    let decided_by = if r.tier >= 2 { "Local model · Tier 2" } else { "Deterministic rules · Tier 1" };
+    let session = r.session.clone().unwrap_or_else(|| "—".to_string());
+
+    rsx! {
+        div {
+            style: "position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.45);display:flex;justify-content:flex-end;animation:kfade .15s ease",
+            onclick: move |_| store.detail.set(None),
+            div {
+                style: "width:480px;max-width:94vw;height:100%;background:var(--bg2);border-left:1px solid var(--line);box-shadow:-24px 0 60px rgba(0,0,0,.45);overflow-y:auto",
+                onclick: move |e| e.stop_propagation(),
+
+                div { style: "position:sticky;top:0;background:var(--bg2);display:flex;align-items:center;gap:12px;padding:17px 22px;border-bottom:1px solid var(--line);z-index:1",
+                    span { style: "font-size:15px;font-weight:700;letter-spacing:-.1px", "Activity detail" }
+                    span { style: "display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;color:{color}", "{glyph} {dec_key}" }
+                    button {
+                        style: "margin-left:auto;display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--dim);font-size:17px;cursor:pointer",
+                        onclick: move |_| store.detail.set(None),
+                        "×"
+                    }
+                }
+
+                div { style: "padding:20px 22px",
+                    // verbatim command
+                    div { style: "font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:13px 15px;line-height:1.5;word-break:break-all;margin-bottom:14px", "{r.command}" }
+
+                    // badges
+                    div { style: "display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px",
+                        if !class_label.is_empty() {
+                            span { style: "font-size:11px;font-weight:600;border:1px solid var(--line);border-radius:6px;padding:4px 10px;{class_st}", "{class_label}" }
+                        }
+                        if let Some(risk) = r.risk {
+                            span { style: "font-size:11px;font-weight:600;color:var(--dim);border:1px solid var(--line);border-radius:6px;padding:4px 10px", "risk {risk}/100" }
+                        }
+                        if r.provenance_block {
+                            span { style: "font-size:11px;font-weight:600;color:var(--red);border:1px solid rgba(255,93,93,.35);border-radius:6px;padding:4px 10px", "⚠ trifecta block" }
+                        }
+                    }
+
+                    // model summary — the thing the user said was missing
+                    if let Some(s) = r.summary.clone().filter(|s| !s.is_empty()) {
+                        div { style: "border:1px solid var(--gold-line);border-radius:10px;background:linear-gradient(100deg,rgba(212,175,55,.07),transparent);padding:13px 15px;margin-bottom:18px",
+                            div { style: "font-size:10.5px;font-weight:600;letter-spacing:.6px;text-transform:uppercase;color:var(--gold);margin-bottom:6px", "Model summary" }
+                            div { style: "font-size:13px;color:var(--ink);line-height:1.5", "{s}" }
+                        }
+                    } else {
+                        div { style: "font-size:12.5px;color:var(--dim);line-height:1.5;margin-bottom:18px;padding:11px 14px;border:1px dashed var(--line);border-radius:10px",
+                            "Decided by deterministic rules — no model summary. The local model only scores the ambiguous band."
+                        }
+                    }
+
+                    // fields
+                    DetailRow { label: "When".to_string(), value: short_time(&r.ts) }
+                    DetailRow { label: "Agent".to_string(), value: r.agent.clone() }
+                    DetailRow { label: "Session".to_string(), value: session }
+                    DetailRow { label: "Working dir".to_string(), value: r.cwd.clone() }
+                    DetailRow { label: "Rule".to_string(), value: r.reason.clone() }
+                    DetailRow { label: "Decided by".to_string(), value: decided_by.to_string() }
+                    DetailRow { label: "Event id".to_string(), value: r.id.clone() }
+
+                    // jump to the provenance trail for a tainted command
+                    if r.provenance_block {
+                        button {
+                            style: "margin-top:18px;width:100%;font-family:inherit;font-size:12.5px;font-weight:600;color:var(--gold);background:var(--panel);border:1px solid var(--gold-line);border-radius:9px;padding:11px;cursor:pointer",
+                            onclick: move |_| { store.detail.set(None); store.screen.set(Screen::Provenance); },
+                            "See where it came from →"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
 /// The settings toggle switch (used by the protection toggles in Settings).
 #[component]
@@ -38,21 +170,24 @@ fn Toggle(on: bool, on_click: EventHandler<()>) -> Element {
 pub fn Dashboard() -> Element {
     let mut store = use_store();
 
-    // ---- live backend reads (off the UI thread; fetched once on mount) ----
-    // Every read is wrapped in spawn_blocking so the synchronous engine calls
-    // never block the render thread — this is the fix for the perceived lag.
+    // ---- live backend reads (off the UI thread via spawn_blocking) ----
+    // Light reads refresh on the fast tick; the heavy metrics full-scan on the
+    // slow tick so a 4 Hz refresh never re-runs a full-table scan (the lag fix).
     // commands(6) is the agent feed with fs-watch EXCLUDED (no watcher noise).
     let metrics_res = use_resource(move || async move {
+        let _ = store.slow_tick.read();
         tokio::task::spawn_blocking(crate::bindings::metrics)
             .await
             .unwrap_or_default()
     });
     let queue_res = use_resource(move || async move {
+        let _ = store.tick.read();
         tokio::task::spawn_blocking(crate::bindings::queue)
             .await
             .unwrap_or_default()
     });
     let activity_res = use_resource(move || async move {
+        let _ = store.tick.read();
         tokio::task::spawn_blocking(|| crate::bindings::commands(6))
             .await
             .unwrap_or_default()
@@ -128,7 +263,7 @@ pub fn Dashboard() -> Element {
                             span { style: "font-size:13px;color:var(--dim);margin-left:7px", "{lbl}" }
                         }
                     }
-                    span { style: "margin-left:auto;align-self:center;font-size:12px;color:var(--dim)", "today" }
+                    span { style: "margin-left:auto;align-self:center;font-size:12px;color:var(--dim)", "all time" }
                 }
             }
 
@@ -149,15 +284,16 @@ pub fn Dashboard() -> Element {
                     for a in activity {
                         {
                             let (glyph, color) = decision(outcome_key(&a.outcome));
-                            let time = short_time(&a.ts);
+                            let detail_row = a.clone();
                             rsx! {
-                                div { style: "display:flex;align-items:center;gap:14px;padding:14px 18px;border-bottom:1px solid var(--hair)",
+                                div { style: "display:flex;align-items:center;gap:14px;padding:14px 18px;border-bottom:1px solid var(--hair);cursor:pointer",
+                                    onclick: move |_| store.detail.set(Some(detail_row.clone())),
                                     span { style: "display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:7px;flex:none;font-size:12px;font-weight:700;color:{color}", "{glyph}" }
                                     div { style: "flex:1;min-width:0",
                                         div { style: "font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--ink);line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap", "{a.command}" }
                                         div { style: "font-size:11.5px;color:var(--dim);margin-top:2px", "{a.agent}" }
                                     }
-                                    span { style: "font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--dim);flex:none", "{time}" }
+                                    span { style: "flex:none;text-align:right", TimeCell { ts: a.ts.clone() } }
                                 }
                             }
                         }
@@ -190,6 +326,7 @@ pub fn Feed() -> Element {
     // inside spawn_blocking and we fetch once on mount + whenever the source toggle
     // flips — never on a fast render timer.
     let timeline = use_resource(move || async move {
+        let _ = store.tick.read();
         let files = *show_files.read();
         tokio::task::spawn_blocking(move || {
             if files {
@@ -201,6 +338,7 @@ pub fn Feed() -> Element {
         .await
         .unwrap_or_default()
     });
+    let loading = timeline().is_none();
     let all_rows = timeline().unwrap_or_default();
     let viewing_files = *show_files.read();
 
@@ -315,10 +453,11 @@ pub fn Feed() -> Element {
                         let (glyph, color) = decision(dec);
                         let (risk_label, risk_st) = crate::data::risk_style(&r.class);
                         let has_risk = !risk_label.is_empty();
-                        let time = short_ts(&r.ts);
+                        let detail_row = r.clone();
                         rsx! {
-                            div { style: "display:grid;{cols};padding:12px 18px;border-bottom:1px solid var(--hair);align-items:center",
-                                span { style: "font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--dim)", "{time}" }
+                            div { style: "display:grid;{cols};padding:12px 18px;border-bottom:1px solid var(--hair);align-items:center;cursor:pointer",
+                                onclick: move |_| store.detail.set(Some(detail_row.clone())),
+                                TimeCell { ts: r.ts.clone() }
                                 span { style: "font-family:'IBM Plex Mono',monospace;font-size:12.5px;color:var(--ink);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap", "{r.command}" }
                                 span { style: "font-size:12.5px;color:var(--dim)", "{r.agent}" }
                                 span {
@@ -336,7 +475,9 @@ pub fn Feed() -> Element {
                         }
                     }
                 }
-                if total == 0 {
+                if loading {
+                    Loader { label: "Loading activity…".to_string() }
+                } else if total == 0 {
                     div { style: "padding:40px 18px;text-align:center",
                         div { style: "font-size:22px;margin-bottom:8px;color:var(--green)", "✓" }
                         div { style: "font-size:14px;font-weight:600;color:var(--ink)",
@@ -358,11 +499,11 @@ pub fn Feed() -> Element {
                     div { style: "margin-left:auto;display:flex;align-items:center;gap:10px",
                         span { style: "font-size:12px;color:var(--dim)", "Page {page} of {pages}" }
                         button { class: "kn-btn-ghost", style: "font-family:inherit;font-size:12px;font-weight:600;color:var(--ink);background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:6px 12px;cursor:pointer",
-                            onclick: move |_| { let p = *store.feed_page.read(); if p > 1 { store.feed_page.set(p - 1); } },
+                            onclick: move |_| { if page > 1 { store.feed_page.set(page - 1); } },
                             "‹ Prev"
                         }
                         button { class: "kn-btn-ghost", style: "font-family:inherit;font-size:12px;font-weight:600;color:var(--ink);background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:6px 12px;cursor:pointer",
-                            onclick: move |_| { let p = *store.feed_page.read(); store.feed_page.set(p + 1); },
+                            onclick: move |_| { if page < pages { store.feed_page.set(page + 1); } },
                             "Next ›"
                         }
                     }
@@ -385,18 +526,24 @@ fn class_style(class: &str) -> (&'static str, &'static str) {
 
 #[component]
 pub fn Held() -> Element {
-    // Local tick: bumping it re-runs the resource, re-fetching the live queue.
+    let store = use_store();
+    // Local tick re-runs the resource right after a resolve(); the global tick
+    // keeps the list live. The queue read runs OFF the UI thread.
     let mut tick = use_signal(|| 0u32);
     let rows = use_resource(move || async move {
-        let _ = tick(); // depend on tick so resolve() refreshes the list
-        crate::bindings::queue()
+        let _ = tick(); // refresh immediately after resolve()
+        let _ = store.tick.read(); // live refresh on the heartbeat
+        tokio::task::spawn_blocking(crate::bindings::queue).await.unwrap_or_default()
     });
+    let loading = rows().is_none();
     let rows = rows().unwrap_or_default();
 
     rsx! {
         div { style: "padding:26px;max-width:920px;{FADE}",
 
-            if rows.is_empty() {
+            if loading {
+                Loader { label: "Loading the review queue…".to_string() }
+            } else if rows.is_empty() {
                 // Designed empty state — inviting, calm, paired with a glyph.
                 div { style: "border:1px solid var(--line);border-radius:16px;background:var(--panel);padding:46px 30px;text-align:center",
                     span { style: "display:inline-flex;align-items:center;justify-content:center;width:54px;height:54px;border-radius:14px;background:rgba(90,247,142,.12);margin-bottom:18px",
@@ -528,13 +675,6 @@ fn audit_class_style(class: &str) -> &'static str {
     }
 }
 
-/// Short clock from an rfc3339 ts: take the time part, clamp to HH:MM:SS.
-fn audit_clock(ts: &str) -> String {
-    ts.split('T')
-        .nth(1)
-        .map(|t| t[..t.len().min(8)].to_string())
-        .unwrap_or_else(|| ts.to_string())
-}
 
 /// Map a TimelineRow.outcome to the decision() glyph key ("denied" -> "blocked").
 fn audit_outcome_key(outcome: &str) -> &'static str {
@@ -548,13 +688,15 @@ fn audit_outcome_key(outcome: &str) -> &'static str {
 
 #[component]
 pub fn Audit() -> Element {
+    let mut store = use_store();
     let mut search = use_signal(String::new);
     let q = search.read().trim().to_string();
     let has_query = !q.is_empty();
 
-    // ── tamper-evidence chain: expensive — fetch ONCE on mount, off the UI
-    //    thread. Not on the data timer; verify() re-reads the whole log.
+    // ── tamper-evidence chain: expensive (re-reads the whole log) — on the SLOW
+    //    tick only, off the UI thread, so a 4 Hz refresh never walks the chain.
     let chain = use_resource(move || async move {
+        let _ = store.slow_tick.read();
         tokio::task::spawn_blocking(|| crate::bindings::verify())
             .await
             .unwrap_or(None)
@@ -566,6 +708,7 @@ pub fn Audit() -> Element {
     //    through spawn_blocking so a typing user never blocks the render thread.
     let query = q.clone();
     let rows = use_resource(move || {
+        let _ = store.tick.read();
         let query = query.clone();
         async move {
             tokio::task::spawn_blocking(move || {
@@ -579,8 +722,18 @@ pub fn Audit() -> Element {
             .unwrap_or_default()
         }
     });
-    let rows = rows().unwrap_or_default();
-    let total = rows.len();
+    let loading = rows().is_none();
+    let all_rows = rows().unwrap_or_default();
+    let total = all_rows.len();
+
+    // Pagination (newest-first; same page size as the activity feed).
+    let mut page = use_signal(|| 1usize);
+    let pages = ((total + FEED_PAGE_SIZE - 1) / FEED_PAGE_SIZE).max(1);
+    let page_n = (*page.read()).min(pages).max(1);
+    let start = (page_n - 1) * FEED_PAGE_SIZE;
+    let end = (start + FEED_PAGE_SIZE).min(total);
+    let rows = all_rows[start..end].to_vec();
+    let footer_ml = if pages > 1 { "20px" } else { "auto" };
 
     let cols = "grid-template-columns:64px 1fr 130px 124px 150px";
 
@@ -673,21 +826,24 @@ pub fn Audit() -> Element {
                         let key = audit_outcome_key(&r.outcome);
                         let (glyph, color) = decision(key);
                         let cls_st = audit_class_style(&r.class);
-                        let time = audit_clock(&r.ts);
+                        let detail_row = r.clone();
                         rsx! {
-                            div { style: "display:grid;{cols};gap:14px;padding:12px 18px;border-bottom:1px solid var(--hair);align-items:center",
-                                span { style: "font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--dim)", "{time}" }
+                            div { style: "display:grid;{cols};gap:14px;padding:12px 18px;border-bottom:1px solid var(--hair);align-items:center;cursor:pointer",
+                                onclick: move |_| store.detail.set(Some(detail_row.clone())),
+                                TimeCell { ts: r.ts.clone() }
                                 span { style: "font-family:'IBM Plex Mono',monospace;font-size:12.5px;color:var(--ink);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap", "{r.command}" }
                                 span { style: "font-size:12.5px;color:var(--dim)", "{r.agent}" }
                                 span {
                                     span { style: "font-size:11px;font-weight:600;border:1px solid var(--line);border-radius:6px;padding:3px 9px;{cls_st}", "{r.class}" }
                                 }
-                                span { style: "display:inline-flex;align-items:center;gap:6px;justify-content:flex-end;font-size:12.5px;font-weight:600;color:{color}", "{glyph} {r.outcome}" }
+                                span { style: "display:inline-flex;align-items:center;gap:6px;justify-content:flex-end;font-size:12.5px;font-weight:600;color:{color}", "{glyph} {key}" }
                             }
                         }
                     }
                 }
-                if total == 0 {
+                if loading {
+                    Loader { label: "Loading history…".to_string() }
+                } else if total == 0 {
                     div { style: "padding:40px 18px;text-align:center",
                         div { style: "font-size:24px;margin-bottom:8px;color:var(--dim)", "🗂" }
                         if has_query {
@@ -709,7 +865,16 @@ pub fn Audit() -> Element {
                             "{total} non-safe event(s) · newest first"
                         }
                     }
-                    span { style: "margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--gold)",
+                    if pages > 1 {
+                        div { style: "margin-left:auto;display:flex;align-items:center;gap:9px",
+                            span { style: "font-size:12px;color:var(--dim)", "Page {page_n} of {pages}" }
+                            button { class: "kn-btn-ghost", style: "font-family:inherit;font-size:12px;font-weight:600;color:var(--ink);background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:6px 11px;cursor:pointer",
+                                onclick: move |_| { if page_n > 1 { page.set(page_n - 1); } }, "‹ Prev" }
+                            button { class: "kn-btn-ghost", style: "font-family:inherit;font-size:12px;font-weight:600;color:var(--ink);background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:6px 11px;cursor:pointer",
+                                onclick: move |_| { if page_n < pages { page.set(page_n + 1); } }, "Next ›" }
+                        }
+                    }
+                    span { style: "margin-left:{footer_ml};display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--gold)",
                         svg { view_box: "0 0 24 24", width: "12", height: "12", fill: "none", stroke: "currentColor", stroke_width: "1.8", stroke_linecap: "round", stroke_linejoin: "round",
                             rect { x: "4", y: "11", width: "16", height: "9", rx: "2" }
                             path { d: "M8 11V8a4 4 0 0 1 8 0v3" }
@@ -733,26 +898,16 @@ struct ProvCandidate {
     tainted: bool,
 }
 
-/// "Where it came from." The left rail lists sessions whose commands were
-/// taint-driven blocks (or simply carry a session id); selecting one pulls its
-/// ordered provenance trail and renders it with the gold-seam connector —
-/// the terminal rule step earns the single danger accent.
-#[component]
-pub fn Provenance() -> Element {
-    // All logged rows; collect the ones worth a provenance look.
-    let rows = use_resource(move || async move { crate::bindings::timeline(200) });
-    let rows = rows().unwrap_or_default();
-
-    // De-dupe by session, newest first (timeline already returns newest-first),
-    // preferring taint-driven blocks but accepting any row that carries a session.
+/// De-dupe rows by session (newest-first), keeping the ones worth a provenance
+/// look: taint-driven blocks, or any row that carries a session id. Shared by the
+/// left rail and the default-selection effect so they never disagree.
+fn prov_candidates(rows: &[crate::bindings::TimelineRow]) -> Vec<ProvCandidate> {
     let mut candidates: Vec<ProvCandidate> = Vec::new();
     for r in rows.iter() {
         if !r.provenance_block && r.session.is_none() {
             continue;
         }
-        let Some(session) = r.session.clone() else {
-            continue;
-        };
+        let Some(session) = r.session.clone() else { continue };
         if candidates.iter().any(|c| c.session == session) {
             continue;
         }
@@ -763,14 +918,52 @@ pub fn Provenance() -> Element {
             tainted: r.provenance_block,
         });
     }
+    candidates
+}
 
-    // Selected session — default to the first candidate once data arrives.
-    let mut selected = use_signal(|| None::<String>);
-    if selected.read().is_none() {
-        if let Some(first) = candidates.first() {
-            selected.set(Some(first.session.clone()));
+/// "Where it came from." The left rail lists sessions whose commands were
+/// taint-driven blocks (or simply carry a session id); selecting one pulls its
+/// ordered provenance trail and renders it with the gold-seam connector —
+/// the terminal rule step earns the single danger accent.
+#[component]
+pub fn Provenance() -> Element {
+    let store = use_store();
+    // Agent rows (fs-watch excluded so its firehose can't evict real tainted
+    // sessions from the window), read off the UI thread on the slow tick.
+    let rows_res = use_resource(move || async move {
+        let _ = store.slow_tick.read();
+        tokio::task::spawn_blocking(|| crate::bindings::commands(200)).await.unwrap_or_default()
+    });
+    let rows = rows_res().unwrap_or_default();
+    let candidates = prov_candidates(&rows);
+
+    // Selected (session, command). Default to the first candidate via an effect
+    // (never a write-during-render), keyed on the rows resource so it seeds once
+    // data arrives and leaves an explicit user pick alone.
+    let mut selected = use_signal(|| None::<(String, String)>);
+    use_effect(move || {
+        let rows = rows_res().unwrap_or_default();
+        if selected.peek().is_none() {
+            if let Some(c) = prov_candidates(&rows).into_iter().next() {
+                selected.set(Some((c.session, c.command)));
+            }
         }
-    }
+    });
+
+    // The ordered trail for the selected session — fetched OFF the render thread
+    // (a daemon IPC) and re-run only when the selection changes.
+    let trail_res = use_resource(move || async move {
+        let pick = selected.read().clone();
+        match pick {
+            Some((s, cmd)) => {
+                tokio::task::spawn_blocking(move || crate::bindings::provenance(&s, Some(&cmd)))
+                    .await
+                    .ok()
+                    .flatten()
+            }
+            None => None,
+        }
+    });
 
     // Calm empty state: nothing untrusted-influenced was ever seen.
     if candidates.is_empty() {
@@ -791,7 +984,7 @@ pub fn Provenance() -> Element {
         };
     }
 
-    let sel = selected.read().clone();
+    let sel_session = selected.read().as_ref().map(|(s, _)| s.clone());
 
     rsx! {
         div { style: "padding:26px;max-width:1180px;{FADE}",
@@ -810,7 +1003,7 @@ pub fn Provenance() -> Element {
                 span { style: "font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--dim)", "[provenance] · {candidates.len()} session(s)" }
             }
 
-            div { style: "display:grid;grid-template-columns:300px 1fr;gap:18px;align-items:start",
+            div { style: "display:grid;grid-template-columns:300px minmax(0,1fr);gap:18px;align-items:start",
 
                 // ── left rail: tainted sessions ──
                 div { style: "border:1px solid var(--line);border-radius:12px;background:var(--panel);overflow:hidden",
@@ -819,25 +1012,26 @@ pub fn Provenance() -> Element {
                     }
                     for c in candidates.iter().cloned() {
                         {
-                            let active = sel.as_deref() == Some(c.session.as_str());
+                            let active = sel_session.as_deref() == Some(c.session.as_str());
                             let row_st = if active {
                                 "border-color:var(--gold-line);background:rgba(212,175,55,.06)"
                             } else {
                                 "border-color:transparent;background:transparent"
                             };
                             let sess = c.session.clone();
+                            let cmd = c.command.clone();
                             let time = clock(&c.ts);
                             rsx! {
                                 button {
                                     style: "width:100%;text-align:left;font-family:inherit;display:block;padding:13px 16px;border:none;border-left:2px solid transparent;border-bottom:1px solid var(--hair);cursor:pointer;{row_st}",
-                                    onclick: move |_| selected.set(Some(sess.clone())),
+                                    onclick: move |_| selected.set(Some((sess.clone(), cmd.clone()))),
                                     div { style: "display:flex;align-items:center;gap:8px",
                                         if c.tainted {
                                             span { style: "font-size:11.5px;font-weight:600;color:var(--amber);display:inline-flex;align-items:center;gap:4px", "⚠ tainted" }
                                         } else {
                                             span { style: "font-size:11.5px;font-weight:600;color:var(--dim);display:inline-flex;align-items:center;gap:4px", "• session" }
                                         }
-                                        span { style: "margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--dim)", "{time}" }
+                                        span { style: "margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--dim);white-space:nowrap", "{time}" }
                                     }
                                     div { style: "font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;color:var(--ink);margin-top:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap", "{c.session}" }
                                     div { style: "font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--dim);margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap", "{c.command}" }
@@ -849,12 +1043,14 @@ pub fn Provenance() -> Element {
 
                 // ── right pane: the ordered trail for the selected session ──
                 {
-                    let chosen = sel
+                    let chosen = sel_session
                         .as_ref()
                         .and_then(|s| candidates.iter().find(|c| &c.session == s).cloned());
                     match chosen {
                         Some(c) => {
-                            let view = crate::bindings::provenance(&c.session, Some(&c.command));
+                            // Resolved off the render thread by `trail_res` (keyed on the
+                            // selection); `None` until the daemon round-trip lands.
+                            let view = trail_res().flatten();
                             rsx! {
                                 div { style: "border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:20px 22px",
                                     div { style: "display:flex;align-items:center;gap:10px;margin-bottom:4px",
@@ -943,8 +1139,9 @@ pub fn Recorder() -> Element {
 
     // Live, off the UI thread: the passive human-shell recorder (agent=="shell"),
     // fetched via the dedicated section read inside spawn_blocking so the heavy
-    // log scan never blocks rendering. Fetched once on mount.
+    // log scan never blocks rendering. Refreshes on the fast tick.
     let res = use_resource(move || async move {
+        let _ = store.tick.read();
         tokio::task::spawn_blocking(|| crate::bindings::shell_log(200))
             .await
             .unwrap_or_default()
@@ -958,6 +1155,16 @@ pub fn Recorder() -> Element {
         .filter(|r| search.is_empty() || r.command.to_lowercase().contains(&search))
         .cloned()
         .collect();
+
+    // Pagination over the filtered rows (newest-first).
+    let mut page = use_signal(|| 1usize);
+    let f_total = filtered.len();
+    let pages = ((f_total + FEED_PAGE_SIZE - 1) / FEED_PAGE_SIZE).max(1);
+    let page_n = (*page.read()).min(pages).max(1);
+    let pstart = (page_n - 1) * FEED_PAGE_SIZE;
+    let pend = (pstart + FEED_PAGE_SIZE).min(f_total);
+    let page_rows = filtered[pstart..pend].to_vec();
+    let footer_ml2 = if pages > 1 { "20px" } else { "auto" };
 
     // Live metric tiles derived from the shell rows.
     let total = shell.len();
@@ -1071,16 +1278,17 @@ pub fn Recorder() -> Element {
                             }
                         }
                     } else {
-                        for r in filtered.iter().cloned() {
+                        for r in page_rows.iter().cloned() {
                             {
                                 let mapped = if r.outcome == "denied" { "blocked" } else { r.outcome.as_str() };
                                 let (glyph, color) = decision(mapped);
                                 let (class_label, class_st) = crate::data::risk_style(&r.class);
-                                let clock = rec_clock(&r.ts);
                                 let host = r.session.clone().unwrap_or_else(|| "local shell".to_string());
+                                let detail_row = r.clone();
                                 rsx! {
-                                    div { style: "display:grid;{cols};padding:12px 17px;border-bottom:1px solid var(--hair);align-items:center",
-                                        span { style: "font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--dim)", "{clock}" }
+                                    div { style: "display:grid;{cols};padding:12px 17px;border-bottom:1px solid var(--hair);align-items:center;cursor:pointer",
+                                        onclick: move |_| store.detail.set(Some(detail_row.clone())),
+                                        TimeCell { ts: r.ts.clone() }
                                         span {
                                             if class_label.is_empty() {
                                                 span { style: "font-size:11.5px;color:var(--dim)", "—" }
@@ -1099,7 +1307,16 @@ pub fn Recorder() -> Element {
                         }
                         div { style: "display:flex;align-items:center;gap:12px;padding:11px 17px;border-top:1px solid var(--line)",
                             span { style: "font-size:11.5px;color:var(--dim)", "{filtered.len()} of {shell.len()} recorded" }
-                            span { style: "margin-left:auto;display:inline-flex;align-items:center;gap:7px;font-size:11.5px;color:var(--dim)",
+                            if pages > 1 {
+                                div { style: "margin-left:auto;display:flex;align-items:center;gap:9px",
+                                    span { style: "font-size:12px;color:var(--dim)", "Page {page_n} of {pages}" }
+                                    button { class: "kn-btn-ghost", style: "font-family:inherit;font-size:12px;font-weight:600;color:var(--ink);background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:6px 11px;cursor:pointer",
+                                        onclick: move |_| { if page_n > 1 { page.set(page_n - 1); } }, "‹ Prev" }
+                                    button { class: "kn-btn-ghost", style: "font-family:inherit;font-size:12px;font-weight:600;color:var(--ink);background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:6px 11px;cursor:pointer",
+                                        onclick: move |_| { if page_n < pages { page.set(page_n + 1); } }, "Next ›" }
+                                }
+                            }
+                            span { style: "margin-left:{footer_ml2};display:inline-flex;align-items:center;gap:7px;font-size:11.5px;color:var(--dim)",
                                 span { style: "display:inline-flex;width:7px;height:7px;border-radius:50%;background:var(--green);animation:kpulse 1.6s infinite" }
                                 "tamper-evident · hashed in order"
                             }
@@ -1157,13 +1374,16 @@ pub fn Recorder() -> Element {
 }
 #[component]
 pub fn Snapshots() -> Element {
+    let store = use_store();
     // Local re-fetch tick: bumped after a successful undo so the list reloads.
     let mut tick = use_signal(|| 0u32);
 
     let rows = use_resource(move || async move {
         let _ = tick(); // subscribe: a tick change re-runs this resource
-        crate::bindings::snapshots()
+        let _ = store.slow_tick.read(); // live refresh (undo is infrequent)
+        tokio::task::spawn_blocking(crate::bindings::snapshots).await.unwrap_or_default()
     });
+    let loading = rows().is_none();
     let rows = rows().unwrap_or_default();
     let count = rows.len();
 
@@ -1177,7 +1397,9 @@ pub fn Snapshots() -> Element {
                 ": every restore point below is one click from rollback."
             }
 
-            if count == 0 {
+            if loading {
+                Loader { label: "Loading restore points…".to_string() }
+            } else if count == 0 {
                 // Designed empty state — inviting, never blank.
                 div { style: "border:1px solid var(--line);border-radius:14px;background:var(--panel);padding:40px 30px;text-align:center",
                     span { style: "display:inline-flex;align-items:center;justify-content:center;width:54px;height:54px;border-radius:14px;background:rgba(212,175,55,.12);margin-bottom:16px",
@@ -1259,6 +1481,7 @@ pub fn Settings() -> Element {
     // ── live backend reads (every read inside spawn_blocking → never blocks UI) ──
     let status_res = use_resource(move || async move {
         let _ = tick();
+        let _ = store.slow_tick.read(); // keep engine/scorer status live
         tokio::task::spawn_blocking(crate::bindings::status).await.ok()
     });
     let status = status_res().flatten();
@@ -1267,6 +1490,7 @@ pub fn Settings() -> Element {
     // The installed .gguf name + the plain-language scorer summary the user missed.
     let model_res = use_resource(move || async move {
         let _ = tick();
+        let _ = store.slow_tick.read();
         tokio::task::spawn_blocking(|| {
             (crate::bindings::installed_model(), crate::bindings::scorer_summary())
         })
@@ -1301,6 +1525,7 @@ pub fn Settings() -> Element {
     let mut pw_confirm = use_signal(String::new);
     let mut pw_err = use_signal(String::new);       // inline error (e.g. wrong current pw)
     let mut recovery_key = use_signal(|| None::<String>); // shown ONCE on success
+    let mut pw_modal = use_signal(|| false);        // the change/set-password modal
 
     // ── model action inline result ──
     let mut model_msg = use_signal(String::new);
@@ -1389,6 +1614,24 @@ pub fn Settings() -> Element {
                         if provisioned { "vault set" } else { "no vault" }
                     }
                 }
+                div { style: "margin-top:15px",
+                    button { class: "kn-btn-gold", style: "font-family:inherit;font-size:13px;font-weight:600;color:#1a1206;background:var(--gold);border:none;border-radius:9px;padding:10px 18px;cursor:pointer",
+                        onclick: move |_| { pw_err.set(String::new()); pw_modal.set(true); },
+                        if provisioned { "Change password" } else { "Set a master password" }
+                    }
+                }
+            }
+
+            // ── change / set master password (modal) ──
+            if *pw_modal.read() {
+                div { style: "position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;animation:kfade .15s ease",
+                    onclick: move |_| pw_modal.set(false),
+                    div { style: "width:460px;max-width:92vw;background:var(--bg2);border:1px solid var(--line);border-radius:14px;box-shadow:0 30px 80px rgba(0,0,0,.5);padding:22px 24px",
+                        onclick: move |e| e.stop_propagation(),
+                        div { style: "display:flex;align-items:center;margin-bottom:16px",
+                            span { style: "font-size:15px;font-weight:700", if provisioned { "Change master password" } else { "Set a master password" } }
+                            button { style: "margin-left:auto;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--dim);font-size:16px;cursor:pointer", onclick: move |_| pw_modal.set(false), "×" }
+                        }
 
                 // The one-time recovery key — highlighted, shown once.
                 if let Some(key) = recovery_key.read().clone() {
@@ -1400,7 +1643,7 @@ pub fn Settings() -> Element {
                         div { style: "font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--ink);margin-top:9px;background:var(--term);border:1px solid var(--line);border-radius:8px;padding:11px 13px;overflow-x:auto;white-space:nowrap;color:#e7ecf6", "{key}" }
                         div { style: "font-size:11.5px;color:var(--dim);margin-top:8px", "It restores access if you forget the password. Store it somewhere safe, then dismiss." }
                         button { class: "kn-btn-ghost", style: "margin-top:10px;font-family:inherit;font-size:12px;font-weight:600;color:var(--dim);background:transparent;border:1px solid var(--line);border-radius:7px;padding:6px 12px;cursor:pointer",
-                            onclick: move |_| recovery_key.set(None),
+                            onclick: move |_| { recovery_key.set(None); pw_modal.set(false); },
                             "I've saved it"
                         }
                     }
@@ -1451,6 +1694,10 @@ pub fn Settings() -> Element {
                                     match result {
                                         Ok(key) => {
                                             recovery_key.set(Some(key));
+                                            // Keep the session credential in lockstep with the
+                                            // new vault — otherwise Stop signs the daemon
+                                            // challenge with the OLD password and is rejected.
+                                            store.session_pw.set(Some(zeroize::Zeroizing::new(new.clone())));
                                             pw_err.set(String::new());
                                             pw_cur.set(String::new());
                                             pw_new.set(String::new());
@@ -1464,6 +1711,8 @@ pub fn Settings() -> Element {
                                 if provisioned { "Change password" } else { "Set password" }
                             }
                         }
+                    }
+                }
                     }
                 }
             }

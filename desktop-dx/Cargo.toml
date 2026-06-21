@@ -21,6 +21,10 @@ dioxus = { version = "0.6", features = ["desktop"] }
 tokio = { version = "1", features = ["time", "rt", "macros"] }
 anyhow = "1"
 hex = "0.4"
+# Scrub the session master-password from memory when it's dropped (on lock).
+zeroize = "1.8.2"
+# Localize the stored UTC timestamps to the user's timezone for display.
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 # The engine + daemon, called directly in-process (no IPC / no invoke).
 kintsugi-app = { path = "../crates/kintsugi-app" }
 kintsugi-daemon = { path = "../crates/kintsugi-daemon" }

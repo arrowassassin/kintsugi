@@ -282,11 +282,33 @@ impl Dialect {
     }
 }
 
+/// The message Kintsugi surfaces through the agent's OWN approval prompt when it
+/// holds an ambiguous command. It names Kintsugi and the rule that fired, and
+/// folds in the local model's plain-English summary (and risk score) when the
+/// model scored the command — so the human decides with context, not a bare
+/// yes/no. The verbatim command is shown by the agent's prompt itself.
+fn flag_reason(verdict: &Verdict) -> String {
+    let mut msg = format!(
+        "Kintsugi flagged this as {} (rule: {})",
+        verdict.class, verdict.reason
+    );
+    if let Some(summary) = verdict.summary.as_deref().filter(|s| !s.is_empty()) {
+        msg.push_str(" — ");
+        msg.push_str(summary);
+    }
+    if let Some(risk) = verdict.risk {
+        msg.push_str(&format!(" [risk {risk}/100]"));
+    }
+    msg.push_str(". Approve only if you intended this.");
+    msg
+}
+
 /// Map a daemon verdict to the dialect-independent decision.
 ///
 /// A catastrophic *hold* becomes a deny, not an ask: letting the CLI's own UI
 /// one-click "allow" it would run it with no Kintsugi snapshot, voiding the
-/// reversibility guarantee. Only ambiguous holds become an ask.
+/// reversibility guarantee. Only ambiguous holds become an ask — and that ask
+/// carries Kintsugi's flag + the model's summary so the human understands it.
 pub fn resolve(verdict: &Verdict) -> Resolved {
     match verdict.decision {
         Decision::Allow => Resolved::Allow,
@@ -294,7 +316,7 @@ pub fn resolve(verdict: &Verdict) -> Resolved {
         Decision::Hold if verdict.class == Class::Catastrophic => {
             Resolved::Deny(verdict.reason.clone())
         }
-        Decision::Hold => Resolved::Ask(verdict.reason.clone()),
+        Decision::Hold => Resolved::Ask(flag_reason(verdict)),
     }
 }
 
@@ -803,6 +825,24 @@ mod tests {
     fn resolve_maps_ambiguous_hold_to_ask() {
         use kintsugi_core::Verdict;
         let v = Verdict::rules(Class::Ambiguous, Decision::Hold, "maybe");
-        assert_eq!(resolve(&v), Resolved::Ask("maybe".into()));
+        assert_eq!(
+            resolve(&v),
+            Resolved::Ask(
+                "Kintsugi flagged this as ambiguous (rule: maybe). Approve only if you intended this."
+                    .into()
+            )
+        );
+    }
+
+    #[test]
+    fn ambiguous_ask_folds_in_the_model_summary() {
+        use kintsugi_core::Verdict;
+        let mut v = Verdict::rules(Class::Ambiguous, Decision::Hold, "ambiguous:cargo");
+        v.summary = Some("updates a dependency and runs its build script".into());
+        v.risk = Some(42);
+        let Resolved::Ask(msg) = resolve(&v) else { panic!("expected ask") };
+        assert!(msg.contains("Kintsugi flagged this"));
+        assert!(msg.contains("updates a dependency and runs its build script"));
+        assert!(msg.contains("risk 42/100"));
     }
 }

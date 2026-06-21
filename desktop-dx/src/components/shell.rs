@@ -4,10 +4,10 @@ use dioxus::prelude::*;
 use crate::state::{use_store, Screen};
 
 /// (screen, label, badge, svg-path-d)
-type Nav = (Screen, &'static str, Option<&'static str>, &'static str);
+type Nav = (Screen, &'static str, Option<String>, &'static str);
 
-fn groups(held_unresolved: bool) -> Vec<(&'static str, Vec<Nav>)> {
-    let held_badge = if held_unresolved { Some("1") } else { None };
+fn groups(held_count: usize) -> Vec<(&'static str, Vec<Nav>)> {
+    let held_badge = if held_count > 0 { Some(held_count.to_string()) } else { None };
     vec![
         ("EVERYDAY", vec![
             (Screen::Dashboard, "Home", None, "M3 3h7v7H3z M14 3h7v7h-7z M14 14h7v7h-7z M3 14h7v7H3z"),
@@ -27,11 +27,13 @@ fn groups(held_unresolved: bool) -> Vec<(&'static str, Vec<Nav>)> {
     ]
 }
 
-const V2: &[Nav] = &[
-    (Screen::Verified, "Verified gate", None, "M9 12l2 2 4-4 M12 3l7 3v5c0 4-3 7-7 9-4-2-7-5-7-9V6z"),
-    (Screen::Capability, "Capability scopes", None, "M15 7a4 4 0 1 0-3.9 5l5.9 5.9 2-2-1-1 1-1-1-1 1.5-1.5"),
-    (Screen::Fleet, "Team fleet", None, "M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M2 20a7 7 0 0 1 14 0 M17 7a3 3 0 0 1 0 6 M16 20a7 7 0 0 0-2-4.5"),
-];
+fn v2_navs() -> Vec<Nav> {
+    vec![
+        (Screen::Verified, "Verified gate", None, "M9 12l2 2 4-4 M12 3l7 3v5c0 4-3 7-7 9-4-2-7-5-7-9V6z"),
+        (Screen::Capability, "Capability scopes", None, "M15 7a4 4 0 1 0-3.9 5l5.9 5.9 2-2-1-1 1-1-1-1 1.5-1.5"),
+        (Screen::Fleet, "Team fleet", None, "M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M2 20a7 7 0 0 1 14 0 M17 7a3 3 0 0 1 0 6 M16 20a7 7 0 0 0-2-4.5"),
+    ]
+}
 
 #[component]
 fn NavItem(item: Nav, v2: bool) -> Element {
@@ -73,7 +75,32 @@ fn NavItem(item: Nav, v2: bool) -> Element {
 pub fn Sidebar() -> Element {
     let store = use_store();
     let open = *store.nav_open.read();
-    let held_unresolved = store.held_resolved.read().is_none();
+
+    // The "Needs review" badge count, from the REAL pending queue (the old
+    // `held_resolved` signal was never written, so the badge was always on).
+    let held_res = use_resource(move || async move {
+        let _ = store.tick.read();
+        tokio::task::spawn_blocking(crate::bindings::queue).await.unwrap_or_default()
+    });
+    let held_count = held_res().map(|q| q.len()).unwrap_or(0);
+
+    // Live engine status, on the same 250ms tick as the topbar so the two never
+    // disagree. Reads run off the UI thread. Was hardcoded "Protected" before —
+    // that's the desync the user saw.
+    let status = use_resource(move || async move {
+        let _ = store.tick.read();
+        let up = tokio::task::spawn_blocking(crate::bindings::engine_running).await.unwrap_or(false);
+        let paused = tokio::task::spawn_blocking(crate::bindings::panic_engaged).await.unwrap_or(false);
+        (up, paused)
+    });
+    let (up, paused) = (*status.read()).unwrap_or((false, false));
+    let (dot, glow, st_title, st_sub) = if paused {
+        ("var(--amber)", "rgba(245,179,90,.16)", "Paused", "Agents halted — engine on")
+    } else if up {
+        ("var(--green)", "rgba(90,247,142,.14)", "Protected", "Running in the background")
+    } else {
+        ("var(--dim)", "rgba(130,130,130,.10)", "Stopped", "Protection is off")
+    };
     let width = if open { "width:248px;min-width:248px;max-width:248px" } else { "width:64px;min-width:64px;max-width:64px" };
     let label_hide = if open { "" } else { "display:none;" };
     let center = if open { "" } else { "justify-content:center;" };
@@ -81,18 +108,18 @@ pub fn Sidebar() -> Element {
     rsx! {
         aside { style: "flex:none;display:flex;flex-direction:column;background:var(--bg2);border-right:1px solid var(--line);padding:14px 12px;overflow:hidden;transition:width .18s ease;{width}",
             nav { class: "kn-nav", style: "flex:1;overflow-y:auto;overflow-x:hidden;display:flex;flex-direction:column;gap:3px",
-                for (name, items) in groups(held_unresolved) {
+                for (name, items) in groups(held_count) {
                     div { style: "font-size:10px;font-weight:600;letter-spacing:1.4px;color:var(--dim);opacity:.7;padding:14px 10px 5px;{label_hide}", "{name}" }
                     for it in items { NavItem { item: it, v2: false } }
                 }
                 div { style: "font-size:10px;font-weight:600;letter-spacing:1.4px;color:var(--dim);opacity:.7;padding:16px 10px 5px;{label_hide}", "PLANNED · V2" }
-                for it in V2.iter().copied() { NavItem { item: it, v2: true } }
+                for it in v2_navs() { NavItem { item: it, v2: true } }
             }
             div { style: "margin-top:12px;padding-top:12px;border-top:1px solid var(--line);display:flex;align-items:center;gap:9px;{center}",
-                span { style: "display:inline-flex;width:9px;height:9px;border-radius:50%;background:var(--green);box-shadow:0 0 0 3px rgba(90,247,142,.14);animation:kpulse 2.4s infinite;flex:none" }
+                span { style: "display:inline-flex;width:9px;height:9px;border-radius:50%;background:{dot};box-shadow:0 0 0 3px {glow};animation:kpulse 2.4s infinite;flex:none" }
                 div { style: "line-height:1.3;{label_hide}",
-                    div { style: "font-size:12.5px;font-weight:600", "Protected" }
-                    div { style: "font-size:11px;color:var(--dim)", "Running in the background" }
+                    div { style: "font-size:12.5px;font-weight:600", "{st_title}" }
+                    div { style: "font-size:11px;color:var(--dim)", "{st_sub}" }
                 }
             }
         }
@@ -137,7 +164,7 @@ pub fn TopBar() -> Element {
             if *store.panic.peek() != real_panic {
                 store.panic.set(real_panic);
             }
-            tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         }
     });
     let up = *engine_up.read();

@@ -25,6 +25,7 @@ body {
 
 @keyframes kpulse { 0%,100% { opacity: 1; } 50% { opacity: .32; } }
 @keyframes kfade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes kspin { to { transform: rotate(360deg); } }
 
 /* hover/focus helpers — Dioxus inline styles can't carry pseudo-classes,
    so the few we rely on are named classes here. */

@@ -63,8 +63,9 @@ pub struct Store {
     pub attempts: Signal<u32>,
     /// Master password held in memory for the unlocked session, so privileged
     /// ops (daemon shutdown) can sign the daemon's challenge without re-prompting.
-    /// Cleared on lock; `None` until the first successful unlock.
-    pub session_pw: Signal<Option<String>>,
+    /// Cleared on lock; `None` until the first successful unlock. `Zeroizing` so
+    /// the bytes are scrubbed when the value is dropped or overwritten.
+    pub session_pw: Signal<Option<zeroize::Zeroizing<String>>>,
 
     // held command
     pub held_resolved: Signal<Option<&'static str>>, // "denied" | "allowed" | "always"
@@ -87,9 +88,19 @@ pub struct Store {
     pub model_id: Signal<Option<&'static str>>,
     pub model_progress: Signal<f64>,
     pub model_search: Signal<String>,
+
+    /// The activity row whose detail drawer is open (None = closed). Any screen
+    /// sets this on a row click; the drawer renders at the app shell.
+    pub detail: Signal<Option<crate::bindings::TimelineRow>>,
+
+    // live-refresh heartbeats. `tick` fires every 250ms and drives the light
+    // reads (row lists, engine status); `slow_tick` fires every 2s for the heavy
+    // aggregates (metrics full-scan, chain verify) so a 4 Hz refresh never
+    // re-runs a full-table scan and reintroduces the lag we just fixed.
+    pub tick: Signal<u64>,
+    pub slow_tick: Signal<u64>,
 }
 
-pub const MASTER_PW: &str = "kintsugi";
 pub const FEED_PAGE_SIZE: usize = 9;
 
 impl Store {
@@ -117,6 +128,9 @@ impl Store {
             model_id: Signal::new(None),
             model_progress: Signal::new(0.0),
             model_search: Signal::new(String::new()),
+            detail: Signal::new(None),
+            tick: Signal::new(0),
+            slow_tick: Signal::new(0),
         }
     }
 
@@ -133,7 +147,7 @@ impl Store {
             self.unlocked.set(true);
             // Hold the password for the session so Stop can authenticate to the
             // daemon without asking again (you already proved it at login).
-            self.session_pw.set(Some(pw));
+            self.session_pw.set(Some(zeroize::Zeroizing::new(pw)));
             self.pw.set(String::new());
             self.pw_error.set(false);
             self.attempts.set(0);

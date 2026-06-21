@@ -78,6 +78,12 @@ pub struct TimelineRow {
     /// Whether this row was a taint-driven (lethal-trifecta) block.
     pub provenance_block: bool,
     pub risk: Option<u8>,
+    /// The model's one-line plain-English summary (Tier-2), when it scored this.
+    pub summary: Option<String>,
+    /// Working directory the command ran in.
+    pub cwd: String,
+    /// Which tier produced the decision: 1 = rules, 2 = local model.
+    pub tier: u8,
 }
 
 /// A command held for the human's one-key decision (the approval queue).
