@@ -20,7 +20,7 @@ use std::cell::{Cell, RefCell};
 use anyhow::{Context, Result};
 use directories::ProjectDirs;
 use kintsugi_core::admin::{self, SealedVault, VaultState};
-use kintsugi_core::{Decision, EventLog, Mode, ProposedCommand, Verdict};
+use kintsugi_core::{Decision, EventLog, Mode, ProposedCommand, TaintEvent, TaintState, Verdict};
 
 pub use ipc::{Client, Observation, Resolution, Server};
 
@@ -107,6 +107,11 @@ pub struct Daemon {
     shutdown: Cell<bool>,
     /// In-memory brute-force throttle for admin authentication.
     throttle: RefCell<AuthThrottle>,
+    /// Session/file information-flow (taint) state for the Provenance feature.
+    /// Event-sourced ([`TaintState`]) so it can be rebuilt by replaying the log
+    /// on a cold start. In-memory today; log persistence lands with the
+    /// taint-event log work (Phase 6 hardening item D).
+    taint: RefCell<TaintState>,
 }
 
 /// Rate-limit + lockout for admin authentication. The daemon is the single
@@ -202,7 +207,69 @@ impl Daemon {
             pending: RefCell::new(None),
             shutdown: Cell::new(false),
             throttle: RefCell::new(AuthThrottle::default()),
+            taint: RefCell::new(TaintState::new()),
         })
+    }
+
+    /// Apply a taint transition to the session/file taint state.
+    ///
+    /// Fed by the content-tool observation surface (Phase 6.2) and by reset
+    /// policy. Pure state update — the decision path consults this; it never lets
+    /// a model change it (spine: rules decide, model only explains). In-memory
+    /// today; persisting these to the append-only log (so taint survives a daemon
+    /// restart via replay) lands with the log-event work — [`TaintState`] already
+    /// supports that replay via `from_events`.
+    pub fn apply_taint(&self, event: &TaintEvent) {
+        self.taint.borrow_mut().apply(event);
+    }
+
+    /// Whether the given session has been influenced by untrusted content. A
+    /// `None` (untracked) session is reported as not tainted.
+    pub fn is_session_tainted(&self, session: Option<&str>) -> bool {
+        self.taint.borrow().is_session_tainted(session)
+    }
+
+    /// Apply the Provenance trifecta as a deterministic class **floor**: a command
+    /// in a tainted session that reads a secret and reaches an egress sink is the
+    /// lethal trifecta and is forced to the catastrophic hard floor. Escalation
+    /// only — it can raise the class, never lower it (spine: monotonic caution).
+    ///
+    /// The trifecta can fire only when the session is *currently* tainted. NOTE:
+    /// taint is in-memory today (see [`TaintState`]), so a daemon restart resets
+    /// it — until the taint-event log + replay lands (hardening item D), the guard
+    /// is best-effort within a daemon lifetime, not across restarts. This is an
+    /// honest limit (interception, not an unbypassable firewall); the base rules
+    /// still stand regardless.
+    fn trifecta_floor(
+        &self,
+        cmd: &ProposedCommand,
+        policy: &kintsugi_core::Policy,
+        base_class: kintsugi_core::Class,
+        base_rule: String,
+    ) -> (kintsugi_core::Class, String) {
+        use kintsugi_core::Trifecta;
+        if !policy.provenance_enabled() || !self.is_session_tainted(cmd.session.as_deref()) {
+            return (base_class, base_rule);
+        }
+        let sensitive = kintsugi_core::is_sensitive_read(cmd).is_some();
+        let egress = kintsugi_core::is_egress_sink(cmd).is_some();
+        let outcome = kintsugi_core::evaluate_trifecta(true, sensitive, egress);
+        let floor = match outcome {
+            // The full trifecta: a hard floor that inherits the no-downgrade guard.
+            Trifecta::Block => kintsugi_core::Class::Catastrophic,
+            // Lesser bands: held (attended) / denied (unattended), tunable by policy.
+            Trifecta::Hold | Trifecta::Annotate => kintsugi_core::Class::Ambiguous,
+            Trifecta::None => return (base_class, base_rule),
+        };
+        let class = base_class.max(floor);
+        // Only relabel the reason when the trifecta actually raised the floor;
+        // otherwise the base rule was already at least this severe.
+        if class.severity() > base_class.severity() {
+            let rule = outcome.rule().unwrap_or("TRIFECTA");
+            (class, format!("{rule}:provenance ({base_rule})"))
+        } else {
+            (class, base_rule)
+        }
     }
 
     /// Whether an authenticated shutdown has been accepted (serve loop should exit).
@@ -380,13 +447,16 @@ impl Daemon {
         let mode = policy.mode.unwrap_or(self.mode);
 
         let m = kintsugi_core::classify(cmd);
-        let mut verdict = Verdict::rules(m.class, kintsugi_core::decide(m.class, mode), &m.rule);
+        // Provenance (Phase 6): apply the trifecta as a deterministic class floor
+        // (escalation-only) before the model ever runs. Taint never downgrades.
+        let (class, rule) = self.trifecta_floor(cmd, &policy, m.class, m.rule);
+        let mut verdict = Verdict::rules(class, kintsugi_core::decide(class, mode), &rule);
 
         // Tier-2 model: ambiguous band gets summary + risk (+ graduated decision);
         // catastrophic gets a summary for the hold card. Safe is never scored.
-        match m.class {
+        match class {
             kintsugi_core::Class::Ambiguous => {
-                let out = self.scorer.score(cmd, m.class, &m.rule);
+                let out = self.scorer.score(cmd, class, &rule);
                 verdict.summary = Some(out.summary);
                 verdict.risk = Some(out.risk);
                 verdict.tier = 2;
@@ -400,12 +470,12 @@ impl Daemon {
                     // decision, not the model's.
                     verdict.reason = format!(
                         "model:risk={} ({}) — unattended holds ambiguous for review",
-                        out.risk, m.rule
+                        out.risk, rule
                     );
                 }
             }
             kintsugi_core::Class::Catastrophic => {
-                let out = self.scorer.score(cmd, m.class, &m.rule);
+                let out = self.scorer.score(cmd, class, &rule);
                 verdict.summary = Some(out.summary);
                 verdict.tier = 2;
             }

@@ -855,6 +855,94 @@ fn seg_mentions_secret(seg: &str) -> bool {
     lower.contains("/.ssh/") || lower.contains("/.aws/credentials")
 }
 
+// --- Provenance (Phase 6) reusable legs ------------------------------------
+// Two standalone predicates the trifecta rule composes (tainted + sensitive read
+// + egress sink). They REUSE the existing secret/egress detection so they can
+// never disagree with the catastrophic rules, and they classify nothing on their
+// own — the decision stays in `classify*`. Identifiers only; never contents.
+
+/// The "sensitive read" leg: whether the command accesses a secret/credential.
+///
+/// Broader than [`reads_secret`] (which requires a known reader program): any
+/// reference to a secret path counts, because a command that *names* a secret can
+/// exfiltrate it regardless of the program (e.g. `curl -d @~/.aws/credentials`).
+/// Returns the secret's identifier (path or program) — never its contents.
+pub fn is_sensitive_read(cmd: &ProposedCommand) -> Option<String> {
+    for seg in segment_command(&cmd.raw) {
+        let tokens = shell::split(&seg);
+        let argv = effective_argv(&tokens);
+        if argv.is_empty() {
+            continue;
+        }
+        if let Some(path) = argv.iter().find(|a| is_secret_path(a)) {
+            return Some(path.trim_matches(['"', '\'']).to_string());
+        }
+        let prog = program_name(argv[0]);
+        let args: Vec<&str> = argv[1..].to_vec();
+        if reads_secret(&prog, &args, &seg) {
+            return Some(prog);
+        }
+    }
+    None
+}
+
+/// The "egress sink" leg: whether the command would send data off the machine.
+///
+/// Deliberately broad but precise enough not to flag local-only tools. Over-
+/// approximation only matters when a session is *also* tainted and a secret is
+/// *also* in play (the full trifecta), so erring toward caution is cheap. Returns
+/// a short descriptor of the sink (program name, or `git push`).
+pub fn is_egress_sink(cmd: &ProposedCommand) -> Option<String> {
+    for seg in segment_command(&cmd.raw) {
+        let tokens = shell::split(&seg);
+        let argv = effective_argv(&tokens);
+        if argv.is_empty() {
+            continue;
+        }
+        let prog = program_name(argv[0]);
+        let args: Vec<&str> = argv[1..].to_vec();
+        let hit = match prog.as_str() {
+            // Always a network egress channel.
+            "curl" | "wget" | "fetch" | "nc" | "ncat" | "netcat" | "telnet" | "ftp" | "sftp"
+            | "tftp" => true,
+            // DNS tools can tunnel data out via crafted lookups.
+            "dig" | "host" | "nslookup" => true,
+            // Remote transfer only when a target looks remote (local scp/rsync isn't egress).
+            "scp" | "rsync" => args.iter().any(|a| looks_remote(a)),
+            // ssh running a remote command/login is an egress channel.
+            "ssh" => args.iter().any(|a| !a.starts_with('-')),
+            // git push sends to a remote.
+            "git" => git_subcommand(&args).as_deref() == Some("push"),
+            _ => false,
+        };
+        if hit {
+            return Some(if prog == "git" {
+                "git push".to_string()
+            } else {
+                prog
+            });
+        }
+    }
+    None
+}
+
+/// Whether an argument names a remote transfer target (`user@host` or `host:path`).
+fn looks_remote(arg: &str) -> bool {
+    let a = arg.trim_matches(['"', '\'']);
+    if a.starts_with('-') {
+        return false;
+    }
+    if a.contains('@') {
+        return true; // user@host[:path]
+    }
+    // host:path — a colon with a non-empty host that isn't a Windows drive letter
+    // (`C:\…`) and isn't a URL scheme (`scheme://…`, caught by the `/` in host).
+    match a.split_once(':') {
+        Some((host, _)) => !host.is_empty() && host.len() > 1 && !host.contains('/'),
+        None => false,
+    }
+}
+
 /// Whether `args` reference a filesystem-root / home / glob-y dangerous target.
 fn targets_dangerous_path(args: &[&str]) -> bool {
     args.iter().any(|a| {

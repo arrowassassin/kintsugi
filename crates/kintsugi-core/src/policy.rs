@@ -26,6 +26,19 @@ pub struct Policy {
     /// Allow/deny rule lists.
     #[serde(default)]
     pub rules: Rules,
+    /// Provenance (taint-aware trifecta guard) settings.
+    #[serde(default)]
+    pub provenance: Provenance,
+}
+
+/// Provenance / taint-aware flow-control settings (`[provenance]`).
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub struct Provenance {
+    /// Whether the trifecta guard is active. Absent ⇒ on (the safe default): the
+    /// guard only ever *adds* caution, so it is enabled unless explicitly turned
+    /// off for a noisy scope.
+    #[serde(default)]
+    pub enabled: Option<bool>,
 }
 
 /// Default risk threshold for the ambiguous band when none is configured.
@@ -71,12 +84,20 @@ impl Policy {
             mode: repo.mode.or(global.mode),
             threshold: repo.threshold.or(global.threshold),
             rules: Rules { allow, deny },
+            provenance: Provenance {
+                enabled: repo.provenance.enabled.or(global.provenance.enabled),
+            },
         }
     }
 
     /// The effective risk threshold for the ambiguous band.
     pub fn risk_threshold(&self) -> u8 {
         self.threshold.unwrap_or(DEFAULT_THRESHOLD)
+    }
+
+    /// Whether the provenance trifecta guard is enabled (default: true).
+    pub fn provenance_enabled(&self) -> bool {
+        self.provenance.enabled.unwrap_or(true)
     }
 
     /// Decide what this policy says about a command. Deny wins over allow.
@@ -223,9 +244,32 @@ mod tests {
                 allow: vec!["deploy".into()],
                 deny: vec!["deploy".into()],
             },
+            provenance: Provenance::default(),
         };
         assert_eq!(p.action_for("deploy now"), PolicyAction::Deny);
         assert_eq!(p.risk_threshold(), DEFAULT_THRESHOLD);
+    }
+
+    #[test]
+    fn provenance_defaults_on_and_parses_off() {
+        // Absent ⇒ enabled (safe default).
+        assert!(Policy::default().provenance_enabled());
+        assert!(Policy::parse("mode = \"attended\"")
+            .unwrap()
+            .provenance_enabled());
+        // Explicitly disabled for a noisy scope.
+        let off = Policy::parse("[provenance]\nenabled = false").unwrap();
+        assert!(!off.provenance_enabled());
+        // Explicit on.
+        let on = Policy::parse("[provenance]\nenabled = true").unwrap();
+        assert!(on.provenance_enabled());
+    }
+
+    #[test]
+    fn merge_repo_overrides_provenance_toggle() {
+        let global = Policy::parse("[provenance]\nenabled = true").unwrap();
+        let repo = Policy::parse("[provenance]\nenabled = false").unwrap();
+        assert!(!Policy::merge(global, repo).provenance_enabled());
     }
 
     #[test]
