@@ -10,13 +10,23 @@ All notable changes to Kintsugi are documented here. The format loosely follows
   A provenance source identifier is meant to be an identifier only, but a URL is
   an identifier that can carry a credential (`https://u:tok@host/p`, a colonless
   PAT-as-username, `?api_key=…`). Untrusted content observed from such a URL
-  would have written that secret into the taint label — and, once taint events
-  become durable, into the append-only (unscrubbable) event log and the
-  agent-facing provenance trail. The daemon now normalizes every taint event at
-  the single ingest boundary (`apply_taint`), running the `source_id` through the
-  command redactor (`redact::redact_source_id`) so only the secret-free form is
-  ever stored, logged, or surfaced. Plain paths and tool names pass through
-  verbatim; the pass is idempotent (safe across log replay).
+  would have written that secret into the taint label — and, with durable taint
+  (below), into the append-only (unscrubbable) event log and the agent-facing
+  provenance trail. The daemon now normalizes every taint event at the single
+  ingest boundary (`apply_taint`) — *before* it is persisted or applied — running
+  the `source_id` through the command redactor (`redact::redact_source_id`) so
+  only the secret-free form is ever stored, logged, replayed, or surfaced. Plain
+  paths and tool names pass through verbatim; the pass is idempotent (safe across
+  log replay).
+
+### Provenance (Phase 6)
+- **Durable taint (item D).** Information-flow taint now survives a daemon restart.
+  Each taint transition is persisted to an append-only `taint_events` stream and
+  replayed on `Daemon::open` to reconstruct `TaintState`, closing the
+  fail-open-on-restart gap that the trifecta guard documented (a `kintsugi stop` /
+  watchdog relaunch no longer silently clears taint). `apply_taint` is now
+  persist-then-apply (best-effort persist; never panics, never drops live-session
+  protection). New `EventLog::record_taint_event` / `load_taint_events`.
 
 ## [0.2.1] — 2026-06-17
 

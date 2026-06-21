@@ -156,3 +156,62 @@ fn secret_commands_are_redacted_before_hashing_and_chain_stays_intact() {
     assert_eq!(e2.argv, vec!["git".to_string(), "status".to_string()]);
     assert!(log.verify_chain().unwrap().is_intact());
 }
+
+#[test]
+fn taint_events_persist_in_order_across_a_reopen() {
+    // Phase 6 item D: the durable taint stream round-trips and replays in order,
+    // so a daemon restart reconstructs the exact TaintState (no fail-open).
+    use kintsugi_core::{SourceKind, TaintEvent, TaintLabel, TaintState};
+    use std::path::PathBuf;
+    use time::OffsetDateTime;
+
+    let ingest = |session: &str, id: &str| TaintEvent::Ingest {
+        label: TaintLabel {
+            source_kind: SourceKind::Web,
+            source_id: id.to_string(),
+            ts: OffsetDateTime::UNIX_EPOCH,
+            agent: "claude-code".to_string(),
+            session: session.to_string(),
+        },
+    };
+
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("events.db");
+
+    // Record an ordered stream, then drop the connection (a daemon stop).
+    {
+        let log = EventLog::open(&db).unwrap();
+        log.record_taint_event(&ingest("s1", "https://evil.test"))
+            .unwrap();
+        log.record_taint_event(&TaintEvent::WriteFile {
+            session: "s1".to_string(),
+            path: PathBuf::from("/repo/out.txt"),
+        })
+        .unwrap();
+        log.record_taint_event(&ingest("s2", "https://other.test"))
+            .unwrap();
+    }
+
+    // Reopen (cold start): the stream survives, in order.
+    let log = EventLog::open(&db).unwrap();
+    let events = log.load_taint_events().unwrap();
+    assert_eq!(events.len(), 3, "all taint events survive the reopen");
+    assert_eq!(
+        events[0],
+        ingest("s1", "https://evil.test"),
+        "order preserved"
+    );
+
+    // Replay reconstructs the same state a live daemon would have held.
+    let state = TaintState::from_events(events.iter());
+    assert!(
+        state.is_session_tainted(Some("s1")),
+        "session taint survives a restart"
+    );
+    assert!(state.is_session_tainted(Some("s2")));
+    assert!(!state.is_session_tainted(Some("s3")));
+    assert!(
+        state.is_path_tainted(std::path::Path::new("/repo/out.txt")),
+        "WriteFile propagation replays too"
+    );
+}

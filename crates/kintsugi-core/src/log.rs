@@ -17,6 +17,7 @@ use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
+use crate::taint::TaintEvent;
 use crate::types::{Class, Decision, ProposedCommand, Verdict};
 
 /// The genesis predecessor hash for the very first event.
@@ -285,6 +286,16 @@ impl EventLog {
                 status      TEXT NOT NULL DEFAULT 'pending',
                 updated_at  TEXT NOT NULL
             );
+
+            -- Durable taint stream (Provenance, Phase 6 item D): an append-only,
+            -- ordered log of TaintEvents (JSON), replayed on Daemon::open to
+            -- reconstruct TaintState so information-flow taint survives a restart
+            -- instead of failing open. Operational state — not in the hash chain.
+            CREATE TABLE IF NOT EXISTS taint_events (
+                seq        INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts         TEXT NOT NULL,
+                event      TEXT NOT NULL
+            );
             "#,
         )?;
         // Migrate older DBs created before the `session` column existed.
@@ -415,6 +426,38 @@ impl EventLog {
             rusqlite::params![manifest.id, seq, now, manifest.command, json],
         )?;
         Ok(())
+    }
+
+    /// Append one taint transition to the durable, append-only taint stream
+    /// (Provenance item D). Replayed by [`load_taint_events`](Self::load_taint_events)
+    /// on cold start so a daemon restart reconstructs taint rather than silently
+    /// losing it (which would fail open on the trifecta guard).
+    pub fn record_taint_event(&self, event: &TaintEvent) -> Result<(), LogError> {
+        let now = OffsetDateTime::now_utc().format(&Rfc3339)?;
+        let json = serde_json::to_string(event)
+            .map_err(|e| LogError::Corrupt(format!("taint serialize: {e}")))?;
+        self.conn.execute(
+            "INSERT INTO taint_events (ts, event) VALUES (?1, ?2)",
+            rusqlite::params![now, json],
+        )?;
+        Ok(())
+    }
+
+    /// Replay the full taint stream, oldest first, for cold-start reconstruction
+    /// of [`crate::TaintState`] via `TaintState::from_events`.
+    pub fn load_taint_events(&self) -> Result<Vec<TaintEvent>, LogError> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT event FROM taint_events ORDER BY seq ASC")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for r in rows {
+            let json = r?;
+            let e: TaintEvent = serde_json::from_str(&json)
+                .map_err(|err| LogError::Corrupt(format!("taint parse: {err}")))?;
+            out.push(e);
+        }
+        Ok(out)
     }
 
     /// Load all snapshots not yet reverted, newest first.
