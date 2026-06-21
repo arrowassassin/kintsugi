@@ -4,7 +4,7 @@
 //! reads what the daemon and the append-only event log already decided and shows
 //! it. Every command here is a thin wrapper over [`kintsugi_app`], the tested
 //! data-binding engine — no decision logic lives in the webview process. The
-//! frontend (`../ui`) binds these over `window.__TAURI__.core.invoke`.
+//! frontend (`../src`) binds these over `window.__TAURI__.core.invoke`.
 
 // Hide the console window on Windows release builds.
 #![cfg_attr(

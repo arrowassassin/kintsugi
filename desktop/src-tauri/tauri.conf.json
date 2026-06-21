@@ -4,7 +4,7 @@
   "version": "0.2.1",
   "identifier": "dev.kintsugi.control-room",
   "build": {
-    "frontendDist": "../ui/dist",
+    "frontendDist": "../dist",
     "devUrl": "http://localhost:8080",
     "beforeDevCommand": "trunk serve",
     "beforeBuildCommand": "trunk build --release"

@@ -18,7 +18,7 @@ license = "MIT"
 dioxus = { version = "0.6", features = ["web"] }
 # The shared, wasm-safe data contract — same types the native engine returns over
 # `invoke`, checked by the compiler on this side too (the point of going all-Rust).
-kintsugi-app-types = { path = "../../crates/kintsugi-app-types" }
+kintsugi-app-types = { path = "../crates/kintsugi-app-types" }
 serde = { version = "1", features = ["derive"] }
 serde-wasm-bindgen = "0.6"
 wasm-bindgen = "0.2"

@@ -5,18 +5,30 @@ not a gate — the daemon already decides; this app reads what the daemon and th
 append-only event log know and shows it: the command timeline, session taint, the
 deterministic provenance trail, and the approval queue.
 
-## Architecture
+## Layout
+
+Canonical Tauri layout — the Dioxus frontend is the project root, the Tauri host
+nested under `src-tauri/`:
 
 ```
- ┌─ desktop/ui  (Dioxus, WASM) ────────────┐     invoke()      ┌─ desktop/src-tauri ─┐
- │ Control Room frontend                   │ ───────────────▶ │ Tauri host          │
- │ renders kintsugi-app-types view-models  │ ◀─────────────── │ #[tauri::command]s  │
- └─────────────────────────────────────────┘   JSON (shared    └──────────┬──────────┘
-                                                  types)                   │ calls
-                              ┌──────────────────────────────────┐         ▼
-                              │ kintsugi-app  (engine, native)    │ ── IPC ▶ kintsugi daemon
-                              │ reads EventLog + daemon over IPC  │ ── read ▶ event log (SQLite)
-                              └──────────────────────────────────┘
+desktop/
+  Cargo.toml        # Dioxus (WASM) frontend crate — its own [workspace]
+  index.html        # Trunk entry
+  app.css
+  src/              # main.rs (components) + invoke.rs (Tauri invoke binding)
+  dist/             # Trunk build output (Tauri serves this for `build`)
+  src-tauri/        # Tauri host — #[tauri::command]s over the engine
+    Cargo.toml
+    tauri.conf.json
+    src/main.rs
+```
+
+```
+ frontend (Dioxus/WASM) ──invoke()──▶ Tauri host ──calls──▶ kintsugi-app (engine, native)
+ renders kintsugi-app-types          #[tauri::command]s      reads EventLog + daemon over IPC
+        ▲ JSON (shared types) ────────────────┘                      │ IPC / read
+                                                                     ▼
+                                                          kintsugi daemon + event log (SQLite)
 ```
 
 The view-models live in **`kintsugi-app-types`**, a wasm-safe crate both sides
@@ -33,13 +45,15 @@ cargo install trunk            # wasm frontend bundler (once)
 cargo install tauri-cli        # `cargo tauri` (once)
 rustup target add wasm32-unknown-unknown
 
-cd desktop/src-tauri
-cargo tauri dev                # Trunk serves ../ui, Tauri opens the window
-cargo tauri build             # production bundle
+# Run from the desktop/ root (NOT desktop/src-tauri) — Tauri runs `trunk serve`
+# from here, where index.html lives.
+cd desktop
+cargo tauri dev                # Trunk serves the frontend; Tauri opens the window
+cargo tauri build              # production bundle
 ```
 
-Linux also needs the webkit2gtk dev packages (e.g. `libwebkit2gtk-4.1-dev`),
-macOS uses WKWebView (built in), Windows uses WebView2.
+macOS uses WKWebView (built in) — no extra packages. Linux needs the webkit2gtk
+dev packages (e.g. `libwebkit2gtk-4.1-dev`); Windows uses WebView2.
 
 ## Design
 
