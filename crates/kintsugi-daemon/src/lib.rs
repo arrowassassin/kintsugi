@@ -113,6 +113,10 @@ pub struct Daemon {
     /// start (see [`open`](Self::open)), so taint survives a daemon restart
     /// (Phase 6 hardening item D — closes the fail-open-on-restart gap).
     taint: RefCell<TaintState>,
+    /// Consecutive-block counter per session for the negotiation circuit breaker
+    /// (Phase 6). The hook is one-shot per tool call, so this resident state is the
+    /// only place that can count an agent retrying a blocked action across calls.
+    denial_streak: RefCell<std::collections::HashMap<String, u32>>,
 }
 
 /// Rate-limit + lockout for admin authentication. The daemon is the single
@@ -220,6 +224,7 @@ impl Daemon {
             shutdown: Cell::new(false),
             throttle: RefCell::new(AuthThrottle::default()),
             taint: RefCell::new(taint),
+            denial_streak: RefCell::new(std::collections::HashMap::new()),
         })
     }
 
@@ -235,17 +240,70 @@ impl Daemon {
     /// best-effort — a write failure is logged but never panics the daemon or
     /// drops protection for the current session; it only risks losing this taint
     /// across a future restart.
+    ///
+    /// Segment G: the event's `source_id` is redacted *before* both the persist and
+    /// the apply. A source identifier is meant to be an identifier only, but a URL
+    /// can carry a credential (`https://u:tok@host/p`, a colonless PAT-as-username,
+    /// `?api_key=…`). Normalizing at this single ingest boundary means the redacted
+    /// form is the only one that ever reaches the append-only (unscrubbable) log
+    /// row, the replayed state, the provenance trail, or an agent-facing reason.
     pub fn apply_taint(&self, event: &TaintEvent) {
-        if let Err(e) = self.log.record_taint_event(event) {
+        let event = event.with_redacted_source_id();
+        if let Err(e) = self.log.record_taint_event(&event) {
             eprintln!("kintsugi-daemon: failed to persist taint event: {e}");
         }
-        self.taint.borrow_mut().apply(event);
+        self.taint.borrow_mut().apply(&event);
     }
 
     /// Whether the given session has been influenced by untrusted content. A
     /// `None` (untracked) session is reported as not tainted.
     pub fn is_session_tainted(&self, session: Option<&str>) -> bool {
         self.taint.borrow().is_session_tainted(session)
+    }
+
+    /// The session's accumulated provenance labels, if any — the in-process read
+    /// the provenance trail (P6.4) will surface. Source identifiers are already
+    /// redacted at ingest (see [`apply_taint`](Self::apply_taint)), so callers and
+    /// the eventual IPC view only ever see secret-free ids.
+    pub fn session_provenance(&self, session: &str) -> Option<kintsugi_core::TaintSet> {
+        self.taint.borrow().session_taint(session).cloned()
+    }
+
+    /// Build the human-readable provenance trail for a command (P6.4): the session's
+    /// untrusted reads, then this command's sensitive read → egress sink → the
+    /// trifecta rule that fired. Identifiers only (no secret contents). This is the
+    /// forensic chain the CLI/TUI renders on a held trifecta and the audit replay
+    /// uses to reconstruct "everything descended from source X".
+    pub fn provenance_trail(&self, cmd: &ProposedCommand) -> Vec<kintsugi_core::ProvStep> {
+        use kintsugi_core::ProvStep;
+        let session = cmd.session.as_deref();
+        // The trail explains *untrusted-content provenance*. A clean session has
+        // none, so its trail is empty even if the command reads a secret or hits a
+        // sink — there is nothing for those legs to descend from, and no rule fires.
+        let Some(set) = session.and_then(|s| self.session_provenance(s)) else {
+            return Vec::new();
+        };
+        if !set.is_tainted() {
+            return Vec::new();
+        }
+        let mut trail = kintsugi_core::untrusted_trail(&set);
+        let sensitive = kintsugi_core::is_sensitive_read(cmd);
+        let egress = kintsugi_core::is_egress_sink(cmd);
+        if let Some(path) = &sensitive {
+            trail.push(ProvStep::SensitiveRead { path: path.clone() });
+        }
+        if let Some(target) = &egress {
+            trail.push(ProvStep::EgressSink {
+                target: target.clone(),
+            });
+        }
+        let outcome = kintsugi_core::evaluate_trifecta(true, sensitive.is_some(), egress.is_some());
+        if let Some(rule) = outcome.rule() {
+            trail.push(ProvStep::RuleFired {
+                rule: rule.to_string(),
+            });
+        }
+        trail
     }
 
     /// Apply the Provenance trifecta as a deterministic class **floor**: a command
@@ -561,6 +619,50 @@ impl Daemon {
                 eprintln!("kintsugi-daemon: failed to enqueue pending: {e}");
             }
         }
+        // Negotiation is the LAST step so the audit log and the approval queue keep
+        // the clean, rule-grounded reason; only the verdict returned to the agent
+        // carries the model-facing instruction. This never changes the decision —
+        // it only reframes a block — so it cannot unlock the gate (spine).
+        self.negotiate(cmd.session.as_deref(), verdict)
+    }
+
+    /// Reframe a *blocked* verdict for the agent (model-facing reason + the
+    /// "materially safer alternative / else ask the user" instruction) and drive the
+    /// consecutive-denial circuit breaker. Allow/ask are returned unchanged; an
+    /// Allow resets the session's streak. Decision-preserving by construction.
+    fn negotiate(&self, session: Option<&str>, mut verdict: Verdict) -> Verdict {
+        use kintsugi_core::Class;
+        // The agent receives a hard "no" for a Deny, or for a catastrophic Hold (the
+        // adapter maps that to deny — an in-agent allow would skip the snapshot). An
+        // ambiguous Hold becomes a native `ask`, which is not a negotiation deny.
+        let blocked = verdict.decision == Decision::Deny
+            || (verdict.decision == Decision::Hold && verdict.class == Class::Catastrophic);
+        if !blocked {
+            if verdict.decision == Decision::Allow {
+                if let Some(s) = session {
+                    self.denial_streak.borrow_mut().remove(s);
+                }
+            }
+            return verdict;
+        }
+
+        // Count consecutive blocks per session; an untracked session can't be
+        // counted, so it just never trips (the reason is still grounded).
+        let tripped = match session {
+            Some(s) => {
+                let mut streaks = self.denial_streak.borrow_mut();
+                let count = streaks.entry(s.to_string()).or_insert(0);
+                *count += 1;
+                *count >= kintsugi_core::negotiate::CONSECUTIVE_DENY_LIMIT
+            }
+            None => false,
+        };
+
+        verdict.reason = if tripped {
+            kintsugi_core::negotiate::circuit_breaker_reason(&verdict.reason)
+        } else {
+            kintsugi_core::negotiate::model_deny_reason(&verdict.reason)
+        };
         verdict
     }
 
@@ -750,6 +852,16 @@ impl Daemon {
                 Err(e) => ipc::Response::Error {
                     message: e.to_string(),
                 },
+            },
+            // Observation only labels — it never blocks and can't fail the caller:
+            // apply_taint persists best-effort and redacts the source_id (segment G).
+            ipc::Request::Ingest(observed) => {
+                self.apply_taint(&observed.into_taint_event());
+                ipc::Response::Ack
+            }
+            ipc::Request::Provenance(cmd) => ipc::Response::Provenance {
+                tainted: self.is_session_tainted(cmd.session.as_deref()),
+                trail: self.provenance_trail(&cmd),
             },
             ipc::Request::Record(cmd) => match self.record_shell(&cmd) {
                 Ok(()) => ipc::Response::Ack,

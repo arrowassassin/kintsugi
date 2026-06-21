@@ -106,6 +106,24 @@ pub fn redact_command(raw: &str) -> Redaction {
     Redaction { text: out, count }
 }
 
+/// Sanitize a **taint source identifier** (a url / path / tool name) so a secret
+/// embedded in it can never reach the append-only log or an agent-facing reason
+/// string. A `source_id` is meant to be an *identifier only*, but a url is an
+/// identifier that can carry a credential — `https://u:tok@h/p`, a colonless
+/// PAT-as-username, `?api_key=…` — and the log is append-only, so a leak there is
+/// unscrubbable.
+///
+/// A `source_id` is a single field, but it is shaped like one command token, so we
+/// reuse [`redact_command`]'s conservative, quote-aware machinery: the URI-userinfo,
+/// query-string, header, and env passes all fire on a lone token and are
+/// program-independent, which is exactly the secret shapes a url can hide. A plain
+/// path or tool name matches nothing and is returned verbatim (over-redacting an
+/// identifier would corrupt the provenance trail). Idempotent — safe to re-apply
+/// on log replay.
+pub fn redact_source_id(source_id: &str) -> String {
+    redact_command(source_id).text
+}
+
 struct Ctx<'a> {
     program: &'a str,
     docker_login: bool,
@@ -824,6 +842,33 @@ mod tests {
             "psql postgres://u🔥x:[redacted]@h/d"
         );
         let _ = redact_command("psql postgres://u:p\u{0}w@h/d"); // NUL, no panic
+    }
+
+    #[test]
+    fn source_id_redaction_strips_secrets_but_keeps_plain_identifiers() {
+        // A taint source identifier is a single field, but a url can smuggle a
+        // secret in its userinfo or query string — those must never reach a log
+        // row or an agent-facing reason. (Segment G.)
+        assert!(!redact_source_id("https://u:ghp_tok123@github.com/o/r").contains("ghp_tok123"));
+        assert!(
+            !redact_source_id("https://api.example/v1?api_key=sk-live-abc").contains("sk-live-abc")
+        );
+        assert!(!redact_source_id("https://ghp_pat456@github.com/o/r.git").contains("ghp_pat456"));
+        // A plain path or tool name carries no secret and must be left verbatim —
+        // over-redacting an identifier would corrupt the provenance trail's meaning.
+        for id in [
+            "file:///home/user/project/notes.md",
+            "/home/user/.aws/config",
+            "issue#42",
+            "tool:web_fetch",
+            "https://docs.example.com/guide/intro",
+        ] {
+            assert_eq!(redact_source_id(id), id, "must be verbatim: {id}");
+        }
+        // Idempotent: redacting an already-redacted id is a fixpoint (matters for
+        // replay, where a logged-and-redacted id is re-applied on cold start).
+        let once = redact_source_id("https://u:tok@h/x?token=secret");
+        assert_eq!(redact_source_id(&once), once);
     }
 
     #[test]

@@ -28,6 +28,11 @@ allow = ["cargo run", "npm run dev"]
 
 # Commands to force to Hold (attended) / Deny (unattended), whatever their class.
 deny = ["git push *", "kubectl * --context=prod"]
+
+[provenance]
+# The taint-aware "lethal trifecta" guard (untrusted input + a sensitive read + an
+# egress sink). On by default; set false to disable the trifecta escalation.
+enabled = true
 ```
 
 ## Matching
@@ -47,3 +52,14 @@ deny = ["git push *", "kubectl * --context=prod"]
    this repo) has the final say.
 
 The model is never in this path — the block decision is always deterministic.
+
+## Provenance (`[provenance]`)
+
+Independently of the class rules, Kintsugi tracks whether an agent session has
+ingested **untrusted content** (a web fetch, a search result, an MCP tool result,
+a read of a file outside the repo, a `curl`/`wget`/`git clone`). A command in a
+tainted session that **reads a secret** and reaches an **egress sink** is the
+lethal trifecta and is escalated deterministically — held (attended) or denied
+(unattended), never silently allowed. Taint only ever *adds* caution; it can never
+downgrade a block. See [`provenance.md`](provenance.md) for the full model and the
+`kintsugi provenance` trail view.

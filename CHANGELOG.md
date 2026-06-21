@@ -5,6 +5,20 @@ All notable changes to Kintsugi are documented here. The format loosely follows
 
 ## [Unreleased]
 
+### Security fixes
+- **Taint `source_id` is redacted before it can reach a log row or the model.**
+  A provenance source identifier is meant to be an identifier only, but a URL is
+  an identifier that can carry a credential (`https://u:tok@host/p`, a colonless
+  PAT-as-username, `?api_key=…`). Untrusted content observed from such a URL
+  would have written that secret into the taint label — and, with durable taint
+  (below), into the append-only (unscrubbable) event log and the agent-facing
+  provenance trail. The daemon now normalizes every taint event at the single
+  ingest boundary (`apply_taint`) — *before* it is persisted or applied — running
+  the `source_id` through the command redactor (`redact::redact_source_id`) so
+  only the secret-free form is ever stored, logged, replayed, or surfaced. Plain
+  paths and tool names pass through verbatim; the pass is idempotent (safe across
+  log replay).
+
 ### Provenance (Phase 6)
 - **Durable taint (item D).** Information-flow taint now survives a daemon restart.
   Each taint transition is persisted to an append-only `taint_events` stream and
@@ -13,6 +27,43 @@ All notable changes to Kintsugi are documented here. The format loosely follows
   watchdog relaunch no longer silently clears taint). `apply_taint` is now
   persist-then-apply (best-effort persist; never panics, never drops live-session
   protection). New `EventLog::record_taint_event` / `load_taint_events`.
+- **Content-tool observation (P6.2).** The hook layer now sees the moment an agent
+  ingests untrusted content — a web fetch, a search, an MCP tool result, a read of
+  a file outside the workspace, a `curl`/`wget`/`git clone` — not just shell
+  commands. These previously "passed through silently"; now they are normalized to
+  an `ObservedIngest` and reported to the daemon, which taints the session. So a
+  later command that reads a secret and reaches an egress sink is caught by the
+  trifecta even when the untrusted content arrived through a non-shell tool.
+  Observation **never blocks** (it only labels) and is best-effort (a parse miss,
+  an untracked session, or a down daemon never affects the agent). The trust
+  boundary is the workspace: an in-repo read is trusted (no false-positive taint),
+  an out-of-workspace read is not. Works across the tool-style dialects
+  (Claude/Qwen/Gemini/Codex/Copilot/Antigravity) and MCP calls.
+- **Agent-facing deny reasons + negotiation circuit breaker.** When the gate
+  blocks a command, the agent now gets a crisp, state-grounded reason plus the
+  instruction to *retreat to a materially safer alternative or stop and ask the
+  user* — so most prompt-injection attempts self-correct inside the agent loop and
+  the human is never interrupted. A circuit breaker trips after
+  3 consecutive blocks in a session and tells the agent to stop retrying and
+  escalate to the human. This is a UX layer, not the security mechanism: it is
+  decision-preserving (it only reframes a block, never turns one into an allow) and
+  the gate holds regardless. Safety invariants enforced: a re-proposed command is
+  re-classified from scratch and the reason text is never an input to the allow
+  path; the reason is redacted (no credential can leak into the negotiation
+  channel); and the audit log keeps the clean rule reason, not the model-facing
+  instruction.
+- **Provenance trail over IPC (P6.4).** The daemon can now produce the
+  human-readable provenance chain for a command — the session's untrusted reads →
+  this command's sensitive read → egress sink → the trifecta rule that fired — and
+  exposes it over IPC (`Client::provenance`) for the CLI/TUI to render on a held
+  trifecta and for forensic replay ("everything descended from source X"). A clean
+  session has an empty trail; identifiers only, never secret contents.
+- **`kintsugi provenance` (P6.5, CLI).** A new command renders a session's taint
+  provenance — and, given a command, the full trifecta chain — as calm, labelled
+  lines (every step paired with a word, one accent reserved for the rule that
+  fired; `NO_COLOR` respected; a designed empty state). Docs: new
+  [`docs/provenance.md`](docs/provenance.md) and a `[provenance]` block in
+  [`docs/policy.md`](docs/policy.md).
 
 ## [0.2.1] — 2026-06-17
 

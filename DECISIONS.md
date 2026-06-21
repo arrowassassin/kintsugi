@@ -530,3 +530,87 @@ the locked product decisions this build implements.
   is persist-then-apply, best-effort: a persist failure is logged but never
   panics or drops protection for the live session. Redacting `source_id` in
   any agent-facing/log surface remains the separate item G.
+- P6 segment G (redact `source_id`): a taint source identifier (url / path / tool
+  name) is normalized through `redact::redact_source_id` at the daemon's single
+  ingest boundary (`Daemon::apply_taint`), *before* item D's persist and the
+  in-memory apply, so the redacted event is the only form that is ever written to
+  the append-only `taint_events` log row, replayed into state, or surfaced in an
+  agent-facing reason. Placing it at this boundary (not deeper in
+  `TaintState::apply`) is what keeps the *logged row* clean, not merely the live
+  state. Reuses the command redactor rather than a bespoke URL parser — a
+  `source_id` is shaped like one command token, and the URI/query/header passes are
+  program-independent, so the same conservative, over-redacting, idempotent
+  machinery applies. Carried constraint upheld: `Reset` never comes from agent
+  input (only `Ingest` carries a `source_id`; `Reset`/`ReadFile`/`WriteFile`
+  reference daemon-owned ids and are passed through untouched).
+- P6.2 spike (content-tool observation, standalone): added `ObservedIngest`
+  (kintsugi-core) — the normalized "untrusted content entered" event — with
+  `into_taint_event()` lowering it to a durable `TaintEvent::Ingest`. The riskiest
+  part (per-agent tool-name/schema variance) is built as a pure, dependency-free
+  classifier in `kintsugi-intercept::observe` and proven by tests BEFORE wiring it
+  into the live hook/IPC, exactly as the handoff prescribes (spike-first).
+  Classifier decisions: (a) accept the *union* of content-tool names across
+  dialects (WebFetch/Read/web-search aliases) like the existing shell-tool matcher;
+  (b) MCP results are untrusted by name-shape (`mcp__server__tool` →
+  `mcp/server/tool`); (c) **trust boundary = the workspace** — a read inside the
+  session cwd is trusted (the false-positive guard that keeps benign in-repo
+  sessions clean), an out-of-workspace read is untrusted (temp/Downloads →
+  `Download`, else external `File`), matching the design's "trusted by default: the
+  repo's own files"; (d) shell ingestion = `curl`/`wget` GET + `git clone` →
+  `Download`, but a `curl` upload (`-d`/`-T`/`-F`) is a sink (handled by the
+  trifecta rule), not an ingest, so it is deliberately not double-counted. Sound,
+  over-approximate, identifier-only (no fetched bytes ever read). Live hook+IPC
+  wiring (`Request::Ingest` → `daemon.apply_taint`) is the next step.
+- P6.2 wiring (content observation → daemon): added `Request::Ingest(ObservedIngest)`
+  + `Client::ingest`; the daemon handler calls `apply_taint` (which redacts the
+  source_id per segment G) and always replies `Ack` — observation can never fail
+  the caller. The hook (`handle_with`) now, on a non-shell tool, runs
+  `dialect.parse_content` → `observe::classify_tool_ingest` and reports an ingest;
+  on a shell command it reports a `curl`/`wget`/`git clone` ingest **only when the
+  verdict is Allow and after the round-trip**, so a session's first fetch is judged
+  against prior state and never tripped by its own taint (curl is itself an egress
+  sink). Untracked (sessionless) calls are skipped — they can't be taint-tracked,
+  so there is nothing to label. All best-effort: any IPC error is swallowed
+  (observation is not a gate). Carried constraint upheld: `Reset` still never comes
+  from agent input — the agent surface emits only `Ingest`.
+- Negotiation layer (agent-facing deny reasons + circuit breaker): on a *block*
+  the daemon reframes the verdict for the model — the rule-grounded reason +
+  Codex's "materially safer alternative / else ask the user" instruction
+  (`kintsugi-core::negotiate`) — and a per-session consecutive-block counter trips
+  a circuit breaker after `CONSECUTIVE_DENY_LIMIT` (3), telling the agent to stop
+  retrying and ask the human. Key placement decisions: (a) the breaker state is
+  resident in the **daemon** because the hook is one-shot per tool call and cannot
+  count retries across calls; (b) negotiation runs as the **last** step of
+  `handle`, AFTER `log_event`/`enqueue_pending`, so the audit log and approval
+  queue keep the clean reason and only the IPC-returned verdict carries the
+  model-facing instruction; (c) it applies to a Deny or a *catastrophic* Hold (the
+  agent's "no"), never to an ambiguous Hold (a native `ask`); (d) it is
+  **decision-preserving** — it only rewrites `reason`, so it can never unlock the
+  gate (spine: allow reachable only via rules; reason text is never an allow
+  input — re-proposed commands are re-classified from scratch); (e) reasons are
+  run through `redact` so no credential leaks into the negotiation channel (item
+  G). The breaker only escalates messaging — a Safe command is still allowed even
+  after it trips, and an Allow resets the streak.
+- P6.4 (provenance trail over IPC): `daemon.provenance_trail(cmd)` builds the
+  forensic chain — the session's untrusted reads (`untrusted_trail` over the taint
+  set, pure in kintsugi-core) + this command's sensitive-read → egress-sink →
+  trifecta-rule legs — and a read-only `Request::Provenance(cmd)` →
+  `Response::Provenance { tainted, trail }` exposes it (with `Client::provenance`).
+  Chose a dedicated IPC query over threading `provenance: Option<Vec<ProvStep>>`
+  through Verdict (30+ construction sites + wire-compat churn) — the trail is a
+  pull-on-demand view for the UI/replay, not part of every verdict. A clean session
+  yields an empty trail: the sensitive-read/sink legs are only emitted when the
+  session is actually tainted, so they always *descend from* an untrusted origin
+  (no misleading legs without a chain). Identifiers only — no secret contents, and
+  source_ids are already redacted at ingest (item G).
+- P6.5 (CLI surfacing) + P6.6 (docs): `kintsugi provenance --session <id> [-- cmd]`
+  binds the P6.4 trail IPC and renders it with the design-system rules — glyph +
+  word per step (never color alone), one danger accent reserved for the fired rule,
+  NO_COLOR honored, a designed empty state ("nothing to trace") not a blank. The
+  formatter (`format_provenance`) is pure and unit-tested; the command itself is a
+  thin IPC call. Added `docs/provenance.md` (trifecta model, untrusted-source
+  table, trail example, negotiation, honest limits) and a `[provenance]` block in
+  `docs/policy.md`. Remaining for Phase 6: the TUI trail rendering on a held
+  trifecta and the demo GIF — both need a real terminal / recording environment and
+  the frontend-design skill, so they are left as the human-in-the-loop step (the
+  build env cannot record a GIF, consistent with the P1.7 decision).

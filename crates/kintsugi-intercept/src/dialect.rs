@@ -53,6 +53,17 @@ pub struct Shell {
     pub session_id: Option<String>,
 }
 
+/// A non-shell, content-ingesting tool call surfaced for provenance observation
+/// (a `WebFetch`, `Read`, web-search, MCP call). The raw `input` object is handed
+/// to [`crate::observe::classify_tool_ingest`]; we never read the *result* bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContentCall {
+    pub tool: String,
+    pub input: serde_json::Value,
+    pub cwd: PathBuf,
+    pub session_id: Option<String>,
+}
+
 /// Result of parsing a hook payload.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Parsed {
@@ -145,6 +156,58 @@ impl Dialect {
             Dialect::Cursor | Dialect::OpenCode => parse_flat(input),
             Dialect::Antigravity => parse_antigravity(input),
         }
+    }
+
+    /// Extract a non-shell content-tool call for provenance observation, if this
+    /// payload is one. Tolerant: returns `None` (rather than erroring) for shell
+    /// tools, unparseable input, or dialects that only ever carry shell commands
+    /// (Cursor / OpenCode). Observation never blocks, so a miss is harmless.
+    pub fn parse_content(self, input: &str) -> Option<ContentCall> {
+        let v: serde_json::Value = serde_json::from_str(input).ok()?;
+        let get_str = |val: &serde_json::Value, k: &str| {
+            val.get(k).and_then(|s| s.as_str()).map(String::from)
+        };
+        let (tool, args, cwd, session) = match self {
+            Dialect::Claude | Dialect::Qwen | Dialect::Gemini | Dialect::Codex => (
+                get_str(&v, "tool_name")?,
+                v.get("tool_input")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
+                get_str(&v, "cwd"),
+                get_str(&v, "session_id"),
+            ),
+            Dialect::Copilot => (
+                get_str(&v, "toolName")?,
+                v.get("toolArgs")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
+                get_str(&v, "cwd"),
+                get_str(&v, "sessionId"),
+            ),
+            Dialect::Antigravity => {
+                let tc = v.get("toolCall")?;
+                let args = tc
+                    .get("arguments")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
+                let cwd = args.get("Cwd").and_then(|s| s.as_str()).map(String::from);
+                (
+                    get_str(tc, "name")?,
+                    args,
+                    cwd,
+                    get_str(&v, "conversationId"),
+                )
+            }
+            // These dialects' hooks only ever deliver a shell command — no content
+            // tool to observe through this surface.
+            Dialect::Cursor | Dialect::OpenCode => return None,
+        };
+        Some(ContentCall {
+            tool,
+            input: args,
+            cwd: cwd_or_current(cwd),
+            session_id: session,
+        })
     }
 
     /// Claude/Qwen/Gemini share `{tool_name, tool_input:{command}}`.

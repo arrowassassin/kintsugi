@@ -10,6 +10,7 @@ pub mod dialect;
 pub mod holdcard;
 pub mod hook;
 pub mod mcp;
+pub mod observe;
 pub mod shim;
 
 /// One trait, three impls (shim, hook, MCP). Each normalizes a source and runs.

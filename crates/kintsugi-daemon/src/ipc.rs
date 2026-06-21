@@ -32,6 +32,15 @@ pub enum Request {
     /// it." The backstop sends these so the daemon's single writer keeps the hash
     /// chain intact.
     Observe(Observation),
+    /// "I observed an agent ingest untrusted content (a web fetch, a search, an MCP
+    /// result, an out-of-workspace read, a download)." Provenance taint input
+    /// (P6.2): the daemon labels the session; it never blocks on this — observation
+    /// only labels, the trifecta rule decides later.
+    Ingest(kintsugi_core::ObservedIngest),
+    /// "Show me the provenance trail for this command" (P6.4). A read-only query for
+    /// the CLI/TUI: the daemon returns the session's untrusted reads plus this
+    /// command's sensitive-read → egress-sink → rule chain. Identifiers only.
+    Provenance(ProposedCommand),
     /// "A human (no AI agent) already ran this shell command — record it for the
     /// audit trail." Passive session recording: the daemon classifies it (so a
     /// destructive command is flagged in the timeline) but never blocks or
@@ -105,6 +114,12 @@ pub enum Response {
     /// The daemon's runtime status (reply to `Status`). `scorer` is the active
     /// backend id, e.g. `heuristic` or `llama:Qwen3-4B-Instruct-2507-Q4_K_M`.
     Status { scorer: String },
+    /// The provenance trail for a command (reply to `Provenance`). `tainted` is the
+    /// session's current taint state; `trail` is the ordered, identifier-only chain.
+    Provenance {
+        tainted: bool,
+        trail: Vec<kintsugi_core::ProvStep>,
+    },
     /// Reply to `AuthBegin`: a fresh challenge. `locked` is false when the daemon
     /// has no vault (then no proof is needed); otherwise the caller derives the
     /// proof from `nonce` + `salt` + `params` and the admin password.
@@ -246,6 +261,20 @@ impl Client {
     /// Record an observed filesystem change (backstop).
     pub fn observe(observation: &Observation) -> Result<()> {
         expect_ack(round_trip(&Request::Observe(observation.clone()))?)
+    }
+
+    /// Report an observed untrusted-content ingestion (provenance taint input).
+    pub fn ingest(observed: &kintsugi_core::ObservedIngest) -> Result<()> {
+        expect_ack(round_trip(&Request::Ingest(observed.clone()))?)
+    }
+
+    /// Fetch the provenance trail for a command: `(tainted, trail)`.
+    pub fn provenance(cmd: &ProposedCommand) -> Result<(bool, Vec<kintsugi_core::ProvStep>)> {
+        match round_trip(&Request::Provenance(cmd.clone()))? {
+            Response::Provenance { tainted, trail } => Ok((tainted, trail)),
+            Response::Error { message } => anyhow::bail!("daemon error: {message}"),
+            _ => anyhow::bail!("unexpected response to Provenance"),
+        }
     }
 
     /// Record a shell command a human already ran (passive session recording).
