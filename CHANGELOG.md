@@ -27,6 +27,18 @@ All notable changes to Kintsugi are documented here. The format loosely follows
   watchdog relaunch no longer silently clears taint). `apply_taint` is now
   persist-then-apply (best-effort persist; never panics, never drops live-session
   protection). New `EventLog::record_taint_event` / `load_taint_events`.
+- **Content-tool observation (P6.2).** The hook layer now sees the moment an agent
+  ingests untrusted content — a web fetch, a search, an MCP tool result, a read of
+  a file outside the workspace, a `curl`/`wget`/`git clone` — not just shell
+  commands. These previously "passed through silently"; now they are normalized to
+  an `ObservedIngest` and reported to the daemon, which taints the session. So a
+  later command that reads a secret and reaches an egress sink is caught by the
+  trifecta even when the untrusted content arrived through a non-shell tool.
+  Observation **never blocks** (it only labels) and is best-effort (a parse miss,
+  an untracked session, or a down daemon never affects the agent). The trust
+  boundary is the workspace: an in-repo read is trusted (no false-positive taint),
+  an out-of-workspace read is not. Works across the tool-style dialects
+  (Claude/Qwen/Gemini/Codex/Copilot/Antigravity) and MCP calls.
 
 ## [0.2.1] — 2026-06-17
 

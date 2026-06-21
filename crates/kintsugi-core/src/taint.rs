@@ -104,6 +104,25 @@ pub struct ObservedIngest {
 }
 
 impl ObservedIngest {
+    /// Build an observation stamped at the current instant. The interception layer
+    /// uses this the moment it sees a content-ingesting tool call.
+    pub fn now(
+        source_kind: SourceKind,
+        source_id: impl Into<String>,
+        agent: impl Into<String>,
+        session: impl Into<String>,
+        cwd: impl Into<PathBuf>,
+    ) -> Self {
+        Self {
+            source_kind,
+            source_id: source_id.into(),
+            agent: agent.into(),
+            session: session.into(),
+            cwd: cwd.into(),
+            ts: OffsetDateTime::now_utc(),
+        }
+    }
+
     /// Lower this observation into the durable taint transition the daemon applies.
     /// (`cwd` is observation context for the trail, not part of the session label.)
     pub fn into_taint_event(self) -> TaintEvent {

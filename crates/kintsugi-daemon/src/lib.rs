@@ -767,6 +767,12 @@ impl Daemon {
                     message: e.to_string(),
                 },
             },
+            // Observation only labels — it never blocks and can't fail the caller:
+            // apply_taint persists best-effort and redacts the source_id (segment G).
+            ipc::Request::Ingest(observed) => {
+                self.apply_taint(&observed.into_taint_event());
+                ipc::Response::Ack
+            }
             ipc::Request::Record(cmd) => match self.record_shell(&cmd) {
                 Ok(()) => ipc::Response::Ack,
                 Err(e) => ipc::Response::Error {

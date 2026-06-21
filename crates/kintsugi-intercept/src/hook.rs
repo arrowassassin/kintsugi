@@ -14,18 +14,27 @@
 //! never blocks the agent — *except* a catastrophic command with the daemon
 //! down (denied fail-closed), or when `KINTSUGI_FAIL_CLOSED=1`.
 
-use kintsugi_core::{shell, Class, Decision, ProposedCommand};
+use std::path::Path;
+
+use kintsugi_core::{shell, Class, Decision, ObservedIngest, ProposedCommand};
 use kintsugi_daemon::Client;
 
 pub use crate::dialect::HookOutcome;
 
 use crate::dialect::{self, Dialect, Parsed, Resolved};
+use crate::observe;
 
 /// Handle one hook payload for a given dialect, performing the daemon round-trip.
 pub fn handle_with(dialect: Dialect, input: &str) -> HookOutcome {
     let parsed = match dialect.parse(input) {
         Parsed::Shell(s) => s,
-        Parsed::NotShell => return HookOutcome::silent(),
+        Parsed::NotShell => {
+            // Not a shell tool — but it may be a content-ingesting one (a web
+            // fetch, search, MCP call, out-of-workspace read). Observe it for
+            // provenance taint, then pass: observation only labels, never blocks.
+            observe_content_call(dialect, input);
+            return HookOutcome::silent();
+        }
         Parsed::Bad(e) => {
             // Never block the agent on a payload we couldn't parse.
             eprintln!(
@@ -37,8 +46,11 @@ pub fn handle_with(dialect: Dialect, input: &str) -> HookOutcome {
     };
 
     let argv = shell::split(&parsed.command);
-    let proposed = ProposedCommand::new(dialect.agent_id(), parsed.cwd, argv, parsed.command)
-        .with_session(parsed.session_id);
+    let session = parsed.session_id.clone();
+    let cwd = parsed.cwd.clone();
+    let proposed =
+        ProposedCommand::new(dialect.agent_id(), parsed.cwd, argv.clone(), parsed.command)
+            .with_session(parsed.session_id);
 
     match Client::send(&proposed) {
         Ok(verdict) => {
@@ -56,7 +68,15 @@ pub fn handle_with(dialect: Dialect, input: &str) -> HookOutcome {
                 }
                 other => other,
             };
-            dialect.format(&resolved)
+            let outcome = dialect.format(&resolved);
+            // A shell command that fetches remote content (`curl`/`wget`/`git
+            // clone`) taints the session for FUTURE commands. Observe it only when
+            // it will actually run (Allow) and AFTER the verdict — so the fetch is
+            // judged against prior state and isn't tripped by its own taint.
+            if matches!(resolved, Resolved::Allow) {
+                observe_shell_ingest(dialect, &argv, session.as_deref(), &cwd);
+            }
+            outcome
         }
         Err(e) => {
             // Daemon down: locally classify so a catastrophic command is still
@@ -86,6 +106,38 @@ pub fn handle_with(dialect: Dialect, input: &str) -> HookOutcome {
 /// Backwards-compatible Claude Code entry point.
 pub fn handle(input: &str) -> HookOutcome {
     handle_with(Dialect::Claude, input)
+}
+
+/// Observe a non-shell content-tool call (web fetch / search / MCP / read) as a
+/// provenance taint source. Best-effort and silent: a parse miss, an untracked
+/// session, or an unreachable daemon must never affect the agent — observation
+/// only labels, it is not a gate.
+fn observe_content_call(dialect: Dialect, input: &str) {
+    let Some(call) = dialect.parse_content(input) else {
+        return;
+    };
+    if let Some(src) = observe::classify_tool_ingest(&call.tool, &call.input, &call.cwd) {
+        send_ingest(dialect, src, call.session_id.as_deref(), &call.cwd);
+    }
+}
+
+/// Observe a shell command that ingests remote content (`curl`/`wget`/`git
+/// clone`). Best-effort and silent, same as [`observe_content_call`].
+fn observe_shell_ingest(dialect: Dialect, argv: &[String], session: Option<&str>, cwd: &Path) {
+    if let Some(src) = observe::classify_shell_ingest(argv) {
+        send_ingest(dialect, src, session, cwd);
+    }
+}
+
+/// Build and send an [`ObservedIngest`] to the daemon. Skips untracked sessions
+/// (a `None`/empty session can never be taint-tracked, so there is nothing to
+/// label) and swallows any IPC error (observation never blocks the agent).
+fn send_ingest(dialect: Dialect, src: observe::IngestSource, session: Option<&str>, cwd: &Path) {
+    let Some(session) = session.filter(|s| !s.is_empty()) else {
+        return;
+    };
+    let observed = ObservedIngest::now(src.kind, src.id, dialect.agent_id(), session, cwd);
+    let _ = Client::ingest(&observed);
 }
 
 /// Augment a catastrophic deny with the guarded way to run it yourself.

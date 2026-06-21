@@ -32,6 +32,11 @@ pub enum Request {
     /// it." The backstop sends these so the daemon's single writer keeps the hash
     /// chain intact.
     Observe(Observation),
+    /// "I observed an agent ingest untrusted content (a web fetch, a search, an MCP
+    /// result, an out-of-workspace read, a download)." Provenance taint input
+    /// (P6.2): the daemon labels the session; it never blocks on this — observation
+    /// only labels, the trifecta rule decides later.
+    Ingest(kintsugi_core::ObservedIngest),
     /// "A human (no AI agent) already ran this shell command — record it for the
     /// audit trail." Passive session recording: the daemon classifies it (so a
     /// destructive command is flagged in the timeline) but never blocks or
@@ -246,6 +251,11 @@ impl Client {
     /// Record an observed filesystem change (backstop).
     pub fn observe(observation: &Observation) -> Result<()> {
         expect_ack(round_trip(&Request::Observe(observation.clone()))?)
+    }
+
+    /// Report an observed untrusted-content ingestion (provenance taint input).
+    pub fn ingest(observed: &kintsugi_core::ObservedIngest) -> Result<()> {
+        expect_ack(round_trip(&Request::Ingest(observed.clone()))?)
     }
 
     /// Record a shell command a human already ran (passive session recording).

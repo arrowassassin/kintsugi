@@ -561,3 +561,15 @@ the locked product decisions this build implements.
   trifecta rule), not an ingest, so it is deliberately not double-counted. Sound,
   over-approximate, identifier-only (no fetched bytes ever read). Live hook+IPC
   wiring (`Request::Ingest` → `daemon.apply_taint`) is the next step.
+- P6.2 wiring (content observation → daemon): added `Request::Ingest(ObservedIngest)`
+  + `Client::ingest`; the daemon handler calls `apply_taint` (which redacts the
+  source_id per segment G) and always replies `Ack` — observation can never fail
+  the caller. The hook (`handle_with`) now, on a non-shell tool, runs
+  `dialect.parse_content` → `observe::classify_tool_ingest` and reports an ingest;
+  on a shell command it reports a `curl`/`wget`/`git clone` ingest **only when the
+  verdict is Allow and after the round-trip**, so a session's first fetch is judged
+  against prior state and never tripped by its own taint (curl is itself an egress
+  sink). Untracked (sessionless) calls are skipped — they can't be taint-tracked,
+  so there is nothing to label. All best-effort: any IPC error is swallowed
+  (observation is not a gate). Carried constraint upheld: `Reset` still never comes
+  from agent input — the agent surface emits only `Ingest`.
