@@ -603,3 +603,14 @@ the locked product decisions this build implements.
   session is actually tainted, so they always *descend from* an untrusted origin
   (no misleading legs without a chain). Identifiers only — no secret contents, and
   source_ids are already redacted at ingest (item G).
+- P6.5 (CLI surfacing) + P6.6 (docs): `kintsugi provenance --session <id> [-- cmd]`
+  binds the P6.4 trail IPC and renders it with the design-system rules — glyph +
+  word per step (never color alone), one danger accent reserved for the fired rule,
+  NO_COLOR honored, a designed empty state ("nothing to trace") not a blank. The
+  formatter (`format_provenance`) is pure and unit-tested; the command itself is a
+  thin IPC call. Added `docs/provenance.md` (trifecta model, untrusted-source
+  table, trail example, negotiation, honest limits) and a `[provenance]` block in
+  `docs/policy.md`. Remaining for Phase 6: the TUI trail rendering on a held
+  trifecta and the demo GIF — both need a real terminal / recording environment and
+  the frontend-design skill, so they are left as the human-in-the-loop step (the
+  build env cannot record a GIF, consistent with the P1.7 decision).

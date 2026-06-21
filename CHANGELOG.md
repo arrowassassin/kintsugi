@@ -58,6 +58,12 @@ All notable changes to Kintsugi are documented here. The format loosely follows
   exposes it over IPC (`Client::provenance`) for the CLI/TUI to render on a held
   trifecta and for forensic replay ("everything descended from source X"). A clean
   session has an empty trail; identifiers only, never secret contents.
+- **`kintsugi provenance` (P6.5, CLI).** A new command renders a session's taint
+  provenance — and, given a command, the full trifecta chain — as calm, labelled
+  lines (every step paired with a word, one accent reserved for the rule that
+  fired; `NO_COLOR` respected; a designed empty state). Docs: new
+  [`docs/provenance.md`](docs/provenance.md) and a `[provenance]` block in
+  [`docs/policy.md`](docs/policy.md).
 
 ## [0.2.1] — 2026-06-17
 
