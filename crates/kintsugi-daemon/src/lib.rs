@@ -113,6 +113,10 @@ pub struct Daemon {
     /// start (see [`open`](Self::open)), so taint survives a daemon restart
     /// (Phase 6 hardening item D — closes the fail-open-on-restart gap).
     taint: RefCell<TaintState>,
+    /// Consecutive-block counter per session for the negotiation circuit breaker
+    /// (Phase 6). The hook is one-shot per tool call, so this resident state is the
+    /// only place that can count an agent retrying a blocked action across calls.
+    denial_streak: RefCell<std::collections::HashMap<String, u32>>,
 }
 
 /// Rate-limit + lockout for admin authentication. The daemon is the single
@@ -220,6 +224,7 @@ impl Daemon {
             shutdown: Cell::new(false),
             throttle: RefCell::new(AuthThrottle::default()),
             taint: RefCell::new(taint),
+            denial_streak: RefCell::new(std::collections::HashMap::new()),
         })
     }
 
@@ -577,6 +582,50 @@ impl Daemon {
                 eprintln!("kintsugi-daemon: failed to enqueue pending: {e}");
             }
         }
+        // Negotiation is the LAST step so the audit log and the approval queue keep
+        // the clean, rule-grounded reason; only the verdict returned to the agent
+        // carries the model-facing instruction. This never changes the decision —
+        // it only reframes a block — so it cannot unlock the gate (spine).
+        self.negotiate(cmd.session.as_deref(), verdict)
+    }
+
+    /// Reframe a *blocked* verdict for the agent (model-facing reason + the
+    /// "materially safer alternative / else ask the user" instruction) and drive the
+    /// consecutive-denial circuit breaker. Allow/ask are returned unchanged; an
+    /// Allow resets the session's streak. Decision-preserving by construction.
+    fn negotiate(&self, session: Option<&str>, mut verdict: Verdict) -> Verdict {
+        use kintsugi_core::Class;
+        // The agent receives a hard "no" for a Deny, or for a catastrophic Hold (the
+        // adapter maps that to deny — an in-agent allow would skip the snapshot). An
+        // ambiguous Hold becomes a native `ask`, which is not a negotiation deny.
+        let blocked = verdict.decision == Decision::Deny
+            || (verdict.decision == Decision::Hold && verdict.class == Class::Catastrophic);
+        if !blocked {
+            if verdict.decision == Decision::Allow {
+                if let Some(s) = session {
+                    self.denial_streak.borrow_mut().remove(s);
+                }
+            }
+            return verdict;
+        }
+
+        // Count consecutive blocks per session; an untracked session can't be
+        // counted, so it just never trips (the reason is still grounded).
+        let tripped = match session {
+            Some(s) => {
+                let mut streaks = self.denial_streak.borrow_mut();
+                let count = streaks.entry(s.to_string()).or_insert(0);
+                *count += 1;
+                *count >= kintsugi_core::negotiate::CONSECUTIVE_DENY_LIMIT
+            }
+            None => false,
+        };
+
+        verdict.reason = if tripped {
+            kintsugi_core::negotiate::circuit_breaker_reason(&verdict.reason)
+        } else {
+            kintsugi_core::negotiate::model_deny_reason(&verdict.reason)
+        };
         verdict
     }
 

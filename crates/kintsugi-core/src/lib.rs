@@ -13,6 +13,7 @@
 pub mod admin;
 pub mod log;
 pub mod memory;
+pub mod negotiate;
 pub mod parse;
 pub mod policy;
 pub mod redact;

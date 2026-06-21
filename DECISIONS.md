@@ -573,3 +573,21 @@ the locked product decisions this build implements.
   so there is nothing to label. All best-effort: any IPC error is swallowed
   (observation is not a gate). Carried constraint upheld: `Reset` still never comes
   from agent input — the agent surface emits only `Ingest`.
+- Negotiation layer (agent-facing deny reasons + circuit breaker): on a *block*
+  the daemon reframes the verdict for the model — the rule-grounded reason +
+  Codex's "materially safer alternative / else ask the user" instruction
+  (`kintsugi-core::negotiate`) — and a per-session consecutive-block counter trips
+  a circuit breaker after `CONSECUTIVE_DENY_LIMIT` (3), telling the agent to stop
+  retrying and ask the human. Key placement decisions: (a) the breaker state is
+  resident in the **daemon** because the hook is one-shot per tool call and cannot
+  count retries across calls; (b) negotiation runs as the **last** step of
+  `handle`, AFTER `log_event`/`enqueue_pending`, so the audit log and approval
+  queue keep the clean reason and only the IPC-returned verdict carries the
+  model-facing instruction; (c) it applies to a Deny or a *catastrophic* Hold (the
+  agent's "no"), never to an ambiguous Hold (a native `ask`); (d) it is
+  **decision-preserving** — it only rewrites `reason`, so it can never unlock the
+  gate (spine: allow reachable only via rules; reason text is never an allow
+  input — re-proposed commands are re-classified from scratch); (e) reasons are
+  run through `redact` so no credential leaks into the negotiation channel (item
+  G). The breaker only escalates messaging — a Safe command is still allowed even
+  after it trips, and an Allow resets the streak.

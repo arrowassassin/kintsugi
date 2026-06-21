@@ -39,6 +39,19 @@ All notable changes to Kintsugi are documented here. The format loosely follows
   boundary is the workspace: an in-repo read is trusted (no false-positive taint),
   an out-of-workspace read is not. Works across the tool-style dialects
   (Claude/Qwen/Gemini/Codex/Copilot/Antigravity) and MCP calls.
+- **Agent-facing deny reasons + negotiation circuit breaker.** When the gate
+  blocks a command, the agent now gets a crisp, state-grounded reason plus the
+  instruction to *retreat to a materially safer alternative or stop and ask the
+  user* — so most prompt-injection attempts self-correct inside the agent loop and
+  the human is never interrupted. A circuit breaker trips after
+  3 consecutive blocks in a session and tells the agent to stop retrying and
+  escalate to the human. This is a UX layer, not the security mechanism: it is
+  decision-preserving (it only reframes a block, never turns one into an allow) and
+  the gate holds regardless. Safety invariants enforced: a re-proposed command is
+  re-classified from scratch and the reason text is never an input to the allow
+  path; the reason is redacted (no credential can leak into the negotiation
+  channel); and the audit log keeps the clean rule reason, not the model-facing
+  instruction.
 
 ## [0.2.1] — 2026-06-17
 
