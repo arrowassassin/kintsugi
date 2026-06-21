@@ -270,6 +270,30 @@ pub enum TaintEvent {
     Reset { session: String },
 }
 
+impl TaintEvent {
+    /// Return a copy of this event with its taint `source_id` run through
+    /// [`redact::redact_source_id`](crate::redact::redact_source_id).
+    ///
+    /// Segment G: a source identifier (url / path / tool name) can smuggle a
+    /// secret in a url's userinfo or query string. Normalizing the event at the
+    /// single ingest boundary — *before* it is appended to the append-only log or
+    /// applied into state — means the redacted form is the only one that ever
+    /// reaches a log row, the provenance trail, or an agent-facing reason. Only
+    /// [`Ingest`](TaintEvent::Ingest) carries a `source_id`; the others (which
+    /// reference daemon-owned session ids and file paths, never agent-supplied
+    /// source identifiers) are returned unchanged. Idempotent.
+    pub fn with_redacted_source_id(&self) -> TaintEvent {
+        match self {
+            TaintEvent::Ingest { label } => {
+                let mut label = label.clone();
+                label.source_id = crate::redact::redact_source_id(&label.source_id);
+                TaintEvent::Ingest { label }
+            }
+            other => other.clone(),
+        }
+    }
+}
+
 /// A durable, event-sourced view of taint state — the daemon's session/file
 /// taint authority. Build it by applying [`TaintEvent`]s; rebuild it identically
 /// by replaying the same ordered stream. Deterministic and I/O-free.
@@ -297,6 +321,9 @@ impl TaintState {
             TaintEvent::Reset { session } => self.store.reset_session(session),
         }
     }
+
+    // (`with_redacted_source_id` lives on `TaintEvent` so the *same* normalized
+    // event is what gets logged and applied — see that method.)
 
     /// Reconstruct from an ordered event stream (cold-start durability).
     pub fn from_events<'a, I>(events: I) -> Self
@@ -534,6 +561,41 @@ mod tests {
             incremental.is_session_tainted(Some("reader")),
             replayed.is_session_tainted(Some("reader"))
         );
+    }
+
+    #[test]
+    fn ingest_event_source_id_is_redacted_before_it_reaches_state() {
+        // Segment G: a secret-bearing source_id (url userinfo / query token) must
+        // be redacted at the ingest boundary, so neither a log row (the event is
+        // logged in its normalized form) nor the in-memory provenance (which feeds
+        // agent-facing reasons / the IPC trail) ever holds the secret.
+        let raw = TaintEvent::Ingest {
+            label: label(
+                SourceKind::Web,
+                "https://u:ghp_tok123@evil.example/x?api_key=sk-live-9",
+                "s",
+            ),
+        };
+        let safe = raw.with_redacted_source_id();
+        let TaintEvent::Ingest { label: cleaned } = &safe else {
+            panic!("Ingest must stay Ingest");
+        };
+        assert!(!cleaned.source_id.contains("ghp_tok123"));
+        assert!(!cleaned.source_id.contains("sk-live-9"));
+
+        // The redacted event is what gets applied → the provenance label is clean.
+        let mut state = TaintState::new();
+        state.apply(&safe);
+        let labels = state.session_taint("s").unwrap().labels();
+        assert!(!labels[0].source_id.contains("ghp_tok123"));
+        assert!(!labels[0].source_id.contains("sk-live-9"));
+
+        // Non-Ingest events have no source_id and are passed through untouched —
+        // their paths/sessions are daemon-owned, not agent-supplied identifiers.
+        let reset = TaintEvent::Reset {
+            session: "s".to_string(),
+        };
+        assert_eq!(reset.with_redacted_source_id(), reset);
     }
 
     #[test]

@@ -220,13 +220,28 @@ impl Daemon {
     /// restart via replay) lands with the log-event work — [`TaintState`] already
     /// supports that replay via `from_events`.
     pub fn apply_taint(&self, event: &TaintEvent) {
-        self.taint.borrow_mut().apply(event);
+        // Segment G: redact a secret-bearing source identifier (a url's userinfo
+        // or `?api_key=…`) at this single ingest boundary, BEFORE the event is
+        // applied — and before it is appended to the append-only log once taint
+        // events become durable (item D). Normalizing once here means the redacted
+        // event is the only form that ever reaches a log row, the provenance trail,
+        // or an agent-facing reason; the raw secret never enters the system.
+        let event = event.with_redacted_source_id();
+        self.taint.borrow_mut().apply(&event);
     }
 
     /// Whether the given session has been influenced by untrusted content. A
     /// `None` (untracked) session is reported as not tainted.
     pub fn is_session_tainted(&self, session: Option<&str>) -> bool {
         self.taint.borrow().is_session_tainted(session)
+    }
+
+    /// The session's accumulated provenance labels, if any — the in-process read
+    /// the provenance trail (P6.4) will surface. Source identifiers are already
+    /// redacted at ingest (see [`apply_taint`](Self::apply_taint)), so callers and
+    /// the eventual IPC view only ever see secret-free ids.
+    pub fn session_provenance(&self, session: &str) -> Option<kintsugi_core::TaintSet> {
+        self.taint.borrow().session_taint(session).cloned()
     }
 
     /// Apply the Provenance trifecta as a deterministic class **floor**: a command

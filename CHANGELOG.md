@@ -3,6 +3,21 @@
 All notable changes to Kintsugi are documented here. The format loosely follows
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Security fixes
+- **Taint `source_id` is redacted before it can reach a log row or the model.**
+  A provenance source identifier is meant to be an identifier only, but a URL is
+  an identifier that can carry a credential (`https://u:tok@host/p`, a colonless
+  PAT-as-username, `?api_key=…`). Untrusted content observed from such a URL
+  would have written that secret into the taint label — and, once taint events
+  become durable, into the append-only (unscrubbable) event log and the
+  agent-facing provenance trail. The daemon now normalizes every taint event at
+  the single ingest boundary (`apply_taint`), running the `source_id` through the
+  command redactor (`redact::redact_source_id`) so only the secret-free form is
+  ever stored, logged, or surfaced. Plain paths and tool names pass through
+  verbatim; the pass is idempotent (safe across log replay).
+
 ## [0.2.1] — 2026-06-17
 
 Pre-rollout security & robustness hardening from an audit. No new features —

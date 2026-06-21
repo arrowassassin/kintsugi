@@ -521,3 +521,16 @@ the locked product decisions this build implements.
   confirm code; and upstream verification of the exact hook payload format for
   Codex / Copilot / Gemini (the adapters are written to the documented shapes but
   not yet round-trip-verified against each upstream).
+- P6 segment G (redact `source_id`): a taint source identifier (url / path / tool
+  name) is normalized through `redact::redact_source_id` at the daemon's single
+  ingest boundary (`Daemon::apply_taint`), so the redacted event is the only form
+  that is ever applied — and, once taint events become durable (item D), appended
+  to the append-only log or surfaced in an agent-facing reason. Chosen over
+  redacting deeper in `TaintState::apply` because the *logged* event must already
+  be clean (the log row, not just the in-memory state); normalizing once at ingest
+  covers both surfaces. Reuses the command redactor rather than a bespoke URL
+  parser — a `source_id` is shaped like one command token, and the URI/query/
+  header passes are program-independent, so the same conservative, over-redacting,
+  idempotent machinery applies. Carried constraint upheld: `Reset` never comes
+  from agent input (only `Ingest` carries a `source_id`; `Reset`/`ReadFile`/
+  `WriteFile` reference daemon-owned ids and are passed through untouched).
