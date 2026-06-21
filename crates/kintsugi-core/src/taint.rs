@@ -77,6 +77,48 @@ impl TaintLabel {
     }
 }
 
+/// A normalized "untrusted content entered the agent's context" event, emitted by
+/// the interception layer when it observes a content-ingesting tool call (a web
+/// fetch, a search, an MCP tool result, a read of an out-of-workspace file, a
+/// `curl`/`wget`/`git clone`). It is the bridge from the per-agent hook surface to
+/// the daemon's taint tracker: the daemon turns it into a [`TaintEvent::Ingest`].
+///
+/// Identifier only — `source_id` is a url / path / tool name, never payload bytes
+/// (spine #6). The daemon redacts it again at ingest (segment G) as defense in
+/// depth, so a credential smuggled into a url can never reach the log.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ObservedIngest {
+    /// The channel the untrusted content arrived on.
+    pub source_kind: SourceKind,
+    /// Identifier of the source (url / path / tool name). Never a secret value.
+    pub source_id: String,
+    /// Agent that ingested it.
+    pub agent: String,
+    /// Session the ingestion belongs to.
+    pub session: String,
+    /// Working directory the tool call ran in.
+    pub cwd: PathBuf,
+    /// When the source was observed.
+    #[serde(with = "time::serde::rfc3339")]
+    pub ts: OffsetDateTime,
+}
+
+impl ObservedIngest {
+    /// Lower this observation into the durable taint transition the daemon applies.
+    /// (`cwd` is observation context for the trail, not part of the session label.)
+    pub fn into_taint_event(self) -> TaintEvent {
+        TaintEvent::Ingest {
+            label: TaintLabel {
+                source_kind: self.source_kind,
+                source_id: self.source_id,
+                ts: self.ts,
+                agent: self.agent,
+                session: self.session,
+            },
+        }
+    }
+}
+
 /// The accumulated provenance set for a session or a file.
 ///
 /// An empty set means "not tainted". `add`/`merge` dedup by `(kind, id)` so the
@@ -596,6 +638,33 @@ mod tests {
             session: "s".to_string(),
         };
         assert_eq!(reset.with_redacted_source_id(), reset);
+    }
+
+    #[test]
+    fn observed_ingest_lowers_into_an_ingest_taint_event() {
+        // The intercept layer emits ObservedIngest; the daemon lowers it to the
+        // durable Ingest transition. The label must carry the same origin (cwd is
+        // trail context, not part of the session-taint identity).
+        let obs = ObservedIngest {
+            source_kind: SourceKind::Web,
+            source_id: "https://untrusted.example/page".to_string(),
+            agent: "claude-code".to_string(),
+            session: "s1".to_string(),
+            cwd: PathBuf::from("/work"),
+            ts: OffsetDateTime::UNIX_EPOCH,
+        };
+        let TaintEvent::Ingest { label } = obs.clone().into_taint_event() else {
+            panic!("must lower to Ingest");
+        };
+        assert_eq!(label.source_kind, SourceKind::Web);
+        assert_eq!(label.source_id, "https://untrusted.example/page");
+        assert_eq!(label.session, "s1");
+        assert_eq!(label.agent, "claude-code");
+
+        // Applying it taints exactly that session.
+        let mut state = TaintState::new();
+        state.apply(&obs.into_taint_event());
+        assert!(state.is_session_tainted(Some("s1")));
     }
 
     #[test]

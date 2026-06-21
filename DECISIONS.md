@@ -543,3 +543,21 @@ the locked product decisions this build implements.
   machinery applies. Carried constraint upheld: `Reset` never comes from agent
   input (only `Ingest` carries a `source_id`; `Reset`/`ReadFile`/`WriteFile`
   reference daemon-owned ids and are passed through untouched).
+- P6.2 spike (content-tool observation, standalone): added `ObservedIngest`
+  (kintsugi-core) — the normalized "untrusted content entered" event — with
+  `into_taint_event()` lowering it to a durable `TaintEvent::Ingest`. The riskiest
+  part (per-agent tool-name/schema variance) is built as a pure, dependency-free
+  classifier in `kintsugi-intercept::observe` and proven by tests BEFORE wiring it
+  into the live hook/IPC, exactly as the handoff prescribes (spike-first).
+  Classifier decisions: (a) accept the *union* of content-tool names across
+  dialects (WebFetch/Read/web-search aliases) like the existing shell-tool matcher;
+  (b) MCP results are untrusted by name-shape (`mcp__server__tool` →
+  `mcp/server/tool`); (c) **trust boundary = the workspace** — a read inside the
+  session cwd is trusted (the false-positive guard that keeps benign in-repo
+  sessions clean), an out-of-workspace read is untrusted (temp/Downloads →
+  `Download`, else external `File`), matching the design's "trusted by default: the
+  repo's own files"; (d) shell ingestion = `curl`/`wget` GET + `git clone` →
+  `Download`, but a `curl` upload (`-d`/`-T`/`-F`) is a sink (handled by the
+  trifecta rule), not an ingest, so it is deliberately not double-counted. Sound,
+  over-approximate, identifier-only (no fetched bytes ever read). Live hook+IPC
+  wiring (`Request::Ingest` → `daemon.apply_taint`) is the next step.
