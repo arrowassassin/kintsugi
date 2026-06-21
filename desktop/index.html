@@ -4,8 +4,12 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Kintsugi Control Room</title>
+    <!-- Build this crate to WASM explicitly (don't rely on auto-detection). -->
+    <link data-trunk rel="rust" />
     <link data-trunk rel="copy-file" href="app.css" />
     <link rel="stylesheet" href="app.css" />
   </head>
-  <body></body>
+  <body>
+    <div id="main"></div>
+  </body>
 </html>
