@@ -108,6 +108,28 @@ pub struct EngineStatus {
     pub scorer: Option<String>,
 }
 
+/// Dashboard metric cards — counts across the recorded timeline.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Metrics {
+    pub total: u64,
+    pub allowed: u64,
+    pub held: u64,
+    pub denied: u64,
+    /// Of the blocks, how many were taint-driven (lethal-trifecta) — the headline.
+    pub trifecta_blocks: u64,
+}
+
+/// The tamper-evidence status of the append-only event log.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChainVerify {
+    pub intact: bool,
+    pub length: u64,
+    /// The sequence number of the first broken row, if any.
+    pub broken_seq: Option<i64>,
+    /// What went wrong, if the chain is broken.
+    pub detail: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

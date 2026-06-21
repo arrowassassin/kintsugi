@@ -1,7 +1,7 @@
 /* Kintsugi Control Room — calm until it must shout.
    One accent (the gold seam); semantic risk colors used sparingly; theme-safe
    (dark + light via the platform palette); never color alone — every state pairs
-   a glyph or a word. Mirrors the codebase's TUI design rules in the GUI. */
+   a glyph or word. Mirrors the codebase's TUI design rules in the GUI. */
 
 :root {
   --bg: #0b0e16;
@@ -33,7 +33,7 @@
 }
 
 * { box-sizing: border-box; }
-
+html, body { height: 100%; }
 body {
   margin: 0;
   font-family: var(--sans);
@@ -43,104 +43,101 @@ body {
   line-height: 1.5;
 }
 
-/* ---- top bar ---------------------------------------------------------- */
-.topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 18px;
-  border-bottom: 1px solid var(--line);
+/* ---- app shell: sidebar + stage --------------------------------------- */
+.app { display: grid; grid-template-columns: 208px 1fr; height: 100vh; }
+@media (max-width: 760px) { .app { grid-template-columns: 1fr; height: auto; } }
+
+.sidebar {
   background: var(--surface);
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  padding: 14px 12px;
+  gap: 16px;
 }
-.brand { display: flex; align-items: baseline; gap: 10px; }
-.brand h1 { font-size: 16px; margin: 0; letter-spacing: 0.02em; }
-.brand .subtitle { color: var(--muted); font-size: 13px; }
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand h1 { font-size: 15px; margin: 0; letter-spacing: 0.02em; }
+.brand .subtitle { color: var(--muted); font-size: 12px; }
 .seam {
-  width: 3px;
-  height: 18px;
-  border-radius: 2px;
+  width: 3px; height: 30px; border-radius: 2px;
   background: linear-gradient(var(--gold), var(--gold-dim));
-  align-self: center;
 }
-.pills { display: flex; gap: 8px; }
+.nav { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; flex: 1; }
+.nav-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px; border-radius: 8px; cursor: pointer; color: var(--muted);
+  border-left: 3px solid transparent;
+}
+.nav-item:hover { background: var(--surface-2); color: var(--text); }
+.nav-item.active { background: var(--surface-2); color: var(--text); border-left-color: var(--gold); }
+.nav-glyph { width: 16px; text-align: center; }
+.engine-state { margin-top: auto; }
+
+.stage { padding: 16px 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
+.stage-head h2 { margin: 0; font-size: 18px; }
+
+/* ---- pills ------------------------------------------------------------ */
 .pill {
-  font-size: 12px;
-  padding: 3px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--line);
-  color: var(--muted);
-  display: inline-flex;
-  gap: 6px;
-  align-items: center;
+  font-size: 12px; padding: 3px 10px; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--muted);
+  display: inline-flex; gap: 6px; align-items: center;
 }
 .pill.up { color: var(--success); border-color: color-mix(in srgb, var(--success) 40%, var(--line)); }
 .pill.down { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, var(--line)); }
 
-/* ---- layout ----------------------------------------------------------- */
-.grid {
-  display: grid;
-  grid-template-columns: minmax(320px, 1.2fr) minmax(340px, 1fr);
-  gap: 14px;
-  padding: 14px;
-  height: calc(100vh - 60px);
+/* ---- metric cards ----------------------------------------------------- */
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; }
+.card {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+  padding: 14px 16px; display: flex; flex-direction: column; gap: 4px;
 }
-@media (max-width: 760px) {
-  .grid { grid-template-columns: 1fr; height: auto; }
+.card-value { font-size: 26px; font-weight: 600; }
+.card-value.tone-ok { color: var(--success); }
+.card-value.tone-warn { color: var(--warning); }
+.card-value.tone-danger { color: var(--danger); }
+.card-label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
+
+/* ---- alert (held items surface) --------------------------------------- */
+.alert {
+  display: flex; align-items: center; gap: 10px;
+  background: color-mix(in srgb, var(--warning) 12%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--line));
+  border-radius: 10px; padding: 10px 14px;
 }
-.panel {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
+.alert .glyph { color: var(--warning); }
+.alert .btn { margin-left: auto; }
+
+/* ---- panels & timeline ------------------------------------------------ */
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
 .panel-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--line);
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px; border-bottom: 1px solid var(--line);
 }
 .panel-head h2 { font-size: 13px; margin: 0; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+.split { display: grid; grid-template-columns: minmax(320px, 1.3fr) minmax(320px, 1fr); gap: 14px; align-items: start; }
+@media (max-width: 900px) { .split { grid-template-columns: 1fr; } }
+
 .filter {
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  color: var(--text);
-  padding: 4px 9px;
-  font-size: 13px;
-  width: 160px;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 7px;
+  color: var(--text); padding: 4px 9px; font-size: 13px; width: 180px;
 }
-.filter:focus { outline: 2px solid var(--gold); outline-offset: 0; }
+.filter:focus { outline: 2px solid var(--gold); }
 .step-label { color: var(--muted); font-size: 12px; }
 
-/* ---- timeline rows ---------------------------------------------------- */
-.rows { list-style: none; margin: 0; padding: 6px; overflow-y: auto; flex: 1; }
+.rows { list-style: none; margin: 0; padding: 6px; max-height: 62vh; overflow-y: auto; }
 .row {
-  display: grid;
-  grid-template-columns: 64px 1fr auto;
-  gap: 10px;
-  align-items: center;
-  padding: 8px 10px;
-  border-radius: 8px;
-  cursor: pointer;
-  border-left: 3px solid transparent;
+  display: grid; grid-template-columns: 84px 1fr auto; gap: 10px; align-items: center;
+  padding: 8px 10px; border-radius: 8px; cursor: pointer; border-left: 3px solid transparent;
 }
 .row:hover { background: var(--surface-2); }
 .row.selected { background: var(--surface-2); border-left-color: var(--gold); }
 .row.trifecta { border-left-color: var(--danger); }
-.row .agent { color: var(--muted); font-size: 12px; }
+.row .agent { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row .cmd { font-family: var(--mono); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-/* outcome/taint badges: glyph + word, never color alone */
 .badge {
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 6px;
-  border: 1px solid var(--line);
-  white-space: nowrap;
+  font-size: 11px; padding: 2px 8px; border-radius: 6px;
+  border: 1px solid var(--line); white-space: nowrap;
 }
 .badge.allowed { color: var(--success); }
 .badge.held { color: var(--warning); }
@@ -148,70 +145,52 @@ body {
 .badge.trifecta { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 50%, var(--line)); }
 
 /* ---- detail / hero ---------------------------------------------------- */
-.detail { padding: 0; }
-.detail article { padding: 16px; overflow-y: auto; }
+.detail article { padding: 16px; }
 .decision { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
 .decision .badge { font-size: 13px; }
 .command {
-  font-family: var(--mono);
-  font-size: 13px;
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 10px 12px;
-  white-space: pre-wrap;
-  word-break: break-all;
-  margin: 0 0 14px;
+  font-family: var(--mono); font-size: 13px;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px;
+  padding: 10px 12px; white-space: pre-wrap; word-break: break-all; margin: 0 0 14px;
 }
 .meta { display: grid; grid-template-columns: 72px 1fr; gap: 4px 10px; margin: 0 0 14px; }
+.meta.wide { grid-template-columns: 96px 1fr; }
 .meta dt { color: var(--muted); font-size: 12px; }
 .meta dd { margin: 0; font-size: 13px; word-break: break-word; }
 .muted { color: var(--muted); }
 
-/* the provenance trail — the gold seam threads the steps */
 .trail-wrap h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 6px 0 10px; }
 .trail { list-style: none; margin: 0; padding: 0; position: relative; }
 .trail::before {
-  content: "";
-  position: absolute;
-  left: 9px;
-  top: 6px;
-  bottom: 14px;
-  width: 2px;
+  content: ""; position: absolute; left: 9px; top: 6px; bottom: 14px; width: 2px;
   background: linear-gradient(var(--gold), var(--gold-dim));
 }
-.trail li {
-  position: relative;
-  padding: 4px 0 12px 28px;
-  font-size: 13px;
-}
+.trail li { position: relative; padding: 4px 0 12px 28px; font-size: 13px; }
 .trail li .dot {
-  position: absolute;
-  left: 4px;
-  top: 7px;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: var(--surface);
-  border: 2px solid var(--gold);
+  position: absolute; left: 4px; top: 7px; width: 12px; height: 12px; border-radius: 50%;
+  background: var(--surface); border: 2px solid var(--gold);
 }
 .trail li.rule .dot { background: var(--danger); border-color: var(--danger); }
 .trail li .glyph { margin-right: 6px; }
-.trail li .val { font-family: var(--mono); font-size: 12.5px; color: var(--text); }
+.trail li .val { font-family: var(--mono); font-size: 12.5px; }
 .trail li.rule { color: var(--danger); font-weight: 600; }
 
-.actions { display: flex; gap: 10px; margin-top: 8px; }
+/* ---- queue cards ------------------------------------------------------ */
+.queue { display: flex; flex-direction: column; gap: 12px; }
+.qcard { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+.qcard.trifecta { border-color: color-mix(in srgb, var(--danger) 40%, var(--line)); }
+.actions { display: flex; gap: 10px; margin-top: 6px; }
 .btn {
-  font: inherit;
-  padding: 7px 14px;
-  border-radius: 8px;
-  border: 1px solid var(--line);
-  background: var(--surface-2);
-  color: var(--text);
-  cursor: pointer;
+  font: inherit; padding: 7px 14px; border-radius: 8px;
+  border: 1px solid var(--line); background: var(--surface-2); color: var(--text); cursor: pointer;
 }
 .btn.allow { border-color: color-mix(in srgb, var(--success) 50%, var(--line)); }
 .btn.deny { border-color: color-mix(in srgb, var(--danger) 50%, var(--line)); }
 .btn:focus { outline: 2px solid var(--gold); }
+
+/* ---- chain verify badge ----------------------------------------------- */
+.chain { border-radius: 10px; padding: 8px 14px; font-size: 13px; border: 1px solid var(--line); }
+.chain.ok { color: var(--success); border-color: color-mix(in srgb, var(--success) 35%, var(--line)); }
+.chain.broken { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 50%, var(--line)); }
 
 .empty { color: var(--muted); padding: 24px; text-align: center; font-size: 13px; }
