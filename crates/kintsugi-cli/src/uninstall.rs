@@ -170,6 +170,36 @@ fn remove_desktop_app(home: &Path) -> Vec<String> {
     removed
 }
 
+/// Reset Kintsugi to a fresh-install state WITHOUT touching the audit data:
+/// remove the admin password (vault), the model pick, the posture markers, and
+/// the runtime/app state — but keep `events.db` (+ its WAL/SHM) and `snapshots/`.
+/// So `uninstall` always strips the password and settings; the history only goes
+/// with `--purge`. Returns short labels for what was removed.
+fn reset_system_config(data: &Path, vault: &Path) -> Vec<String> {
+    let mut removed = Vec::new();
+    if vault.is_file() && std::fs::remove_file(vault).is_ok() {
+        removed.push("admin password (vault)".to_string());
+    }
+    // System config / runtime state in the data dir — NOT the audit log/snapshots.
+    for f in [
+        "model.path",         // picked local model → back to the heuristic default
+        "fail-closed.flag",   // posture marker
+        "panic.flag",         // kill-switch flag
+        "desktop-prefs.json", // app theme / menu prefs
+        "desktop-setup-done", // first-run wizard marker
+        "record-spool.jsonl", // pending recorder spool
+        "kintsugi.pid",
+        "kintsugi.sock",
+        "watch.pid",
+    ] {
+        let p = data.join(f);
+        if p.is_file() && std::fs::remove_file(&p).is_ok() {
+            removed.push(f.to_string());
+        }
+    }
+    removed
+}
+
 pub fn run(purge: bool, yes: bool) -> Result<()> {
     let home = home();
 
@@ -213,14 +243,17 @@ pub fn run(purge: bool, yes: bool) -> Result<()> {
     println!("  • remove the shim dir:    {}", shim.display());
     println!("  • remove the binaries in: {}", bdir.display());
     println!("  • remove the desktop app (Applications / launcher / Start menu) if installed");
+    println!("  • remove the auto-restart watchdog (service), if installed");
+    println!("  • remove your admin password and reset settings to defaults");
+    println!("      (vault, model pick, fail-closed posture, autostart, app prefs)");
     if purge {
         println!(
-            "  • PURGE all stored data:  {}  (events, vault, model — UNRECOVERABLE)",
+            "  • PURGE everything else too:  {}  (audit log + snapshots — UNRECOVERABLE)",
             data.display()
         );
     } else {
         println!(
-            "  • KEEP your stored data:  {}  (pass --purge to erase it)",
+            "  • KEEP your audit log + snapshots:  {}  (pass --purge to erase them too)",
             data.display()
         );
     }
@@ -240,6 +273,9 @@ pub fn run(purge: bool, yes: bool) -> Result<()> {
 
     // 4. Execute (best-effort; keep going if a step is already gone).
     let _ = cmd_stop();
+    // Remove the auto-restart watchdog FIRST, or it would relaunch the daemon we
+    // just stopped. `_unattended` skips the password re-prompt — we already gated.
+    let _ = crate::service::uninstall_unattended();
     for c in strip_hooks(&home) {
         println!("  stripped hook: {c}");
     }
@@ -255,13 +291,29 @@ pub fn run(purge: bool, yes: bool) -> Result<()> {
     for p in remove_desktop_app(&home) {
         println!("  removed desktop app: {p}");
     }
-    if purge && data.is_dir() && std::fs::remove_dir_all(&data).is_ok() {
-        println!("  purged data: {}", data.display());
+    if purge {
+        // Full wipe: the password vault + everything in the data dir (audit log,
+        // snapshots, config). Remove the vault explicitly too in case it lives
+        // outside the data dir (KINTSUGI_VAULT override).
+        let _ = std::fs::remove_file(admin::default_vault_path());
+        if data.is_dir() && std::fs::remove_dir_all(&data).is_ok() {
+            println!("  purged data: {}", data.display());
+        }
+    } else {
+        // Reset to defaults — remove the password + system config/runtime state,
+        // but KEEP the audit log and snapshots.
+        for f in reset_system_config(&data, &admin::default_vault_path()) {
+            println!("  reset: {f}");
+        }
     }
 
     println!(
-        "\nKintsugi uninstalled.{}",
-        if purge { "" } else { " Your data was kept." }
+        "\nKintsugi uninstalled — password removed, settings reset to defaults.{}",
+        if purge {
+            ""
+        } else {
+            " Your audit log and snapshots were kept (--purge to erase them)."
+        }
     );
     Ok(())
 }
