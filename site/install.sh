@@ -24,7 +24,7 @@ set -eu
 
 REPO="arrowassassin/kintsugi"
 BINS="kintsugi kintsugi-daemon kintsugi-shim kintsugi-hook kintsugi-mcp"
-BIN_DIR="${KINTSUGI_BIN_DIR:-$HOME/.local/bin}"
+BIN_DIR="${KINTSUGI_BIN_DIR:-}"   # empty → resolved in main() to where kintsugi already lives
 VERSION=""
 FROM_SOURCE=0
 WITH_MODEL=0
@@ -67,6 +67,49 @@ detect_target() {
     Darwin-arm64|Darwin-aarch64) echo "aarch64-apple-darwin" ;;
     *) echo "" ;;  # unsupported prebuilt combo → source build
   esac
+}
+
+# The standard places a kintsugi suite can live. `cargo install` always uses
+# ~/.cargo/bin; this script defaults to ~/.local/bin. Keeping these coherent (one
+# suite, not two competing copies on PATH) is what resolve_bin_dir / warn_other_install do.
+STD_DIRS="$HOME/.cargo/bin $HOME/.local/bin /usr/local/bin"
+
+# Decide where to install. An explicit --bin-dir / $KINTSUGI_BIN_DIR always wins.
+# Otherwise install WHERE KINTSUGI ALREADY LIVES (a prior `cargo install` or
+# install.sh run) so the two install methods never leave two copies shadowing each
+# other; only with no existing install do we fall back to ~/.local/bin.
+resolve_bin_dir() {
+  [ -n "$BIN_DIR" ] && return 0          # explicit choice — honor it
+  existing="$(command -v kintsugi 2>/dev/null || true)"
+  if [ -z "$existing" ]; then
+    for d in $STD_DIRS; do
+      [ -x "$d/kintsugi" ] && { existing="$d/kintsugi"; break; }
+    done
+  fi
+  if [ -n "$existing" ]; then
+    cand="$(CDPATH= cd -- "$(dirname -- "$existing")" && pwd)"
+    if mkdir -p "$cand" 2>/dev/null && [ -w "$cand" ]; then
+      BIN_DIR="$cand"
+      say "found an existing install in $BIN_DIR — updating it in place (no duplicate copies)."
+      return 0
+    fi
+    warn "existing install in $(dirname -- "$existing") isn't writable; using \$HOME/.local/bin instead."
+  fi
+  BIN_DIR="$HOME/.local/bin"
+}
+
+# Warn if a SECOND kintsugi sits in another standard dir after we install — a stale
+# copy can shadow the one we just installed depending on PATH order, and (if it's a
+# different version) its daemon could be the one already bound to the socket.
+warn_other_install() {
+  here="$1"
+  for d in $STD_DIRS; do
+    [ "$d" = "$here" ] && continue
+    [ -x "$d/kintsugi" ] || continue
+    ov="$("$d/kintsugi" --version 2>/dev/null | awk '{print $NF}')"
+    warn "another kintsugi is installed in $d (v${ov:-?}); whichever is earlier on PATH wins."
+    warn "  remove the stale copy to stay coherent:  rm -f $d/kintsugi $d/kintsugi-daemon $d/kintsugi-hook $d/kintsugi-shim $d/kintsugi-mcp"
+  done
 }
 
 fetch() { # fetch URL → stdout
@@ -334,6 +377,8 @@ stepper() {
   echo
   # Put the bin dir on PATH (profile + this process) so `kintsugi` just works.
   persist_path "$dir"
+  # Flag any second copy (e.g. a `cargo install` in ~/.cargo/bin) that could shadow it.
+  warn_other_install "$dir"
 
   # Decide on wiring up front, but DEFER running `kintsugi init` until after the
   # model is in place. Otherwise init starts the daemon on the heuristic scorer,
@@ -367,6 +412,7 @@ stepper() {
 }
 
 main() {
+  resolve_bin_dir   # pick where to install: where kintsugi already lives, else ~/.local/bin
   if [ "$FROM_SOURCE" -eq 1 ]; then install_from_source; return; fi
 
   target="$(detect_target)"

@@ -2067,6 +2067,57 @@ fn verify_update(expected: &str) {
     }
 }
 
+/// Warn when more than one `kintsugi` is installed — the classic split between a
+/// `cargo install` (always `~/.cargo/bin`) and an `install.sh` copy. They share the
+/// daemon socket and the append-only event log, so two *different* versions can
+/// shadow each other on PATH or leave a mismatched daemon bound to the socket.
+/// Advisory only — never fails the command. (install.sh now installs in place, so
+/// this mainly catches a `cargo install` done *after* a script install.)
+fn report_install_coherence() {
+    let me = std::env::current_exe()
+        .ok()
+        .and_then(|p| std::fs::canonicalize(p).ok());
+    let exe = if cfg!(windows) {
+        "kintsugi.exe"
+    } else {
+        "kintsugi"
+    };
+    // Scan PATH + the two standard install dirs for distinct kintsugi binaries.
+    let mut dirs: Vec<PathBuf> = std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).collect())
+        .unwrap_or_default();
+    if let Some(home) = std::env::var_os("HOME") {
+        for sub in [".cargo/bin", ".local/bin"] {
+            dirs.push(PathBuf::from(&home).join(sub));
+        }
+    }
+    let mut seen: Vec<PathBuf> = Vec::new();
+    let mut others: Vec<(PathBuf, String)> = Vec::new();
+    for d in dirs {
+        let cand = d.join(exe);
+        let Ok(canon) = std::fs::canonicalize(&cand) else {
+            continue;
+        };
+        if seen.contains(&canon) {
+            continue;
+        }
+        seen.push(canon.clone());
+        if Some(&canon) == me.as_ref() {
+            continue; // this is the running binary
+        }
+        let ver = binary_version(&cand).unwrap_or_else(|| "?".into());
+        others.push((cand, ver.trim_start_matches('v').to_string()));
+    }
+    if others.is_empty() {
+        return;
+    }
+    println!("  install: ⚠ more than one kintsugi is installed — keep ONE to avoid version skew:");
+    for (p, v) in &others {
+        println!("            {} (v{v})", p.display());
+    }
+    println!("            they share the daemon socket + event log; remove the extra copy, then `kintsugi init`.");
+}
+
 /// Run `<bin> --version` and return the reported version token (the last word of
 /// e.g. `kintsugi 0.1.5`), or `None` if it can't be determined.
 fn binary_version(bin: &std::path::Path) -> Option<String> {
@@ -2302,6 +2353,12 @@ fn cmd_status() -> Result<()> {
             );
         }
     }
+
+    // Install coherence: more than one kintsugi suite (e.g. `cargo install` in
+    // ~/.cargo/bin AND an install.sh copy in ~/.local/bin) shares the same socket +
+    // event log, so a stale/different version can shadow this one or leave a
+    // mismatched daemon on the wire. Advisory only.
+    report_install_coherence();
 
     // Shell enforcement: only claim "un-removable" when the wiring is actually in
     // root-owned files. If it's present but not root-owned, say so — that's a
