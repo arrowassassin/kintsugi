@@ -23,6 +23,10 @@ pub const STYLES: Asset = asset!("/assets/styles.css");
 /// quirks in the embedded webview (the `asset!()`-served file was showing a
 /// broken-image placeholder on some macOS builds).
 pub const LOGO_SVG: &str = include_str!("../assets/logo-mark.svg");
+/// The full stylesheet embedded as a string — the `asset!()` route silently
+/// fails to serve styles.css on production macOS builds, so we inline it via a
+/// `<style>` tag instead. Bulletproof and avoids a CSP/asset-protocol round-trip.
+pub const STYLES_CSS: &str = include_str!("../assets/styles.css");
 
 /// The 256-px window icon, rasterized from the brand SVG at build time.
 const ICON_PNG: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/logo-256.png"));
@@ -175,7 +179,11 @@ fn App() -> Element {
     let panic = *store.panic.read();
 
     rsx! {
-        document::Link { rel: "stylesheet", href: STYLES }
+        // Inline stylesheet — asset!()-served CSS silently doesn't load in the
+        // production macOS build, so the `body { overflow:hidden }` and the
+        // keyframes (kpulse, kfade, kspin) never applied → the phantom right
+        // scrollbar. Embedding it as a <style> tag fixes both.
+        style { dangerous_inner_html: "{STYLES_CSS}" }
 
         div {
             style: "height:100vh;width:100%;display:flex;flex-direction:column;color:var(--ink);background:var(--bg);overflow:hidden;font-family:'IBM Plex Sans',ui-sans-serif,system-ui,sans-serif;{theme_vars}",
