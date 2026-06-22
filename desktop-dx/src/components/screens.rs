@@ -1005,6 +1005,10 @@ pub fn Held() -> Element {
     // Local tick re-runs the resource right after a resolve(); the global tick
     // keeps the list live. The queue read runs OFF the UI thread.
     let mut tick = use_signal(|| 0u32);
+    // Which card (by id) is armed for "Approve & run" — a deliberate two-step so a
+    // catastrophic command can't run on a single stray click. One signal for the
+    // whole list (only one card arms at a time).
+    let mut arming = use_signal(|| None::<String>);
     let rows = use_resource(move || async move {
         let _ = tick(); // refresh immediately after resolve()
         let _ = store.tick.read(); // live refresh on the heartbeat
@@ -1076,8 +1080,16 @@ pub fn Held() -> Element {
                         let id = q.id.clone();
                         let allow_id = id.clone();
                         let deny_id = id.clone();
+                        let run_id = id.clone();
+                        let arm_id = id.clone();
                         let (class_label, class_color) = class_style(&q.class);
                         let agent = q.agent.clone();
+                        // In-band agents (mcp/shim) have a caller parked, waiting to run the
+                        // command the instant it's approved. Out-of-band ones (a one-shot
+                        // agent hook like claude-code) already got the deny and left — nothing
+                        // is waiting, so the human runs it here, from this trusted UI.
+                        let in_band = matches!(q.agent.as_str(), "mcp" | "shim");
+                        let armed = arming.read().as_deref() == Some(id.as_str());
                         let session = q.session.clone().unwrap_or_default();
                         let command = q.command.clone();
                         let reason = q.reason.clone();
@@ -1140,23 +1152,61 @@ pub fn Held() -> Element {
                                         button { style: "font-family:inherit;font-size:13.5px;font-weight:600;color:#fff;background:var(--red);border:none;border-radius:9px;padding:11px 20px;cursor:pointer;display:inline-flex;align-items:center;gap:9px",
                                             onclick: move |_| {
                                                 crate::bindings::resolve(&deny_id, false);
+                                                arming.set(None);
                                                 let t = *tick.read();
                                                 tick.set(t + 1);
                                             },
                                             kbd { style: "font-family:inherit;font-size:10.5px;background:rgba(0,0,0,.22);border-radius:4px;padding:1px 5px", "D" }
                                             "Deny"
                                         }
-                                        button { style: "font-family:inherit;font-size:13.5px;font-weight:600;color:var(--ink);background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:11px 20px;cursor:pointer;display:inline-flex;align-items:center;gap:9px",
-                                            onclick: move |_| {
-                                                crate::bindings::resolve(&allow_id, true);
-                                                let t = *tick.read();
-                                                tick.set(t + 1);
-                                            },
-                                            kbd { style: "font-family:inherit;font-size:10.5px;background:var(--bg);border-radius:4px;padding:1px 5px", "A" }
-                                            "Allow once"
-                                        }
-                                        span { style: "margin-left:auto;align-self:center;font-size:12px;color:var(--dim);max-width:240px;text-align:right;line-height:1.4",
-                                            "False positive? Approving is one key — the context above is the whole story."
+
+                                        if in_band {
+                                            // A caller is parked waiting — approving lets IT run the command.
+                                            button { style: "font-family:inherit;font-size:13.5px;font-weight:600;color:var(--ink);background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:11px 20px;cursor:pointer;display:inline-flex;align-items:center;gap:9px",
+                                                onclick: move |_| {
+                                                    crate::bindings::resolve(&allow_id, true);
+                                                    let t = *tick.read();
+                                                    tick.set(t + 1);
+                                                },
+                                                kbd { style: "font-family:inherit;font-size:10.5px;background:var(--bg);border-radius:4px;padding:1px 5px", "A" }
+                                                "Allow once"
+                                            }
+                                            span { style: "margin-left:auto;align-self:center;font-size:12px;color:var(--dim);max-width:260px;text-align:right;line-height:1.4",
+                                                "The {agent} call is waiting — approving lets it run."
+                                            }
+                                        } else if armed {
+                                            // Step 2: confirm. The agent already got the deny and left;
+                                            // running it here is the human taking over (snapshot + undo).
+                                            button { style: "font-family:inherit;font-size:13.5px;font-weight:700;color:#fff;background:var(--gold);border:none;border-radius:9px;padding:11px 20px;cursor:pointer;display:inline-flex;align-items:center;gap:9px",
+                                                onclick: move |_| {
+                                                    let res = crate::bindings::approve_and_run(&run_id);
+                                                    arming.set(None);
+                                                    match res {
+                                                        Ok(msg) => store.toast(crate::state::ToastKind::Success, msg),
+                                                        Err(e) => store.toast(crate::state::ToastKind::Error, format!("Couldn't run it: {e}")),
+                                                    };
+                                                    let t = *tick.read();
+                                                    tick.set(t + 1);
+                                                },
+                                                "⚠ Run it now"
+                                            }
+                                            button { style: "font-family:inherit;font-size:13.5px;font-weight:600;color:var(--dim);background:transparent;border:1px solid var(--line);border-radius:9px;padding:11px 18px;cursor:pointer",
+                                                onclick: move |_| { arming.set(None); },
+                                                "Cancel"
+                                            }
+                                            span { style: "margin-left:auto;align-self:center;font-size:12px;color:var(--gold);max-width:300px;text-align:right;line-height:1.4",
+                                                "Runs it in its original directory. Snapshots first — `kintsugi undo` can roll it back (unbounded targets like rm -rf may not fully revert)."
+                                            }
+                                        } else {
+                                            // Step 1: arm. The agent won't resume — you run it.
+                                            button { style: "font-family:inherit;font-size:13.5px;font-weight:600;color:var(--ink);background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:11px 20px;cursor:pointer;display:inline-flex;align-items:center;gap:9px",
+                                                onclick: move |_| { arming.set(Some(arm_id.clone())); },
+                                                kbd { style: "font-family:inherit;font-size:10.5px;background:var(--bg);border-radius:4px;padding:1px 5px", "A" }
+                                                "Approve & run"
+                                            }
+                                            span { style: "margin-left:auto;align-self:center;font-size:12px;color:var(--dim);max-width:280px;text-align:right;line-height:1.4",
+                                                "The agent already got the deny and won't resume. If you want it, run it here — then tell your agent to continue."
+                                            }
                                         }
                                     }
                                 }

@@ -75,6 +75,60 @@ pub fn resolve(id: &str, allow: bool) -> bool {
     app::resolve(id, allow).is_ok()
 }
 
+/// Approve a held command **and run it from the app** — the GUI equivalent of
+/// `kintsugi run <id>`.
+///
+/// For an *out-of-band* hold (a one-shot agent hook like claude-code already got
+/// the deny and left, so nothing is waiting to execute it), the human runs it
+/// here: the daemon's `approve` snapshots the predicted paths first (so
+/// `kintsugi undo` can roll it back) and records the Allow, then we execute the
+/// raw command in its original directory. For an *in-band* hold (mcp/shim) a
+/// caller is parked waiting, so we only approve and let that caller run it —
+/// running here too would double-run it.
+///
+/// Safe by construction: this lives in the GUI binary and is reachable only by a
+/// human clicking in the unlocked app — never over the daemon socket — so an agent
+/// shelling out cannot self-approve-and-run. That process isolation, plus the
+/// two-step confirm in the UI, is the GUI's equivalent of the CLI's typed-at-the-
+/// terminal code gate.
+pub fn approve_and_run(id: &str) -> anyhow::Result<String> {
+    use kintsugi_daemon::Client;
+    let item = Client::list_pending()?
+        .into_iter()
+        .find(|i| i.command.id.to_string() == id)
+        .ok_or_else(|| anyhow::anyhow!("that command is no longer held"))?;
+    // mcp/shim: a caller is waiting to run it on approval; just approve.
+    let in_band = matches!(item.command.agent.as_str(), "mcp" | "shim");
+    // approve: snapshots the predicted paths, records the Allow, marks resolved.
+    Client::approve(id).map_err(|e| anyhow::anyhow!("approve failed: {e}"))?;
+    if in_band {
+        return Ok("Approved — the waiting agent will run it.".to_string());
+    }
+    let status = run_in_shell(&item.command.cwd, &item.command.raw)?;
+    Ok(match status.code() {
+        Some(0) => "Ran it. `kintsugi undo` can roll back the snapshot.".to_string(),
+        Some(code) => format!("Ran it — the command exited with code {code}."),
+        None => "Ran it (terminated by a signal).".to_string(),
+    })
+}
+
+/// Execute a raw command line in `cwd` via the platform shell, inheriting stdio.
+/// Mirrors the CLI's `run_in_shell` so chaining/redirects behave identically.
+fn run_in_shell(cwd: &std::path::Path, raw: &str) -> anyhow::Result<std::process::ExitStatus> {
+    let mut cmd = if cfg!(windows) {
+        let mut c = std::process::Command::new("cmd");
+        c.arg("/C").arg(raw);
+        c
+    } else {
+        let mut c = std::process::Command::new("sh");
+        c.arg("-c").arg(raw);
+        c
+    };
+    cmd.current_dir(cwd);
+    cmd.status()
+        .map_err(|e| anyhow::anyhow!("run `{raw}`: {e}"))
+}
+
 // ---- engine controls (the on / off / panic switches) -----------------------
 
 /// Is the resident daemon up? Drives the status dot.
