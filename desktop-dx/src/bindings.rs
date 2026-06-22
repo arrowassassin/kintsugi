@@ -960,6 +960,21 @@ pub fn apply_update() -> anyhow::Result<String> {
     Ok(text.trim().to_string())
 }
 
+/// What provenance tracks, for the Rules view — the untrusted ingest channels
+/// that taint a session. Sourced from kintsugi-core's `SourceKind`, so the
+/// displayed list is the real one the interception layer classifies, never a
+/// drifting copy.
+pub fn untrusted_sources() -> Vec<(&'static str, &'static str)> {
+    kintsugi_core::untrusted_sources()
+}
+
+/// The egress channels provenance watches for the "data leaves the machine" leg
+/// (curl, wget, ssh, scp, `git push`, DNS tools, …). Sourced from kintsugi-core's
+/// `is_egress_sink` catalog so it stays in lock-step with what actually fires.
+pub fn egress_channels() -> Vec<(&'static str, &'static str)> {
+    kintsugi_core::egress_channels()
+}
+
 /// The built-in deterministic protections — always on, the heart of the gate.
 pub fn builtin_protections() -> Vec<(&'static str, &'static str)> {
     vec![

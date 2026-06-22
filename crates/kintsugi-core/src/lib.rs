@@ -27,13 +27,13 @@ pub use log::{ChainStatus, EventLog, Filter, LogError, LoggedEvent, PendingItem,
 pub use memory::command_hash;
 pub use policy::{adjust_for_policy, Policy, PolicyAction};
 pub use rules::{
-    classify, classify_and_decide, classify_line, decide, is_egress_sink, is_sensitive_read,
-    RuleMatch,
+    classify, classify_and_decide, classify_line, decide, egress_channels, is_egress_sink,
+    is_sensitive_read, RuleMatch,
 };
 pub use snapshot::{capture as capture_snapshot, restore as restore_snapshot, Manifest};
 pub use taint::{
-    evaluate_trifecta, untrusted_trail, ObservedIngest, ProvStep, SourceKind, TaintEvent,
-    TaintLabel, TaintSet, TaintState, TaintStore, Trifecta,
+    evaluate_trifecta, untrusted_sources, untrusted_trail, ObservedIngest, ProvStep, SourceKind,
+    TaintEvent, TaintLabel, TaintSet, TaintState, TaintStore, Trifecta,
 };
 pub use types::{Class, Decision, Mode, ProposedCommand, Verdict};
 

@@ -52,6 +52,54 @@ impl SourceKind {
             SourceKind::SearchResult => "searchresult",
         }
     }
+
+    /// A short human label + one-line explanation, for the Rules view. Mirrors the
+    /// channels the interception layer classifies as untrusted (see
+    /// `kintsugi-intercept`'s `observe`), so the app shows exactly what taints a
+    /// session.
+    pub fn describe(self) -> (&'static str, &'static str) {
+        match self {
+            SourceKind::Web => ("Web fetch", "a fetched web page / HTTP response"),
+            SourceKind::Download => ("Download", "curl / wget / git clone output"),
+            SourceKind::Mcp => (
+                "MCP tool output",
+                "results returned by an external MCP tool",
+            ),
+            SourceKind::Issue => (
+                "Issue / PR / email",
+                "a ticket or message body the agent read",
+            ),
+            SourceKind::File => (
+                "Out-of-workspace file",
+                "a read outside the trusted repo tree",
+            ),
+            SourceKind::Clipboard => ("Clipboard", "pasted clipboard content"),
+            SourceKind::Shell => (
+                "Shell-ingested",
+                "untrusted content pulled in by a shell command",
+            ),
+            SourceKind::SearchResult => ("Web-search result", "a search-result snippet"),
+        }
+    }
+}
+
+/// The untrusted ingest channels provenance tracks — any of these taints the
+/// session it lands in. Public so the app's Rules view can list exactly what's
+/// watched, sourced from the [`SourceKind`] enum itself (no hard-coded duplicate).
+pub fn untrusted_sources() -> Vec<(&'static str, &'static str)> {
+    [
+        SourceKind::Web,
+        SourceKind::Download,
+        SourceKind::Mcp,
+        SourceKind::Issue,
+        SourceKind::File,
+        SourceKind::Clipboard,
+        SourceKind::Shell,
+        SourceKind::SearchResult,
+    ]
+    .into_iter()
+    .map(SourceKind::describe)
+    .collect()
 }
 
 /// A single taint origin. Recorded by identifier only — never content.

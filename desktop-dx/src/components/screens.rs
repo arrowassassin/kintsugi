@@ -1401,13 +1401,18 @@ struct ProvCandidate {
     tainted: bool,
 }
 
-/// De-dupe rows by session (newest-first), keeping the ones worth a provenance
-/// look: taint-driven blocks, or any row that carries a session id. Shared by the
-/// left rail and the default-selection effect so they never disagree.
+/// De-dupe rows by session (newest-first), keeping only the ones this view is
+/// about: commands where a taint-driven rule actually fired (`provenance_block`,
+/// i.e. a `TRIFECTA-*` reason). The screen's promise is "how untrusted content
+/// reached a risky command" — a session that merely has an id but never ingested
+/// anything untrusted is *not* provenance, so it doesn't belong in the rail (and
+/// picking its newest, non-trifecta command is what produced the misleading
+/// "carries a label / no trail" state). Shared by the left rail and the
+/// default-selection effect so they never disagree.
 fn prov_candidates(rows: &[crate::bindings::TimelineRow]) -> Vec<ProvCandidate> {
     let mut candidates: Vec<ProvCandidate> = Vec::new();
     for r in rows.iter() {
-        if !r.provenance_block && r.session.is_none() {
+        if !r.provenance_block {
             continue;
         }
         let Some(session) = r.session.clone() else {
@@ -1420,7 +1425,7 @@ fn prov_candidates(rows: &[crate::bindings::TimelineRow]) -> Vec<ProvCandidate> 
             session,
             command: r.command.clone(),
             ts: r.ts.clone(),
-            tainted: r.provenance_block,
+            tainted: true,
         });
     }
     candidates
@@ -1616,14 +1621,29 @@ pub fn Provenance() -> Element {
                                                     }
                                                 }
                                             }
-                                            _ => rsx! {
+                                            // Tainted session, but this particular command has no
+                                            // source→sink legs to chart (e.g. a later, safe command).
+                                            Some(v) if v.tainted => rsx! {
                                                 div { style: "padding:30px 8px;text-align:center",
-                                                    div { style: "font-size:14px;font-weight:600;color:var(--ink)", "◌ No trail recorded" }
-                                                    div { style: "font-size:12.5px;color:var(--dim);margin-top:6px;line-height:1.5;max-width:420px;margin-left:auto;margin-right:auto",
-                                                        "This session carries a label but no taint steps were recorded for this command — nothing untrusted flowed into it."
+                                                    div { style: "font-size:14px;font-weight:600;color:var(--ink)", "◌ No trail for this command" }
+                                                    div { style: "font-size:12.5px;color:var(--dim);margin-top:6px;line-height:1.5;max-width:440px;margin-left:auto;margin-right:auto",
+                                                        "This session is tainted, but the selected command has no untrusted-read → sink legs of its own. Pick the trifecta command to see the full chain."
                                                     }
                                                 }
-                                            }
+                                            },
+                                            // Clean session — say so plainly; don't claim a label it doesn't have.
+                                            Some(_) => rsx! {
+                                                div { style: "padding:30px 8px;text-align:center",
+                                                    div { style: "font-size:14px;font-weight:600;color:var(--green)", "✓ Nothing untrusted" }
+                                                    div { style: "font-size:12.5px;color:var(--dim);margin-top:6px;line-height:1.5;max-width:440px;margin-left:auto;margin-right:auto",
+                                                        "No untrusted content has touched this session — there's no provenance trail to show."
+                                                    }
+                                                }
+                                            },
+                                            // Daemon round-trip hasn't landed (or failed) yet.
+                                            None => rsx! {
+                                                div { style: "padding:30px 8px;text-align:center;color:var(--dim);font-size:12.5px", "Loading the provenance trail…" }
+                                            },
                                         }
                                     }
                                 }
@@ -3008,9 +3028,21 @@ pub fn Policy() -> Element {
             .await
             .unwrap_or_default()
     });
+    // What provenance tracks — sourced from the engine so the list can't drift.
+    let prov_res = use_resource(move || async move {
+        tokio::task::spawn_blocking(|| {
+            (
+                crate::bindings::untrusted_sources(),
+                crate::bindings::egress_channels(),
+            )
+        })
+        .await
+        .unwrap_or_default()
+    });
 
     let policy = policy_res().flatten();
     let builtins = builtins_res().unwrap_or_default();
+    let (untrusted_sources, egress_channels) = prov_res().unwrap_or_default();
 
     // Mode → a plain-language line + accent, so it's a word, never color alone.
     let (mode_label, mode_note, mode_color) = match policy.as_ref().map(|p| p.mode.as_str()) {
@@ -3063,6 +3095,53 @@ pub fn Policy() -> Element {
                 }
                 if builtins.is_empty() {
                     div { style: "padding:24px 20px;text-align:center;font-size:12.5px;color:var(--dim)", "◌ Loading protections…" }
+                }
+            }
+
+            // ── (a2) Provenance tracking ─────────────────────────────────
+            // Make the lethal-trifecta machinery legible: what the engine treats
+            // as untrusted input, and what it counts as data leaving the machine.
+            div { style: "border:1px solid var(--line);border-radius:14px;background:var(--panel);overflow:hidden;margin-bottom:18px",
+                div { style: "display:flex;align-items:center;gap:12px;padding:15px 20px;border-bottom:1px solid var(--line);background:linear-gradient(100deg,rgba(212,175,55,.06),transparent)",
+                    span { style: "display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:9px;background:rgba(212,175,55,.13);flex:none",
+                        svg { view_box: "0 0 24 24", width: "19", height: "19", fill: "none", stroke: "var(--gold)", stroke_width: "1.8", stroke_linecap: "round", stroke_linejoin: "round",
+                            circle { cx: "6", cy: "6", r: "2.5" }
+                            circle { cx: "18", cy: "18", r: "2.5" }
+                            path { d: "M8 7.5l8 9" }
+                        }
+                    }
+                    div { style: "flex:1",
+                        div { style: "font-size:14.5px;font-weight:700", "Provenance tracking" }
+                        div { style: "font-size:12px;color:var(--dim);margin-top:1px", "Untrusted input + a secret read + an egress sink → the lethal trifecta is blocked. These are the channels watched." }
+                    }
+                    span { style: "font-size:11.5px;font-weight:600;color:var(--gold);border:1px solid var(--gold-line);border-radius:7px;padding:5px 10px;white-space:nowrap", "tracked" }
+                }
+
+                // Untrusted sources (taint a session)
+                div { style: "padding:13px 20px 6px;font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--dim)", "Untrusted input — taints the session" }
+                for (name, detail) in untrusted_sources.iter() {
+                    div { style: "display:flex;align-items:center;gap:14px;padding:11px 20px;border-bottom:1px solid var(--hair)",
+                        span { style: "display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:6px;flex:none;background:rgba(212,175,55,.12);color:var(--gold);font-size:12px;font-weight:700", "↓" }
+                        div { style: "flex:1;min-width:0",
+                            div { style: "font-size:13.5px;font-weight:600;color:var(--ink)", "{name}" }
+                            div { style: "font-size:11.5px;color:var(--dim);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap", "{detail}" }
+                        }
+                    }
+                }
+
+                // Egress sinks (data leaves the machine)
+                div { style: "padding:13px 20px 6px;font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--dim)", "Egress — data leaves the machine" }
+                for (name, detail) in egress_channels.iter() {
+                    div { style: "display:flex;align-items:center;gap:14px;padding:11px 20px;border-bottom:1px solid var(--hair)",
+                        span { style: "display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:6px;flex:none;background:rgba(255,93,93,.12);color:var(--red);font-size:12px;font-weight:700", "↑" }
+                        div { style: "flex:1;min-width:0",
+                            div { style: "font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:600;color:var(--ink)", "{name}" }
+                            div { style: "font-size:11.5px;color:var(--dim);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap", "{detail}" }
+                        }
+                    }
+                }
+                if untrusted_sources.is_empty() && egress_channels.is_empty() {
+                    div { style: "padding:24px 20px;text-align:center;font-size:12.5px;color:var(--dim)", "◌ Loading…" }
                 }
             }
 
@@ -3202,5 +3281,69 @@ pub fn Placeholder() -> Element {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod prov_candidate_tests {
+    use super::*;
+    use crate::bindings::TimelineRow;
+
+    fn row(session: Option<&str>, command: &str, provenance_block: bool) -> TimelineRow {
+        TimelineRow {
+            id: command.to_string(),
+            ts: "2026-06-21T00:00:00Z".to_string(),
+            agent: "claude-code".to_string(),
+            session: session.map(str::to_string),
+            command: command.to_string(),
+            class: "ambiguous".to_string(),
+            outcome: "held".to_string(),
+            reason: if provenance_block {
+                "TRIFECTA-01:provenance (sink)".to_string()
+            } else {
+                "safe:ls".to_string()
+            },
+            provenance_block,
+            risk: None,
+            summary: None,
+            cwd: "/tmp".to_string(),
+            tier: 1,
+        }
+    }
+
+    #[test]
+    fn only_trifecta_sessions_are_candidates() {
+        // The fix: a clean session that merely carries an id must NOT appear —
+        // the rail is "how untrusted content reached a risky command".
+        let clean = vec![
+            row(Some("clean-sess"), "grep foo .", false),
+            row(Some("clean-sess"), "echo hi", false),
+        ];
+        assert!(
+            prov_candidates(&clean).is_empty(),
+            "a session with no trifecta event is not provenance"
+        );
+
+        // A session with a trifecta block appears exactly once (deduped), tainted,
+        // and shows the newest trifecta command (not a later safe one).
+        let dirty = vec![
+            row(Some("dirty"), "newest-safe-cmd", false),
+            row(Some("dirty"), "exfil-attempt-A", true),
+            row(Some("dirty"), "exfil-attempt-B", true),
+        ];
+        let cands = prov_candidates(&dirty);
+        assert_eq!(cands.len(), 1, "one row per session");
+        assert_eq!(cands[0].session, "dirty");
+        assert!(cands[0].tainted);
+        assert_eq!(cands[0].command, "exfil-attempt-A", "newest trifecta wins the slot");
+    }
+
+    #[test]
+    fn a_block_row_without_a_session_is_skipped() {
+        let rows = vec![row(None, "exfil-attempt", true)];
+        assert!(
+            prov_candidates(&rows).is_empty(),
+            "no session id → cannot chart provenance"
+        );
     }
 }
