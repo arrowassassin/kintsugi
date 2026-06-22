@@ -279,6 +279,12 @@ enum RecordCmd {
         /// re-running replaces the existing block rather than duplicating it).
         #[arg(long, value_name = "RC_FILE")]
         write: Option<PathBuf>,
+        /// Install the GATED recorder: every command is classified before it runs;
+        /// risky ones are described (with the local model's summary) and require
+        /// y/N confirmation; catastrophic commands are declined. The gate fails
+        /// open — daemon down or no TTY behaves like the passive recorder.
+        #[arg(long)]
+        gate: bool,
     },
     /// Remove the shell hook — with `--write <rc>`, delete the managed block from
     /// that file; otherwise print how to remove it by hand.
@@ -549,7 +555,7 @@ fn main() -> Result<()> {
         Some(Command::Panic) => cmd_panic(),
         Some(Command::Resume) => cmd_resume(),
         Some(Command::Record { cmd }) => match cmd {
-            RecordCmd::Install { write } => record::install(write),
+            RecordCmd::Install { write, gate } => record::install(write, gate),
             RecordCmd::Uninstall { write } => record::uninstall(write),
             RecordCmd::Status => record::status(),
         },

@@ -1299,6 +1299,13 @@ pub fn Recorder() -> Element {
                                         }
                                         span { style: "min-width:0",
                                             span { style: "display:block;font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap", "{r.command}" }
+                                            // The model's plain-English summary, when it scored this row.
+                                            if let Some(s) = r.summary.clone().filter(|s| !s.is_empty()) {
+                                                span { style: "display:block;font-size:11px;color:var(--gold);margin-top:2px;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap",
+                                                    title: "{s}",
+                                                    "✦ {s}"
+                                                }
+                                            }
                                             span { style: "font-size:11px;color:var(--dim);font-family:'IBM Plex Mono',monospace", "{host}" }
                                         }
                                         span { style: "display:inline-flex;align-items:center;gap:6px;justify-content:flex-end;font-size:12px;font-weight:600;color:{color}", "{glyph} {mapped}" }
@@ -1537,6 +1544,14 @@ pub fn Settings() -> Element {
     let mut pw_modal = use_signal(|| false);        // the change/set-password modal
     let mut pw_remove_modal = use_signal(|| false); // the separate REMOVE-password modal
     let mut pw_remove_field = use_signal(String::new); // its own field so it can't accidentally reuse pw_cur
+    // Uninstall confirmation modal (password + purge + type-to-confirm).
+    let mut uninst_modal = use_signal(|| false);
+    let mut uninst_pw = use_signal(String::new);
+    let mut uninst_purge = use_signal(|| false);
+    let mut uninst_confirm = use_signal(String::new);
+    let mut uninst_err = use_signal(String::new);
+    let mut uninst_running = use_signal(|| false);
+    let mut uninst_result = use_signal(|| None::<String>);
 
     // ── model action inline result ──
     let mut model_msg = use_signal(String::new);
@@ -2074,25 +2089,110 @@ pub fn Settings() -> Element {
                     }
                 }
                 div { style: "display:flex;gap:10px;flex-wrap:wrap",
-                    button { class: "kn-btn-ghost",
-                        style: "font-family:inherit;font-size:12.5px;font-weight:600;color:var(--red);background:transparent;border:1px solid rgba(255,93,93,.35);border-radius:9px;padding:10px 16px;cursor:pointer",
-                        onclick: move |_| {
-                            match crate::bindings::open_uninstall_terminal(false) {
-                                Ok(()) => model_msg.set("Terminal opened — confirm in there to uninstall.".to_string()),
-                                Err(e) => model_msg.set(format!("Couldn't open terminal: {e}")),
-                            }
-                        },
-                        "Uninstall (keep data)"
-                    }
                     button {
                         style: "font-family:inherit;font-size:12.5px;font-weight:600;color:#fff;background:var(--red);border:none;border-radius:9px;padding:10px 16px;cursor:pointer",
                         onclick: move |_| {
-                            match crate::bindings::open_uninstall_terminal(true) {
-                                Ok(()) => model_msg.set("Terminal opened — confirm in there to uninstall AND purge data.".to_string()),
-                                Err(e) => model_msg.set(format!("Couldn't open terminal: {e}")),
-                            }
+                            uninst_err.set(String::new());
+                            uninst_pw.set(String::new());
+                            uninst_confirm.set(String::new());
+                            uninst_purge.set(false);
+                            uninst_result.set(None);
+                            uninst_modal.set(true);
                         },
-                        "Uninstall + purge data"
+                        "Uninstall Kintsugi…"
+                    }
+                }
+            }
+
+            // ── uninstall modal (password + purge + type-to-confirm) ──
+            if *uninst_modal.read() {
+                div { style: "position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;animation:kfade .15s ease",
+                    onclick: move |_| { if !*uninst_running.peek() { uninst_modal.set(false); } },
+                    div { style: "width:500px;max-width:92vw;background:var(--bg2);border:1px solid rgba(255,93,93,.4);border-radius:14px;box-shadow:0 30px 80px rgba(0,0,0,.5);padding:22px 24px",
+                        onclick: move |e| e.stop_propagation(),
+                        if let Some(out) = uninst_result.read().clone() {
+                            // Success/finished state.
+                            div { style: "display:flex;align-items:center;margin-bottom:10px",
+                                span { style: "font-size:15px;font-weight:700;color:var(--green)", "Uninstalled" }
+                                button { style: "margin-left:auto;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--dim);font-size:16px;cursor:pointer", onclick: move |_| uninst_modal.set(false), "×" }
+                            }
+                            div { style: "font-size:12.5px;color:var(--dim);line-height:1.55;margin-bottom:14px",
+                                "Kintsugi has been removed. You can close the app now."
+                            }
+                            pre { style: "max-height:240px;overflow-y:auto;font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:11px 13px;white-space:pre-wrap;word-break:break-word", "{out}" }
+                        } else {
+                            // Confirmation form.
+                            div { style: "display:flex;align-items:center;margin-bottom:8px",
+                                span { style: "font-size:15px;font-weight:700;color:var(--red)", "Uninstall Kintsugi" }
+                                button { style: "margin-left:auto;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--dim);font-size:16px;cursor:pointer", onclick: move |_| uninst_modal.set(false), "×" }
+                            }
+                            div { style: "font-size:12.5px;color:var(--dim);line-height:1.55;margin-bottom:14px",
+                                "This stops the daemon, strips Kintsugi hooks from every agent's config, and removes the installed binaries. "
+                                if *uninst_purge.read() { b { style: "color:var(--red)", "All stored data (event log, vault, model config) will also be erased." } } else { span { "Your stored data is kept unless you check the purge box." } }
+                            }
+                            if provisioned {
+                                input { r#type: "password", class: "kn-input", value: "{uninst_pw}", placeholder: "Master password",
+                                    style: "width:100%;height:36px;box-sizing:border-box;border-radius:8px;border:1px solid var(--line);background:var(--panel2);color:var(--ink);padding:0 12px;font-family:inherit;font-size:12.5px;outline:none;margin-bottom:11px",
+                                    oninput: move |e| { uninst_pw.set(e.value()); uninst_err.set(String::new()); },
+                                }
+                            }
+                            label { style: "display:flex;align-items:flex-start;gap:9px;font-size:12.5px;color:var(--ink);cursor:pointer;margin-bottom:11px;line-height:1.4",
+                                input { r#type: "checkbox", checked: *uninst_purge.read(),
+                                    style: "margin-top:3px",
+                                    onchange: move |e| uninst_purge.set(e.value() == "true"),
+                                }
+                                span { "Also erase all stored data (event log, vault, model config) — "
+                                    span { style: "color:var(--red);font-weight:600", "unrecoverable" }
+                                    "."
+                                }
+                            }
+                            input { r#type: "text", class: "kn-input", value: "{uninst_confirm}", placeholder: "Type 'uninstall' to confirm",
+                                style: "width:100%;height:36px;box-sizing:border-box;border-radius:8px;border:1px solid var(--line);background:var(--panel2);color:var(--ink);padding:0 12px;font-family:inherit;font-size:12.5px;outline:none;margin-bottom:12px",
+                                oninput: move |e| { uninst_confirm.set(e.value()); uninst_err.set(String::new()); },
+                            }
+                            if !uninst_err.read().is_empty() {
+                                div { style: "font-size:12px;color:var(--red);margin-bottom:12px;display:inline-flex;align-items:center;gap:6px",
+                                    span { "⛔" }
+                                    "{uninst_err}"
+                                }
+                            }
+                            div { style: "display:flex;gap:10px;justify-content:flex-end",
+                                button { class: "kn-btn-ghost", style: "font-family:inherit;font-size:12.5px;font-weight:600;color:var(--dim);background:transparent;border:1px solid var(--line);border-radius:8px;padding:9px 14px;cursor:pointer",
+                                    disabled: *uninst_running.read(),
+                                    onclick: move |_| uninst_modal.set(false),
+                                    "Cancel"
+                                }
+                                button {
+                                    style: "font-family:inherit;font-size:13px;font-weight:600;color:#fff;background:var(--red);border:none;border-radius:9px;padding:10px 18px;cursor:pointer",
+                                    disabled: *uninst_running.read(),
+                                    onclick: move |_| {
+                                        if uninst_confirm.read().trim() != "uninstall" {
+                                            uninst_err.set("Type 'uninstall' to confirm.".to_string());
+                                            return;
+                                        }
+                                        if provisioned && uninst_pw.read().is_empty() {
+                                            uninst_err.set("Enter your master password.".to_string());
+                                            return;
+                                        }
+                                        let pw = uninst_pw.read().clone();
+                                        let purge = *uninst_purge.read();
+                                        uninst_running.set(true);
+                                        spawn(async move {
+                                            let res = tokio::task::spawn_blocking(move || {
+                                                crate::bindings::run_uninstall(&pw, purge)
+                                            }).await;
+                                            match res {
+                                                Ok(Ok(out)) => uninst_result.set(Some(out)),
+                                                Ok(Err(e)) => uninst_err.set(e.to_string()),
+                                                Err(_) => uninst_err.set("Uninstall task crashed.".to_string()),
+                                            }
+                                            uninst_running.set(false);
+                                        });
+                                    },
+                                    if *uninst_running.read() { "Uninstalling…" } else if *uninst_purge.read() { "Uninstall + purge" } else { "Uninstall" }
+                                }
+                            }
+                        }
                     }
                 }
             }

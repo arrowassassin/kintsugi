@@ -104,9 +104,13 @@ fn strip_hooks(home: &Path) -> Vec<String> {
 pub fn run(purge: bool, yes: bool) -> Result<()> {
     let home = home();
 
-    // 1. Password gate — same vault that gates stopping the daemon.
+    // 1. Password gate — same vault that gates stopping the daemon. The UI sets
+    // KINTSUGI_PW after verifying the password itself, so we don't double-prompt.
     if let VaultState::Locked(vault) = admin::load_vault(&admin::default_vault_path()) {
-        let pw = crate::admin_cmd::read_password_tty("Admin password to uninstall: ")?;
+        let pw = match std::env::var("KINTSUGI_PW") {
+            Ok(p) if !p.is_empty() => p,
+            _ => crate::admin_cmd::read_password_tty("Admin password to uninstall: ")?,
+        };
         if !vault.verify_password(&pw) {
             anyhow::bail!("wrong password — uninstall aborted");
         }

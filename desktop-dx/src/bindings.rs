@@ -558,33 +558,37 @@ pub fn download_model(id: &str) -> anyhow::Result<String> {
     Ok(filename)
 }
 
-/// Run `kintsugi uninstall` in a terminal so the user sees the plan and confirms
-/// out-of-band. We deliberately do NOT execute it from the GUI — uninstall is
-/// destructive, password-gated, and the user must type "uninstall" to proceed.
-pub fn open_uninstall_terminal(purge: bool) -> anyhow::Result<()> {
+/// Run `kintsugi uninstall --yes` (password already verified by the UI), so the
+/// CLI does the actual destructive work — the same code path the terminal flow
+/// uses. The UI captures the password into the env so the CLI doesn't re-prompt.
+pub fn run_uninstall(password: &str, purge: bool) -> anyhow::Result<String> {
+    // Verify the password in-process FIRST so a wrong one never spawns the CLI.
+    if vault_provisioned() {
+        if !verify_master_password(password) {
+            anyhow::bail!("wrong password");
+        }
+    }
     let bin = std::env::var_os("HOME")
         .map(|h| PathBuf::from(h).join(".local/bin/kintsugi"))
         .filter(|p| p.exists())
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|| "kintsugi".to_string());
-    let cmd = if purge {
-        format!("{bin} uninstall --purge")
-    } else {
-        format!("{bin} uninstall")
-    };
-    #[cfg(target_os = "macos")]
-    {
-        let script = format!(
-            r#"tell application "Terminal" to do script "{}""#,
-            cmd.replace('"', "\\\"")
+        .unwrap_or_else(|| PathBuf::from("kintsugi"));
+    let mut cmd = std::process::Command::new(&bin);
+    cmd.arg("uninstall").arg("--yes");
+    if purge {
+        cmd.arg("--purge");
+    }
+    // KINTSUGI_PW lets the CLI skip its own TTY prompt when it's set (the UI
+    // already proved the password). The CLI never logs this env var.
+    cmd.env("KINTSUGI_PW", password);
+    let out = cmd.output()?;
+    let s = String::from_utf8_lossy(&out.stdout).to_string();
+    if !out.status.success() {
+        anyhow::bail!(
+            "uninstall failed: {}",
+            String::from_utf8_lossy(&out.stderr)
         );
-        std::process::Command::new("osascript").args(["-e", &script]).spawn()?;
-        return Ok(());
     }
-    #[cfg(not(target_os = "macos"))]
-    {
-        anyhow::bail!("open a terminal and run: {cmd}");
-    }
+    Ok(s)
 }
 
 /// Restart the daemon (stop + start) so a model selection takes effect. Uses the

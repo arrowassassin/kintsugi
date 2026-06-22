@@ -62,31 +62,82 @@ pub fn spool_path() -> PathBuf {
 const FENCE_BEGIN: &str = "# >>> kintsugi session recorder >>>";
 const FENCE_END: &str = "# <<< kintsugi session recorder <<<";
 
+/// Gated variant of the recorder hook. Same fences as `HOOK`, so it cleanly
+/// replaces the passive block on a re-install. Synchronously runs the gate
+/// before each command — describes (model summary), confirms risky, declines
+/// catastrophic. The gate itself fails open (daemon down / no TTY → exit 0).
+///
+/// zsh: rebinds Enter (`^M`) to a ZLE widget that runs the gate, then either
+/// `.accept-line`s the buffer or clears it. bash: enables `extdebug` so a
+/// nonzero DEBUG trap return prevents the next command from running.
+const HOOK_GATE: &str = r#"# >>> kintsugi session recorder >>>
+# GATED recorder: describes every command and asks before running risky ones.
+# Tier-1 safe stays silent. Remove this block to stop gating + recording.
+_kintsugi_skip() {
+  case "$1" in
+    *kintsugi*|"") return 0 ;;
+  esac
+  return 1
+}
+if [ -n "$ZSH_VERSION" ]; then
+  _kintsugi_gate_accept() {
+    local cmd="$BUFFER"
+    if _kintsugi_skip "$cmd"; then
+      zle .accept-line
+      return
+    fi
+    if command kintsugi ingest --gate --cwd "$PWD" -- "$cmd"; then
+      zle .accept-line
+    else
+      BUFFER=""
+      zle reset-prompt
+    fi
+  }
+  zle -N _kintsugi_gate_accept
+  bindkey '^M' _kintsugi_gate_accept
+elif [ -n "$BASH_VERSION" ]; then
+  shopt -s extdebug 2>/dev/null   # so a nonzero DEBUG trap return cancels the next command
+  _kintsugi_gate_bash() {
+    [ -n "$COMP_LINE" ] && return 0
+    [ -n "$_KINTSUGI_IN_PROMPT" ] && return 0
+    case "$BASH_COMMAND" in _kintsugi_*) return 0 ;; esac
+    if _kintsugi_skip "$BASH_COMMAND"; then return 0; fi
+    command kintsugi ingest --gate --cwd "$PWD" -- "$BASH_COMMAND"
+  }
+  PROMPT_COMMAND="_KINTSUGI_IN_PROMPT=1${PROMPT_COMMAND:+; $PROMPT_COMMAND}; _KINTSUGI_IN_PROMPT="
+  trap '_kintsugi_gate_bash' DEBUG
+fi
+# <<< kintsugi session recorder <<<"#;
+
 /// `kintsugi record install` — print the hook (default), or with `--write <rc>`
-/// install it as an idempotent, fenced block in that file.
-pub fn install(write: Option<PathBuf>) -> Result<()> {
+/// install it as an idempotent, fenced block in that file. With `--gate`, install
+/// the gated variant that describes commands and confirms risky ones.
+pub fn install(write: Option<PathBuf>, gate: bool) -> Result<()> {
+    let hook = if gate { HOOK_GATE } else { HOOK };
+    let kind = if gate { "gated recorder" } else { "passive recorder" };
     let Some(rc) = write else {
         // Default: print to stdout so it composes with a redirect, and never touch
         // the user's rc ourselves — that's their file to own.
-        println!("{HOOK}");
+        println!("{hook}");
         eprintln!(
             "# Appended nothing yet — pipe this into your shell rc, e.g.:\n\
-             #   kintsugi record install >> ~/.bashrc   # or ~/.zshrc\n\
-             # (or let Kintsugi manage it: `kintsugi record install --write ~/.bashrc`)\n\
-             # then restart your shell. Verify with `kintsugi record status`."
+             #   kintsugi record install{gate_flag} >> ~/.bashrc   # or ~/.zshrc\n\
+             # (or let Kintsugi manage it: `kintsugi record install{gate_flag} --write ~/.bashrc`)\n\
+             # then restart your shell. Verify with `kintsugi record status`.",
+            gate_flag = if gate { " --gate" } else { "" }
         );
         return Ok(());
     };
     let existing = std::fs::read_to_string(&rc).unwrap_or_default();
-    let (replaced, body) = replace_block(&existing, Some(HOOK));
+    let (replaced, body) = replace_block(&existing, Some(hook));
     atomic_write(&rc, &body)?;
     println!(
-        "✓ {} the Kintsugi recorder block in {}",
+        "✓ {} the Kintsugi {kind} block in {}",
         if replaced { "updated" } else { "installed" },
         rc.display()
     );
     println!(
-        "  Restart your shell (or `source {}`) to start recording.",
+        "  Restart your shell (or `source {}`) to start.",
         rc.display()
     );
     Ok(())
