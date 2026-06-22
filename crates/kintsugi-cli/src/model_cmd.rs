@@ -116,6 +116,56 @@ pub fn use_model(path: &Path) -> Result<()> {
     restart_if_running()
 }
 
+/// The directory downloaded weights live in (matches `pick-model.sh`).
+fn models_dir() -> PathBuf {
+    if let Ok(d) = std::env::var("KINTSUGI_MODEL_DIR") {
+        return PathBuf::from(d);
+    }
+    if let Ok(d) = std::env::var("KINTSUGI_DATA_DIR") {
+        return PathBuf::from(d).join("models");
+    }
+    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+    home.join(".local/share/kintsugi/models")
+}
+
+/// `kintsugi model rm <name>`: delete a downloaded GGUF from disk. Accepts a
+/// filename in the models dir, a substring match, or an absolute path. If it was
+/// the active model, also forgets it (back to heuristic) and restarts the daemon.
+pub fn rm(name: &str) -> Result<()> {
+    let direct = PathBuf::from(name);
+    let path = if direct.is_file() {
+        direct
+    } else {
+        let dir = models_dir();
+        let exact = dir.join(name);
+        if exact.is_file() {
+            exact
+        } else {
+            std::fs::read_dir(&dir)
+                .ok()
+                .and_then(|rd| {
+                    rd.flatten().map(|e| e.path()).find(|p| {
+                        p.extension().map(|e| e.eq_ignore_ascii_case("gguf")).unwrap_or(false)
+                            && p.file_name().map(|f| f.to_string_lossy().contains(name)).unwrap_or(false)
+                    })
+                })
+                .ok_or_else(|| anyhow::anyhow!("no model matching '{name}' in {}", dir.display()))?
+        }
+    };
+    let abs = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+    let was_active = kintsugi_model::config::configured_model()
+        .map(|c| std::fs::canonicalize(&c).unwrap_or(c) == abs)
+        .unwrap_or(false);
+    std::fs::remove_file(&abs).with_context(|| format!("delete {}", abs.display()))?;
+    println!("kintsugi: deleted {}", abs.display());
+    if was_active {
+        kintsugi_model::config::clear_configured_model()?;
+        println!("  it was the active model — falling back to the heuristic scorer.");
+        return restart_if_running();
+    }
+    Ok(())
+}
+
 /// `kintsugi model remove`: forget the configured model.
 pub fn remove() -> Result<()> {
     kintsugi_model::config::clear_configured_model()?;

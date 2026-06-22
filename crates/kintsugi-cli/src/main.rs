@@ -291,6 +291,13 @@ enum ModelCmd {
     /// Forget the configured model; the daemon falls back to the always-on
     /// heuristic scorer. Restarts a running daemon.
     Remove,
+    /// Delete a downloaded GGUF file from disk (frees the space). Accepts a
+    /// filename in the models dir, a substring, or an absolute path. If it was the
+    /// active model, also forgets it (back to heuristic).
+    Rm {
+        /// Model filename / substring / absolute path to the `.gguf`.
+        name: String,
+    },
 }
 
 /// `kintsugi admin` subcommands.
@@ -531,6 +538,7 @@ fn main() -> Result<()> {
             ModelCmd::Pick => model_cmd::pick(),
             ModelCmd::Install => model_cmd::install(),
             ModelCmd::Remove => model_cmd::remove(),
+            ModelCmd::Rm { name } => model_cmd::rm(&name),
         },
         Some(Command::Ingest { command, cwd }) => record::ingest(&command, cwd),
         Some(Command::Report {
