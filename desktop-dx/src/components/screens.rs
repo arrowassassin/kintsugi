@@ -122,6 +122,16 @@ pub fn SetupWizard() -> Element {
     });
     let mut downloading = use_signal(|| None::<String>);
 
+    // Detected agent CLIs for the final step — same source as the Settings hook
+    // panel. `hooks_tick` re-runs the read after we enable them.
+    let mut hooks_tick = use_signal(|| 0u32);
+    let agent_hooks = use_resource(move || async move {
+        let _ = hooks_tick();
+        tokio::task::spawn_blocking(crate::bindings::agent_hooks)
+            .await
+            .unwrap_or_default()
+    });
+
     let mut dismiss = move |finalize: bool| {
         if finalize {
             let _ = crate::bindings::mark_setup_done();
@@ -309,14 +319,66 @@ pub fn SetupWizard() -> Element {
                                 }
                             }
                         },
-                        crate::state::WizardStep::Done => rsx! {
-                            div { style: "display:flex;flex-direction:column;align-items:center;text-align:center;padding:14px 10px",
-                                span { style: "display:inline-flex;align-items:center;justify-content:center;width:60px;height:60px;border-radius:16px;background:rgba(90,247,142,.13);color:var(--green);font-size:30px;font-weight:700", "✓" }
-                                div { style: "font-size:20px;font-weight:700;margin-top:14px", "You're protected." }
-                                div { style: "font-size:13.5px;color:var(--dim);margin-top:8px;line-height:1.55;max-width:440px",
-                                    "Kintsugi is watching. Open the "
-                                    b { style: "color:var(--ink)", "?" }
-                                    " button anytime for a tour of everything it can do, or jump straight to Activity to see your agents in real time."
+                        crate::state::WizardStep::Done => {
+                            let hooks = agent_hooks().unwrap_or_default();
+                            let off = hooks.iter().filter(|h| !h.installed).count();
+                            rsx! {
+                                div { style: "display:flex;flex-direction:column;align-items:center;text-align:center;padding:6px 10px 2px",
+                                    span { style: "display:inline-flex;align-items:center;justify-content:center;width:54px;height:54px;border-radius:15px;background:rgba(90,247,142,.13);color:var(--green);font-size:27px;font-weight:700", "✓" }
+                                    div { style: "font-size:20px;font-weight:700;margin-top:12px", "You're protected." }
+                                    div { style: "font-size:13px;color:var(--dim);margin-top:7px;line-height:1.5;max-width:440px",
+                                        "Open the "
+                                        b { style: "color:var(--ink)", "?" }
+                                        " button anytime for a tour, or jump to Activity to see your agents live."
+                                    }
+                                }
+
+                                // Wire the agent CLIs (GUI-first users never run `kintsugi init`).
+                                div { style: "margin-top:16px;border:1px solid var(--line);border-radius:12px;background:var(--panel);overflow:hidden",
+                                    div { style: "display:flex;align-items:center;gap:10px;padding:12px 15px;border-bottom:1px solid var(--hair)",
+                                        div { style: "flex:1",
+                                            div { style: "font-size:13.5px;font-weight:700", "Agent CLIs" }
+                                            div { style: "font-size:11.5px;color:var(--dim);margin-top:1px",
+                                                if hooks.is_empty() { "None detected — install one (e.g. Claude Code), then enable it in Settings." }
+                                                else if off == 0 { "All detected agent CLIs are guarded." }
+                                                else { "Turn on Kintsugi's hook for every detected CLI." }
+                                            }
+                                        }
+                                        if !hooks.is_empty() {
+                                            button {
+                                                class: "kn-btn-gold",
+                                                style: "flex:none;font-family:inherit;font-size:12.5px;font-weight:700;color:#1a1206;background:var(--gold);border:none;border-radius:8px;padding:8px 14px;cursor:pointer",
+                                                disabled: off == 0,
+                                                onclick: move |_| {
+                                                    let hs = agent_hooks().unwrap_or_default();
+                                                    let (mut ok, mut err) = (0u32, 0u32);
+                                                    for h in hs.iter().filter(|h| !h.installed) {
+                                                        match crate::bindings::enable_agent_hook(&h.id) {
+                                                            Ok(()) => ok += 1,
+                                                            Err(_) => err += 1,
+                                                        }
+                                                    }
+                                                    let t = *hooks_tick.read(); hooks_tick.set(t + 1);
+                                                    if err == 0 {
+                                                        store.toast(crate::state::ToastKind::Success, format!("Enabled Kintsugi on {ok} agent CLI(s)."));
+                                                    } else {
+                                                        store.toast(crate::state::ToastKind::Error, format!("Enabled {ok}, {err} failed — check Settings."));
+                                                    }
+                                                },
+                                                if off == 0 { "All on ✓" } else { "Enable all" }
+                                            }
+                                        }
+                                    }
+                                    for h in hooks.iter() {
+                                        div { style: "display:flex;align-items:center;gap:10px;padding:9px 15px;border-bottom:1px solid var(--hair)",
+                                            span { style: "flex:1;font-size:12.5px;color:var(--ink)", "{h.name}" }
+                                            if h.installed {
+                                                span { style: "flex:none;font-size:11.5px;font-weight:600;color:var(--green)", "✓ on" }
+                                            } else {
+                                                span { style: "flex:none;font-size:11.5px;color:var(--dim)", "off" }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         },
@@ -348,6 +410,14 @@ pub fn SetupWizard() -> Element {
                                 match step {
                                     crate::state::WizardStep::Welcome => store.wizard_step.set(Some(crate::state::WizardStep::Password)),
                                     crate::state::WizardStep::Password => {
+                                        // Second click ("I've saved it — next"): the password is
+                                        // already set and the recovery key has been shown — ADVANCE.
+                                        // (Re-running set_master_password here would fail now that a
+                                        // vault exists, leaving the wizard stuck.)
+                                        if recovery_key.read().is_some() {
+                                            store.wizard_step.set(Some(crate::state::WizardStep::Model));
+                                            return;
+                                        }
                                         // If they typed a password, set it; else skip.
                                         let new = pw_new.read().clone();
                                         if new.is_empty() {

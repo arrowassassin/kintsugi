@@ -144,6 +144,16 @@ fn App() -> Element {
         }
     });
 
+    // No master-password vault → there's nothing to unlock, so don't strand the
+    // user on the unlock screen: go straight in (the setup wizard / Settings is
+    // where a password gets set). Without this, a fresh install — or an uninstall
+    // reset that removed the vault — still showed "Enter your master password".
+    use_effect(move || {
+        if !*store.unlocked.peek() && !crate::bindings::vault_provisioned() {
+            store.unlocked.set(true);
+        }
+    });
+
     // First-run setup wizard — show once on first launch (no marker file yet),
     // and only when the user is unlocked so the password card etc. are usable.
     use_effect(move || {

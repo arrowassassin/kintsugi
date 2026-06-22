@@ -700,15 +700,29 @@ fn kintsugi_bin() -> PathBuf {
     } else {
         "kintsugi"
     };
-    // The installed CLI, in install-order of likelihood: `kintsugi init`'s target,
-    // then a `cargo install kintsugi` location. A GUI app launched from the dock
-    // may have a minimal PATH, so probe the known dirs before falling back to PATH.
+    // A GUI app launched from the dock has a minimal PATH, so probe known install
+    // dirs before falling back to bare PATH. The `kintsugi` CLI installs as a
+    // SIBLING of `kintsugi-daemon`, so reuse the daemon's resolved location first
+    // (covers any non-standard dir `kintsugi init` put them in) — then the usual
+    // per-user and system bin dirs.
+    if let Some(dir) = daemon_exe().parent() {
+        let p = dir.join(name);
+        if p.exists() {
+            return p;
+        }
+    }
     if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
         for sub in [".local/bin", ".cargo/bin"] {
             let p = home.join(sub).join(name);
             if p.exists() {
                 return p;
             }
+        }
+    }
+    for d in ["/usr/local/bin", "/opt/homebrew/bin"] {
+        let p = PathBuf::from(d).join(name);
+        if p.exists() {
+            return p;
         }
     }
     PathBuf::from(name)
