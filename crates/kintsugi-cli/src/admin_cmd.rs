@@ -293,7 +293,7 @@ fn read_password(prompt: &str, file: &Option<PathBuf>) -> Result<String> {
 /// on (which would leak the password to the screen, scrollback, and any session
 /// recorder). The whole line is read (no 512-byte truncation), and the byte
 /// buffer is zeroized.
-fn read_password_tty(prompt: &str) -> Result<String> {
+pub(crate) fn read_password_tty(prompt: &str) -> Result<String> {
     use zeroize::Zeroizing;
     let mut tty = std::fs::OpenOptions::new()
         .read(true)

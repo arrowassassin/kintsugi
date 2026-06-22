@@ -12,6 +12,7 @@ mod model_cmd;
 mod record;
 mod service;
 mod shell_enforce;
+mod uninstall;
 mod watcher;
 
 use std::io::IsTerminal;
@@ -244,6 +245,18 @@ enum Command {
         number: usize,
         #[command(flatten)]
         filter: FilterArgs,
+    },
+    /// Cleanly remove Kintsugi: stop the daemon, strip the agent hooks, remove the
+    /// shim dir and the installed binaries. Your stored data (event log, vault,
+    /// model selection) is KEPT unless you pass `--purge`. Gated by the admin
+    /// password when one is set. Shows a plan and asks before doing anything.
+    Uninstall {
+        /// Also erase all stored data (events.db, the sealed vault, model config).
+        #[arg(long)]
+        purge: bool,
+        /// Skip the interactive confirmation.
+        #[arg(long)]
+        yes: bool,
     },
 }
 
@@ -546,6 +559,7 @@ fn main() -> Result<()> {
             number,
             filter,
         }) => cmd_report(catastrophic_only, number, &filter),
+        Some(Command::Uninstall { purge, yes }) => uninstall::run(purge, yes),
     }
 }
 
@@ -1250,7 +1264,7 @@ pub(crate) fn home_dir() -> Option<PathBuf> {
     directories::BaseDirs::new().map(|b| b.home_dir().to_path_buf())
 }
 
-fn shim_dir() -> PathBuf {
+pub(crate) fn shim_dir() -> PathBuf {
     // `KINTSUGI_DATA_DIR` overrides the platform data dir (deterministic in tests and
     // portable across OSes, where `directories` resolves the data dir differently).
     if let Ok(dir) = std::env::var("KINTSUGI_DATA_DIR") {

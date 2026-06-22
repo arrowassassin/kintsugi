@@ -1535,6 +1535,8 @@ pub fn Settings() -> Element {
     let mut pw_err = use_signal(String::new);       // inline error (e.g. wrong current pw)
     let mut recovery_key = use_signal(|| None::<String>); // shown ONCE on success
     let mut pw_modal = use_signal(|| false);        // the change/set-password modal
+    let mut pw_remove_modal = use_signal(|| false); // the separate REMOVE-password modal
+    let mut pw_remove_field = use_signal(String::new); // its own field so it can't accidentally reuse pw_cur
 
     // ── model action inline result ──
     let mut model_msg = use_signal(String::new);
@@ -1635,10 +1637,17 @@ pub fn Settings() -> Element {
                         if provisioned { "vault set" } else { "no vault" }
                     }
                 }
-                div { style: "margin-top:15px",
+                div { style: "margin-top:15px;display:flex;align-items:center;gap:10px;flex-wrap:wrap",
                     button { class: "kn-btn-gold", style: "font-family:inherit;font-size:13px;font-weight:600;color:#1a1206;background:var(--gold);border:none;border-radius:9px;padding:10px 18px;cursor:pointer",
                         onclick: move |_| { pw_err.set(String::new()); pw_modal.set(true); },
                         if provisioned { "Change password" } else { "Set a master password" }
+                    }
+                    if provisioned {
+                        button { title: "Remove the password entirely — stop and loosen will no longer need it.",
+                            style: "font-family:inherit;font-size:12.5px;font-weight:600;color:var(--red);background:transparent;border:1px solid rgba(255,93,93,.35);border-radius:9px;padding:10px 16px;cursor:pointer",
+                            onclick: move |_| { pw_err.set(String::new()); pw_remove_field.set(String::new()); pw_remove_modal.set(true); },
+                            "Remove password"
+                        }
                     }
                 }
             }
@@ -1731,34 +1740,65 @@ pub fn Settings() -> Element {
                                 },
                                 if provisioned { "Change password" } else { "Set password" }
                             }
-                            if provisioned {
-                                button { style: "font-family:inherit;font-size:12.5px;font-weight:600;color:var(--red);background:transparent;border:1px solid rgba(255,93,93,.35);border-radius:9px;padding:10px 16px;cursor:pointer",
-                                    onclick: move |_| {
-                                        let cur = pw_cur.read().clone();
-                                        if cur.is_empty() {
-                                            pw_err.set("Enter your current password to remove it.".to_string());
-                                            return;
-                                        }
-                                        match crate::bindings::remove_master_password(&cur) {
-                                            Ok(()) => {
-                                                store.session_pw.set(None);
-                                                pw_err.set(String::new());
-                                                pw_cur.set(String::new());
-                                                pw_new.set(String::new());
-                                                pw_confirm.set(String::new());
-                                                pw_modal.set(false);
-                                                let t = *tick.read();
-                                                tick.set(t + 1);
-                                            }
-                                            Err(e) => pw_err.set(e.to_string()),
-                                        }
-                                    },
-                                    "Remove password"
-                                }
-                            }
                         }
                     }
                 }
+                    }
+                }
+            }
+
+            // ── remove-password modal (separate so it isn't confused with Change) ──
+            if *pw_remove_modal.read() {
+                div { style: "position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;animation:kfade .15s ease",
+                    onclick: move |_| pw_remove_modal.set(false),
+                    div { style: "width:440px;max-width:92vw;background:var(--bg2);border:1px solid var(--line);border-radius:14px;box-shadow:0 30px 80px rgba(0,0,0,.5);padding:22px 24px",
+                        onclick: move |e| e.stop_propagation(),
+                        div { style: "display:flex;align-items:center;margin-bottom:8px",
+                            span { style: "font-size:15px;font-weight:700;color:var(--red)", "Remove master password" }
+                            button { style: "margin-left:auto;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--dim);font-size:16px;cursor:pointer", onclick: move |_| pw_remove_modal.set(false), "×" }
+                        }
+                        div { style: "font-size:12.5px;color:var(--dim);line-height:1.55;margin-bottom:16px",
+                            "After this, "
+                            b { style: "color:var(--ink)", "stopping and loosening Kintsugi no longer needs a password" }
+                            ". Enter your current password to confirm."
+                        }
+                        input { r#type: "password", class: "kn-input", value: "{pw_remove_field}", placeholder: "Current password",
+                            style: "width:100%;height:36px;box-sizing:border-box;border-radius:8px;border:1px solid var(--line);background:var(--panel2);color:var(--ink);padding:0 12px;font-family:inherit;font-size:12.5px;outline:none;margin-bottom:12px",
+                            oninput: move |e| { pw_remove_field.set(e.value()); pw_err.set(String::new()); },
+                        }
+                        if !pw_err.read().is_empty() {
+                            div { style: "font-size:12px;color:var(--red);margin-bottom:12px;display:inline-flex;align-items:center;gap:6px",
+                                span { "⛔" }
+                                "{pw_err}"
+                            }
+                        }
+                        div { style: "display:flex;gap:10px;justify-content:flex-end",
+                            button { class: "kn-btn-ghost", style: "font-family:inherit;font-size:12.5px;font-weight:600;color:var(--dim);background:transparent;border:1px solid var(--line);border-radius:8px;padding:9px 14px;cursor:pointer",
+                                onclick: move |_| pw_remove_modal.set(false),
+                                "Cancel"
+                            }
+                            button { style: "font-family:inherit;font-size:13px;font-weight:600;color:#fff;background:var(--red);border:none;border-radius:9px;padding:10px 18px;cursor:pointer",
+                                onclick: move |_| {
+                                    let cur = pw_remove_field.read().clone();
+                                    if cur.is_empty() {
+                                        pw_err.set("Enter your current password.".to_string());
+                                        return;
+                                    }
+                                    match crate::bindings::remove_master_password(&cur) {
+                                        Ok(()) => {
+                                            store.session_pw.set(None);
+                                            pw_err.set(String::new());
+                                            pw_remove_field.set(String::new());
+                                            pw_remove_modal.set(false);
+                                            let t = *tick.read();
+                                            tick.set(t + 1);
+                                        }
+                                        Err(e) => pw_err.set(e.to_string()),
+                                    }
+                                },
+                                "Remove password"
+                            }
+                        }
                     }
                 }
             }
@@ -2018,6 +2058,41 @@ pub fn Settings() -> Element {
                             div { style: "font-size:11px;color:var(--dim);margin-top:3px", "applies via the service/admin path" }
                         }
                         Toggle { on: *sig.read(), on_click: move |_| { let v = *sig.read(); sig.set(!v); } }
+                    }
+                }
+            }
+
+            // ── danger zone: uninstall ──
+            div { style: "border:1px solid rgba(255,93,93,.3);border-radius:12px;background:linear-gradient(100deg,rgba(255,93,93,.05),transparent);padding:18px 20px;margin-top:20px;margin-bottom:16px",
+                div { style: "display:flex;align-items:flex-start;gap:13px;margin-bottom:12px",
+                    span { style: "display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:10px;background:rgba(255,93,93,.13);flex:none;color:var(--red);font-size:18px;font-weight:700", "!" }
+                    div { style: "flex:1",
+                        div { style: "font-size:14px;font-weight:700", "Uninstall Kintsugi" }
+                        div { style: "font-size:12.5px;color:var(--dim);margin-top:2px;line-height:1.5",
+                            "Stops the daemon, strips the agent hooks, and removes the installed binaries. By default your stored data (event log, vault, model config) is kept. Opens a terminal to confirm — password-gated."
+                        }
+                    }
+                }
+                div { style: "display:flex;gap:10px;flex-wrap:wrap",
+                    button { class: "kn-btn-ghost",
+                        style: "font-family:inherit;font-size:12.5px;font-weight:600;color:var(--red);background:transparent;border:1px solid rgba(255,93,93,.35);border-radius:9px;padding:10px 16px;cursor:pointer",
+                        onclick: move |_| {
+                            match crate::bindings::open_uninstall_terminal(false) {
+                                Ok(()) => model_msg.set("Terminal opened — confirm in there to uninstall.".to_string()),
+                                Err(e) => model_msg.set(format!("Couldn't open terminal: {e}")),
+                            }
+                        },
+                        "Uninstall (keep data)"
+                    }
+                    button {
+                        style: "font-family:inherit;font-size:12.5px;font-weight:600;color:#fff;background:var(--red);border:none;border-radius:9px;padding:10px 16px;cursor:pointer",
+                        onclick: move |_| {
+                            match crate::bindings::open_uninstall_terminal(true) {
+                                Ok(()) => model_msg.set("Terminal opened — confirm in there to uninstall AND purge data.".to_string()),
+                                Err(e) => model_msg.set(format!("Couldn't open terminal: {e}")),
+                            }
+                        },
+                        "Uninstall + purge data"
                     }
                 }
             }

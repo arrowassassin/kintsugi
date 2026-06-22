@@ -558,6 +558,35 @@ pub fn download_model(id: &str) -> anyhow::Result<String> {
     Ok(filename)
 }
 
+/// Run `kintsugi uninstall` in a terminal so the user sees the plan and confirms
+/// out-of-band. We deliberately do NOT execute it from the GUI — uninstall is
+/// destructive, password-gated, and the user must type "uninstall" to proceed.
+pub fn open_uninstall_terminal(purge: bool) -> anyhow::Result<()> {
+    let bin = std::env::var_os("HOME")
+        .map(|h| PathBuf::from(h).join(".local/bin/kintsugi"))
+        .filter(|p| p.exists())
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|| "kintsugi".to_string());
+    let cmd = if purge {
+        format!("{bin} uninstall --purge")
+    } else {
+        format!("{bin} uninstall")
+    };
+    #[cfg(target_os = "macos")]
+    {
+        let script = format!(
+            r#"tell application "Terminal" to do script "{}""#,
+            cmd.replace('"', "\\\"")
+        );
+        std::process::Command::new("osascript").args(["-e", &script]).spawn()?;
+        return Ok(());
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        anyhow::bail!("open a terminal and run: {cmd}");
+    }
+}
+
 /// Restart the daemon (stop + start) so a model selection takes effect. Uses the
 /// session password for the authenticated shutdown.
 pub fn restart_engine_with_password(password: &str) -> anyhow::Result<()> {
