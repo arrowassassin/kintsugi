@@ -801,7 +801,7 @@
                                 text-overflow: ellipsis;
                                 min-width: 0;
                             "
-                            >curl -fsSL …/install.sh | sh</code
+                            >curl -fsSL https://kintsugi.tools/install.sh | sh</code
                         >
                         <button
                             data-act="copyInstall"
@@ -6750,14 +6750,17 @@
                             "--cyan": "#1f6f8b",
                         };
                     }
-                    function toggleTheme() {
-                        var isLight =
-                            root.getAttribute("data-theme") === "light";
-                        var vars = isLight ? darkVars() : lightVars();
+                    function applyTheme(name) {
+                        var vars = name === "dark" ? darkVars() : lightVars();
                         for (var k in vars) root.style.setProperty(k, vars[k]);
-                        root.setAttribute(
-                            "data-theme",
-                            isLight ? "dark" : "light",
+                        root.setAttribute("data-theme", name);
+                        try { localStorage.setItem("kk-theme", name); } catch (_) {}
+                    }
+                    function toggleTheme() {
+                        applyTheme(
+                            root.getAttribute("data-theme") === "light"
+                                ? "dark"
+                                : "light",
                         );
                     }
                     function setCrTab(i) {
@@ -6825,7 +6828,9 @@
                         });
                     });
 
-                    root.setAttribute("data-theme", "light");
+                    var saved = null;
+                    try { saved = localStorage.getItem("kk-theme"); } catch (_) {}
+                    applyTheme(saved === "dark" ? "dark" : "light");
                     setCrTab(2);
                     raf = requestAnimationFrame(loop);
                 }

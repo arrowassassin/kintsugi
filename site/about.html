@@ -237,16 +237,24 @@ code,.mono{font-family:'IBM Plex Mono',monospace;}
 </div>
 
 <script>
-/* Theme toggle — shares the home page's token sets so the two pages stay in lockstep. */
+/* Theme toggle — shares the home page's exact token sets AND its persisted choice
+   (the `kk-theme` localStorage key) so the two pages stay in lockstep: pick dark
+   on the home page, land here in dark, and vice versa. */
 (function(){
   var root=document.getElementById('kk-root'), btn=document.getElementById('themeBtn');
-  if(!root||!btn) return;
+  if(!root) return;
   var dark={'--bg':'#0b0e16','--bg2':'#0e1320','--panel':'#121a2b','--panel2':'#0e1626','--term':'#070a11','--line':'#283557','--hair':'rgba(40,53,87,.5)','--ink':'#e8ecf5','--dim':'#8b95ad','--gold':'#D4AF37','--gold-bright':'#EBC65A','--gold-line':'rgba(212,175,55,.35)','--green':'#5af78e','--amber':'#ffd866','--red':'#ff5d5d','--cyan':'#6bd6ff'};
   var light={'--bg':'#f3efe3','--bg2':'#efe9da','--panel':'#fbf8ef','--panel2':'#f6f1e4','--term':'#11151d','--line':'#d8cfb6','--hair':'rgba(201,192,166,.55)','--ink':'#1b2230','--dim':'#6a7488','--gold':'#9C6F1C','--gold-bright':'#B8860B','--gold-line':'rgba(156,111,28,.4)','--green':'#1f8a4c','--amber':'#a9760a','--red':'#c0392b','--cyan':'#1f6f8b'};
-  btn.addEventListener('click',function(){
-    var isLight=root.getAttribute('data-theme')==='light', vars=isLight?dark:light;
+  function applyTheme(name){
+    var vars=name==='dark'?dark:light;
     for(var k in vars) root.style.setProperty(k,vars[k]);
-    root.setAttribute('data-theme', isLight?'dark':'light');
+    root.setAttribute('data-theme',name);
+    try{localStorage.setItem('kk-theme',name);}catch(_){}
+  }
+  var saved=null; try{saved=localStorage.getItem('kk-theme');}catch(_){}
+  applyTheme(saved==='dark'?'dark':'light');
+  if(btn) btn.addEventListener('click',function(){
+    applyTheme(root.getAttribute('data-theme')==='light'?'dark':'light');
   });
 })();
 </script>
