@@ -30,11 +30,21 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Decode the build-rasterized PNG into RGBA for the OS window icon at startup.
+png = "0.17"
 # The engine + daemon, called directly in-process (no IPC / no invoke).
 kintsugi-app = { path = "../crates/kintsugi-app" }
 kintsugi-daemon = { path = "../crates/kintsugi-daemon" }
 kintsugi-core = { path = "../crates/kintsugi-core" }
 kintsugi-model = { path = "../crates/kintsugi-model" }
+
+[build-dependencies]
+# Rasterize the brand SVG to PNG sizes at build time so the binary ships with
+# its own icon (no external tools / no .icns on disk required).
+resvg = { version = "0.45", default-features = false, features = ["text"] }
+tiny-skia = "0.11"
+usvg = "0.45"
+png = "0.17"
 
 [profile.release]
 opt-level = "z"

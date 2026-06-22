@@ -20,8 +20,34 @@ use components::{login::Login, shell::{TitleBar, Sidebar, TopBar}, screens};
 pub const LOGO: Asset = asset!("/assets/logo-mark.svg");
 pub const STYLES: Asset = asset!("/assets/styles.css");
 
+/// The 256-px window icon, rasterized from the brand SVG at build time.
+const ICON_PNG: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/logo-256.png"));
+
 fn main() {
-    dioxus::launch(App);
+    use dioxus::desktop::{tao::window::Icon, Config, LogicalSize, WindowBuilder};
+
+    // Decode the embedded PNG into RGBA for the OS-level window icon. If
+    // anything goes wrong (e.g. on a build that somehow shipped without the
+    // PNG), fall back to launching without an icon rather than crashing.
+    let icon = (|| -> Option<Icon> {
+        let decoder = png::Decoder::new(ICON_PNG);
+        let mut reader = decoder.read_info().ok()?;
+        let mut buf = vec![0; reader.output_buffer_size()];
+        let info = reader.next_frame(&mut buf).ok()?;
+        Icon::from_rgba(buf[..info.buffer_size()].to_vec(), info.width, info.height).ok()
+    })();
+
+    let mut window = WindowBuilder::new()
+        .with_title("Kintsugi")
+        .with_inner_size(LogicalSize::new(1280.0, 820.0))
+        .with_min_inner_size(LogicalSize::new(960.0, 640.0));
+    if let Some(ico) = icon {
+        window = window.with_window_icon(Some(ico));
+    }
+
+    dioxus::LaunchBuilder::desktop()
+        .with_cfg(Config::default().with_window(window))
+        .launch(App);
 }
 
 #[component]
