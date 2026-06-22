@@ -225,6 +225,14 @@ enum Command {
         /// The working directory it ran in (defaults to the current dir).
         #[arg(long)]
         cwd: Option<PathBuf>,
+        /// Pre-exec gate: classify the command, describe it (with the local
+        /// model's summary), and for the ambiguous band ask y/N via /dev/tty
+        /// before it runs. Exit 0 = allow, 1 = deny. Catastrophic commands are
+        /// always declined (re-run via `kintsugi run`). On daemon outage or no
+        /// TTY this falls back to passive recording + exit 0 — the gate never
+        /// breaks a normal shell.
+        #[arg(long)]
+        gate: bool,
     },
     /// Manage the optional Tier-2 local model: which GGUF the daemon loads, and
     /// (for `cargo install` users) building the inference engine. Kintsugi always
@@ -553,7 +561,13 @@ fn main() -> Result<()> {
             ModelCmd::Remove => model_cmd::remove(),
             ModelCmd::Rm { name } => model_cmd::rm(&name),
         },
-        Some(Command::Ingest { command, cwd }) => record::ingest(&command, cwd),
+        Some(Command::Ingest { command, cwd, gate }) => {
+            if gate {
+                std::process::exit(record::ingest_gate(&command, cwd)?);
+            } else {
+                record::ingest(&command, cwd)
+            }
+        }
         Some(Command::Report {
             catastrophic_only,
             number,

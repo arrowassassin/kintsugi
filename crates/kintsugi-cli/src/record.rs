@@ -250,6 +250,112 @@ pub fn ingest(command: &str, cwd: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
+/// `kintsugi ingest --gate` — describe a command before it runs and (for the
+/// ambiguous/catastrophic band) ask the user via /dev/tty whether to proceed.
+/// Returns:
+///   * `Ok(0)` for safe/allow → the shell may run the command.
+///   * `Ok(1)` for deny → the shell should NOT run the command.
+///
+/// Never crashes the shell: a parse error, daemon outage, or no TTY all fall
+/// back to passive recording + exit 0 (i.e. the existing behavior).
+pub fn ingest_gate(command: &str, cwd: Option<PathBuf>) -> Result<i32> {
+    use std::io::{BufRead, Write};
+    use kintsugi_core::{Class, Decision};
+
+    let command = command.trim();
+    if command.is_empty() {
+        return Ok(0);
+    }
+    let cwd = cwd.unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+
+    let red = kintsugi_core::redact::redact_command(command);
+    let (text, argv) = if red.any() {
+        (red.text.clone(), kintsugi_core::shell::split(&red.text))
+    } else {
+        (command.to_string(), kintsugi_core::shell::split(command))
+    };
+    let cmd = ProposedCommand::new("shell", cwd, argv, text);
+
+    // Score synchronously. If the daemon is down, fall back to passive (record
+    // via spool, allow) — the gate must never be the reason a normal shell
+    // command can't run.
+    let Ok(verdict) = Client::send(&cmd) else {
+        let _ = append_spool(&cmd);
+        return Ok(0);
+    };
+
+    // Safe → silently allow (matches the existing recorder UX).
+    if verdict.class == Class::Safe {
+        let _ = Client::record(&cmd);
+        return Ok(0);
+    }
+
+    // Describe to the user. The model's summary is the "plain English" part the
+    // user explicitly wanted; we name Kintsugi so the prompt is unmistakable.
+    let class_word = match verdict.class {
+        Class::Catastrophic => "catastrophic",
+        Class::Ambiguous => "ambiguous",
+        Class::Safe => "safe",
+    };
+    let summary = verdict
+        .summary
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .unwrap_or(verdict.reason.as_str());
+
+    // /dev/tty so the prompt survives the shell trap's redirected stdout.
+    let mut tty_w = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/tty")
+        .ok();
+    let Some(ref mut tty) = tty_w else {
+        // No interactive terminal (script / non-TTY) → revert to passive record.
+        let _ = Client::record(&cmd);
+        return Ok(0);
+    };
+
+    let _ = writeln!(tty, "\n\x1b[1;33m⚠ Kintsugi\x1b[0m {class_word}: {summary}");
+    if let Some(risk) = verdict.risk {
+        let _ = writeln!(tty, "   risk {risk}/100");
+    }
+    // Catastrophic: never ask — print and decline.
+    if verdict.class == Class::Catastrophic {
+        let _ = writeln!(tty, "   declined — catastrophic commands aren't gated through y/n.");
+        let _ = writeln!(tty, "   re-run via `kintsugi run` if you really mean it.");
+        let _ = Client::record(&cmd);
+        return Ok(1);
+    }
+    let _ = write!(tty, "   run it anyway? [y/N] ");
+    let _ = tty.flush();
+    let mut line = String::new();
+    let mut buf = [0u8; 1];
+    while line.len() < 8 {
+        match std::io::Read::read(tty, &mut buf) {
+            Ok(0) => break,
+            Ok(_) => {
+                if buf[0] == b'\n' { break; }
+                line.push(buf[0] as char);
+            }
+            Err(_) => break,
+        }
+    }
+    let yes = matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes");
+
+    if !yes {
+        // Record the (denied) decision so the audit log reflects reality.
+        let mut declined = cmd.clone();
+        declined.raw = format!("[user declined] {}", declined.raw);
+        let _ = Client::record(&declined);
+        return Ok(1);
+    }
+    // Approved: record and allow.
+    let _ = Client::record(&cmd);
+    let _ = verdict.decision; // suppresses any unused-binding warnings on this path
+    let _: Decision = verdict.decision;
+    Ok(0)
+}
+
 /// Append one command to the spool (newline-delimited JSON), best-effort. The
 /// file is created `0600` atomically (mode at open, not a chmod-after-create, so
 /// there is no world-readable window), and the spooled command is already
