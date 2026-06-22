@@ -104,6 +104,38 @@ fn record_install_prints_a_sourceable_hook() {
 }
 
 #[test]
+fn hook_list_json_returns_a_valid_array() {
+    let tmp = tempfile::tempdir().unwrap();
+    // No agent dirs under this fake HOME → empty array, not an error.
+    let out = kintsugi()
+        .args(["hook", "list", "--json"])
+        .env("HOME", tmp.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let s = String::from_utf8_lossy(&out.stdout);
+    let v: serde_json::Value = serde_json::from_str(s.trim()).expect("valid JSON");
+    assert!(v.is_array(), "must be an array, got {s}");
+    assert_eq!(v.as_array().unwrap().len(), 0, "empty HOME → no agents");
+}
+
+#[test]
+fn hook_disable_unknown_agent_errors_cleanly() {
+    let tmp = tempfile::tempdir().unwrap();
+    let out = kintsugi()
+        .args(["hook", "disable", "--agent", "nonsense"])
+        .env("HOME", tmp.path())
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("no agent matching"));
+}
+
+#[test]
 fn record_install_gate_prints_the_gated_hook() {
     let out = kintsugi().args(["record", "install", "--gate"]).output().unwrap();
     assert!(out.status.success());

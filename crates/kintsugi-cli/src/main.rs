@@ -254,6 +254,13 @@ enum Command {
         #[command(flatten)]
         filter: FilterArgs,
     },
+    /// Manage agent-CLI hooks (claude-code, qwen, gemini, copilot, cursor, codex,
+    /// opencode, antigravity). `list` shows detection + install state (JSON with
+    /// `--json`), `enable`/`disable` flip one agent's hook.
+    Hook {
+        #[command(subcommand)]
+        cmd: HookCmd,
+    },
     /// Cleanly remove Kintsugi: stop the daemon, strip the agent hooks, remove the
     /// shim dir and the installed binaries. Your stored data (event log, vault,
     /// model selection) is KEPT unless you pass `--purge`. Gated by the admin
@@ -386,6 +393,29 @@ enum ServiceCmd {
     Uninstall,
     /// Show whether the auto-restart service is installed.
     Status,
+}
+
+#[derive(Debug, Subcommand)]
+enum HookCmd {
+    /// List detected agents + whether the Kintsugi hook is installed. With
+    /// `--json`, emit a machine-readable array for the desktop UI.
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Wire the Kintsugi hook into one detected agent.
+    Enable {
+        /// Agent id (e.g. claude-code, qwen, gemini, copilot, cursor, codex,
+        /// opencode, antigravity).
+        #[arg(long)]
+        agent: String,
+    },
+    /// Strip the Kintsugi hook from one detected agent. Leaves the agent's other
+    /// hooks untouched.
+    Disable {
+        #[arg(long)]
+        agent: String,
+    },
 }
 
 /// Shared filter flags for `log`, `redact`, and `purge`.
@@ -580,6 +610,147 @@ fn main() -> Result<()> {
             filter,
         }) => cmd_report(catastrophic_only, number, &filter),
         Some(Command::Uninstall { purge, yes }) => uninstall::run(purge, yes),
+        Some(Command::Hook { cmd }) => cmd_hook(cmd),
+    }
+}
+
+/// The on-disk config path Kintsugi writes/strips per agent.
+fn agent_config_path(home: &std::path::Path, kind: init::HookKind) -> std::path::PathBuf {
+    use init::HookKind::*;
+    match kind {
+        Claude => home.join(".claude/settings.json"),
+        Qwen => home.join(".qwen/settings.json"),
+        Gemini => home.join(".gemini/settings.json"),
+        Cursor => home.join(".cursor/hooks.json"),
+        Copilot => home.join(".copilot/hooks/kintsugi.json"),
+        Codex => home.join(".codex/config.toml"),
+        OpenCode => home.join(".config/opencode/plugin/kintsugi.js"),
+        Antigravity => home.join(".gemini/antigravity-cli/plugins/kintsugi/hooks.json"),
+    }
+}
+
+/// True if the agent's config currently contains a Kintsugi hook entry.
+fn agent_hook_installed(home: &std::path::Path, kind: init::HookKind) -> bool {
+    let path = agent_config_path(home, kind);
+    match std::fs::read_to_string(&path) {
+        Ok(s) => s.contains("kintsugi"),
+        Err(_) => false,
+    }
+}
+
+/// Recursively drop any JSON array element that mentions "kintsugi".
+fn scrub_kintsugi(v: &mut serde_json::Value) -> bool {
+    let mut changed = false;
+    match v {
+        serde_json::Value::Array(arr) => {
+            let before = arr.len();
+            arr.retain(|el| !el.to_string().contains("kintsugi"));
+            changed |= arr.len() != before;
+            for el in arr.iter_mut() {
+                changed |= scrub_kintsugi(el);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for val in map.values_mut() {
+                changed |= scrub_kintsugi(val);
+            }
+        }
+        _ => {}
+    }
+    changed
+}
+
+fn unwire_hook(home: &std::path::Path, kind: init::HookKind) -> Result<()> {
+    use init::HookKind::*;
+    let path = agent_config_path(home, kind);
+    match kind {
+        // Files Kintsugi owns wholesale → delete.
+        Copilot | OpenCode | Antigravity => {
+            if path.is_file() {
+                std::fs::remove_file(&path)
+                    .with_context(|| format!("remove {}", path.display()))?;
+            }
+            Ok(())
+        }
+        // JSON files we merged into → scrub.
+        Claude | Qwen | Gemini | Cursor => {
+            let Ok(text) = std::fs::read_to_string(&path) else { return Ok(()) };
+            let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&text) else { return Ok(()) };
+            if scrub_kintsugi(&mut v) {
+                write_file(&path, &serde_json::to_string_pretty(&v)?)?;
+            }
+            Ok(())
+        }
+        // TOML: drop any line mentioning kintsugi (best-effort).
+        Codex => {
+            let Ok(text) = std::fs::read_to_string(&path) else { return Ok(()) };
+            let kept: Vec<&str> = text.lines().filter(|l| !l.contains("kintsugi")).collect();
+            write_file(&path, &kept.join("\n"))
+        }
+    }
+}
+
+fn cmd_hook(cmd: HookCmd) -> Result<()> {
+    let home = home_dir().ok_or_else(|| anyhow::anyhow!("could not resolve $HOME"))?;
+    let agents = init::detect_agents(&home);
+
+    match cmd {
+        HookCmd::List { json } => {
+            #[derive(serde::Serialize)]
+            struct HookEntry {
+                id: &'static str,
+                name: &'static str,
+                installed: bool,
+                config_path: String,
+            }
+            let entries: Vec<HookEntry> = agents
+                .iter()
+                .filter_map(|a| match a.via {
+                    init::Interception::Hook(kind) => Some(HookEntry {
+                        id: a.id,
+                        name: a.name,
+                        installed: agent_hook_installed(&home, kind),
+                        config_path: agent_config_path(&home, kind).display().to_string(),
+                    }),
+                    init::Interception::Mcp => None,
+                })
+                .collect();
+            if json {
+                println!("{}", serde_json::to_string(&entries)?);
+            } else {
+                if entries.is_empty() {
+                    println!("kintsugi: no agent CLIs detected.");
+                    return Ok(());
+                }
+                for e in &entries {
+                    let mark = if e.installed { "✓ installed" } else { "•   off    " };
+                    println!("  {mark}  {:20}  {}", e.name, e.config_path);
+                }
+            }
+            Ok(())
+        }
+        HookCmd::Enable { agent } => {
+            let Some(a) = agents.iter().find(|x| x.id == agent) else {
+                anyhow::bail!("no agent matching '{agent}' — try `kintsugi hook list`");
+            };
+            let init::Interception::Hook(kind) = a.via else {
+                anyhow::bail!("{} doesn't use a native hook", a.name);
+            };
+            wire_hook(kind, Some(&home))?;
+            println!("✓ enabled {} hook", a.name);
+            Ok(())
+        }
+        HookCmd::Disable { agent } => {
+            let Some(a) = agents.iter().find(|x| x.id == agent) else {
+                anyhow::bail!("no agent matching '{agent}' — try `kintsugi hook list`");
+            };
+            let init::Interception::Hook(kind) = a.via else {
+                anyhow::bail!("{} doesn't use a native hook", a.name);
+            };
+            unwire_hook(&home, kind)?;
+            println!("✓ disabled {} hook", a.name);
+            Ok(())
+        }
     }
 }
 

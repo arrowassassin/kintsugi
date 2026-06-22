@@ -46,6 +46,51 @@ fn TimeCell(ts: String) -> Element {
     }
 }
 
+/// Bottom-right stack of transient notifications driven by `Store::toasts`.
+/// Each toast auto-dismisses after 3.5s; click × to dismiss early.
+#[component]
+pub fn Toasts() -> Element {
+    let mut store = use_store();
+    let toasts = store.toasts.read().clone();
+
+    // Pop the front toast every 3.5s — simple FIFO so each toast lingers a
+    // comparable amount of time without needing per-id timestamps.
+    let _auto = use_resource(move || async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(3500)).await;
+            let mut w = store.toasts.write();
+            if !w.is_empty() {
+                w.remove(0);
+            }
+        }
+    });
+
+    rsx! {
+        div { style: "position:fixed;right:18px;bottom:18px;z-index:80;display:flex;flex-direction:column;gap:9px;pointer-events:none",
+            for t in toasts.iter().cloned() {
+                {
+                    let (color, glow, icon) = match t.kind {
+                        crate::state::ToastKind::Success => ("var(--green)", "rgba(90,247,142,.15)", "✓"),
+                        crate::state::ToastKind::Error => ("var(--red)", "rgba(255,93,93,.15)", "⛔"),
+                        crate::state::ToastKind::Info => ("var(--gold)", "rgba(212,175,55,.15)", "ⓘ"),
+                    };
+                    let id = t.id;
+                    rsx! {
+                        div { style: "pointer-events:auto;display:flex;align-items:center;gap:11px;background:var(--bg2);border:1px solid var(--line);border-left:3px solid {color};border-radius:10px;padding:11px 14px;min-width:260px;max-width:420px;box-shadow:0 8px 26px rgba(0,0,0,.35);animation:kfade .15s ease",
+                            span { style: "flex:none;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:7px;background:{glow};color:{color};font-size:13px;font-weight:700", "{icon}" }
+                            span { style: "flex:1;font-size:12.5px;color:var(--ink);line-height:1.4", "{t.message}" }
+                            button { style: "flex:none;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border:none;border-radius:6px;background:transparent;color:var(--dim);font-size:14px;cursor:pointer",
+                                onclick: move |_| store.dismiss_toast(id),
+                                "×"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// A centered loading spinner shown while a screen's first read is in flight.
 #[component]
 fn Loader(label: String) -> Element {
@@ -1568,13 +1613,24 @@ pub fn Settings() -> Element {
     // Repo ids with an in-flight download.
     let downloading = use_signal(std::collections::HashSet::<String>::new);
 
-    // The remaining toggles stay store-signal UI (service/admin-path driven).
-    let toggles = [
-        ("Auto-restart watchdog", "Run under systemd / launchd with restart-always.", store.watchdog),
-        ("Passive session recording", "Log every human command to the tamper-evident audit trail.", store.recording),
-        ("Require password to stop", "Stopping or disabling Kintsugi needs the admin password.", store.require_pw),
-        ("Start on login", "Bring the daemon up automatically when the machine boots.", store.autostart),
-    ];
+    // Live, REAL toggle state: the shell-recorder block and the OS service.
+    let recording_res = use_resource(move || async move {
+        let _ = tick();
+        tokio::task::spawn_blocking(crate::bindings::recording_installed).await.unwrap_or(false)
+    });
+    let recording_on = recording_res().unwrap_or(false);
+    let service_res = use_resource(move || async move {
+        let _ = tick();
+        tokio::task::spawn_blocking(crate::bindings::service_installed).await.unwrap_or(false)
+    });
+    let service_on = service_res().unwrap_or(false);
+
+    // Detected agent CLIs + per-hook install state (refreshes on tick).
+    let hooks_res = use_resource(move || async move {
+        let _ = tick();
+        tokio::task::spawn_blocking(crate::bindings::agent_hooks).await.unwrap_or_default()
+    });
+    let agent_hooks = hooks_res().unwrap_or_default();
 
     // Engine dot + word (never color alone).
     let (engine_dot, engine_word, engine_color) = if engine_running {
@@ -1856,6 +1912,7 @@ pub fn Settings() -> Element {
                                 match crate::bindings::clear_model() {
                                     Ok(()) => {
                                         model_msg.set("Removed — restart to drop back to the heuristic scorer.".to_string());
+                                        store.toast(crate::state::ToastKind::Success, "Cleared model selection. Restart to apply.");
                                         restart_pending.set(true);
                                         let t = *tick.read();
                                         tick.set(t + 1);
@@ -1899,8 +1956,16 @@ pub fn Settings() -> Element {
                                     None => crate::bindings::start_engine(),
                                 };
                                 match res {
-                                    Ok(()) => { restart_pending.set(false); model_msg.set("Restarted — the daemon is loading your model.".to_string()); }
-                                    Err(e) => model_msg.set(format!("Restart failed: {e}")),
+                                    Ok(()) => {
+                                        restart_pending.set(false);
+                                        model_msg.set("Restarted — the daemon is loading your model.".to_string());
+                                        store.toast(crate::state::ToastKind::Success, "Daemon restarted — loading the model.");
+                                    }
+                                    Err(e) => {
+                                        let m = e.to_string();
+                                        model_msg.set(format!("Restart failed: {m}"));
+                                        store.toast(crate::state::ToastKind::Error, format!("Restart failed: {m}"));
+                                    }
                                 }
                                 let t = *tick.read(); tick.set(t + 1);
                             },
@@ -1939,8 +2004,17 @@ pub fn Settings() -> Element {
                                             button { class: "kn-btn-ghost", style: "flex:none;font-family:inherit;font-size:12px;font-weight:600;color:var(--gold);background:var(--panel);border:1px solid var(--gold-line);border-radius:7px;padding:7px 13px;cursor:pointer",
                                                 onclick: move |_| {
                                                     match crate::bindings::set_model(&path) {
-                                                        Ok(()) => { model_msg.set("Selected — restart to load.".to_string()); restart_pending.set(true); let t = *tick.read(); tick.set(t + 1); }
-                                                        Err(e) => model_msg.set(format!("Couldn't select: {e}")),
+                                                        Ok(()) => {
+                                                            model_msg.set("Selected — restart to load.".to_string());
+                                                            store.toast(crate::state::ToastKind::Success, "Model selected — restart to load.");
+                                                            restart_pending.set(true);
+                                                            let t = *tick.read(); tick.set(t + 1);
+                                                        }
+                                                        Err(e) => {
+                                                            let m = e.to_string();
+                                                            model_msg.set(format!("Couldn't select: {m}"));
+                                                            store.toast(crate::state::ToastKind::Error, format!("Couldn't select model: {m}"));
+                                                        }
                                                     }
                                                 },
                                                 "Use this"
@@ -1951,8 +2025,16 @@ pub fn Settings() -> Element {
                                             button { style: "flex:none;font-family:inherit;font-size:12px;font-weight:600;color:#fff;background:var(--red);border:none;border-radius:7px;padding:7px 12px;cursor:pointer",
                                                 onclick: move |_| {
                                                     match crate::bindings::delete_model_file(&del_path) {
-                                                        Ok(()) => { model_msg.set(format!("Deleted {} from disk.", del_path.rsplit('/').next().unwrap_or(&del_path))); }
-                                                        Err(e) => model_msg.set(format!("Couldn't delete: {e}")),
+                                                        Ok(()) => {
+                                                            let name = del_path.rsplit('/').next().unwrap_or(&del_path).to_string();
+                                                            model_msg.set(format!("Deleted {name} from disk."));
+                                                            store.toast(crate::state::ToastKind::Success, format!("Deleted {name} from disk."));
+                                                        }
+                                                        Err(e) => {
+                                                            let m = e.to_string();
+                                                            model_msg.set(format!("Couldn't delete: {m}"));
+                                                            store.toast(crate::state::ToastKind::Error, format!("Couldn't delete model: {m}"));
+                                                        }
                                                     }
                                                     delete_confirm.set(None);
                                                     let t = *tick.read(); tick.set(t + 1);
@@ -2039,9 +2121,9 @@ pub fn Settings() -> Element {
                 }
             }
 
-            // ── protection toggles ──
+            // ── protection toggles (all REAL — read + write the actual config) ──
             div { style: "border:1px solid var(--line);border-radius:12px;background:var(--panel);overflow:hidden",
-                // Fail-closed — REAL: initialised from the daemon marker, writes on toggle.
+                // Fail-closed: marker file the shim/hook read even when the daemon is down.
                 div { style: "display:flex;align-items:center;gap:15px;padding:15px 20px;border-bottom:1px solid var(--hair)",
                     div { style: "flex:1",
                         div { style: "font-size:13.5px;font-weight:600", "Fail-closed" }
@@ -2056,23 +2138,133 @@ pub fn Settings() -> Element {
                     Toggle {
                         on: fail_closed_on,
                         on_click: move |_| {
-                            // bind the read before the set (signal borrow rule)
                             let cur = *fail_closed_sig.read();
                             let next = !cur;
-                            let _ = crate::bindings::set_fail_closed(next);
-                            fail_closed_sig.set(next);
+                            match crate::bindings::set_fail_closed(next) {
+                                Ok(()) => {
+                                    fail_closed_sig.set(next);
+                                    store.toast(crate::state::ToastKind::Success,
+                                        if next { "Fail-closed enabled — unreachable daemon now blocks." } else { "Fail-closed disabled." });
+                                }
+                                Err(e) => { store.toast(crate::state::ToastKind::Error, format!("Couldn't change fail-closed: {e}")); }
+                            }
                         }
                     }
                 }
-                // Remaining toggles — store-signal UI; the real change lands via the service/admin path.
-                for (label, desc, mut sig) in toggles {
-                    div { style: "display:flex;align-items:center;gap:15px;padding:15px 20px;border-bottom:1px solid var(--hair)",
-                        div { style: "flex:1",
-                            div { style: "font-size:13.5px;font-weight:600", "{label}" }
-                            div { style: "font-size:12px;color:var(--dim);margin-top:2px", "{desc}" }
-                            div { style: "font-size:11px;color:var(--dim);margin-top:3px", "applies via the service/admin path" }
+
+                // Passive session recording — writes to shell rc.
+                div { style: "display:flex;align-items:center;gap:15px;padding:15px 20px;border-bottom:1px solid var(--hair)",
+                    div { style: "flex:1",
+                        div { style: "font-size:13.5px;font-weight:600", "Passive session recording" }
+                        div { style: "font-size:12px;color:var(--dim);margin-top:2px", "Log every human shell command to the tamper-evident audit trail." }
+                        div { style: "font-size:11px;color:var(--dim);margin-top:3px", "writes a managed fenced block in your shell rc — restart your shell to apply" }
+                    }
+                    Toggle {
+                        on: recording_on,
+                        on_click: move |_| {
+                            let res = if recording_on { crate::bindings::uninstall_recording() } else { crate::bindings::install_recording() };
+                            match res {
+                                Ok(()) => {
+                                    store.toast(crate::state::ToastKind::Success,
+                                        if recording_on { "Recorder removed from your shell rc." } else { "Recorder installed — restart your shell to start recording." });
+                                    let t = *tick.read(); tick.set(t + 1);
+                                }
+                                Err(e) => { store.toast(crate::state::ToastKind::Error, format!("Couldn't change recorder: {e}")); }
+                            }
                         }
-                        Toggle { on: *sig.read(), on_click: move |_| { let v = *sig.read(); sig.set(!v); } }
+                    }
+                }
+
+                // Auto-restart service (systemd/launchd) — covers both "auto-restart" and "start on login".
+                div { style: "display:flex;align-items:center;gap:15px;padding:15px 20px",
+                    div { style: "flex:1",
+                        div { style: "font-size:13.5px;font-weight:600", "Auto-restart on boot" }
+                        div { style: "font-size:12px;color:var(--dim);margin-top:2px", "Run under launchd / systemd with restart-always — a kill/pkill brings it back." }
+                        div { style: "font-size:11px;color:var(--dim);margin-top:3px", "uninstalling needs the admin password when locked" }
+                    }
+                    Toggle {
+                        on: service_on,
+                        on_click: move |_| {
+                            let res = if service_on { crate::bindings::uninstall_service() } else { crate::bindings::install_service() };
+                            match res {
+                                Ok(()) => {
+                                    store.toast(crate::state::ToastKind::Success,
+                                        if service_on { "Auto-restart disabled." } else { "Auto-restart installed — Kintsugi will relaunch after a crash or kill." });
+                                    let t = *tick.read(); tick.set(t + 1);
+                                }
+                                Err(e) => { store.toast(crate::state::ToastKind::Error, format!("Couldn't change auto-restart: {e}")); }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ── agent CLI hooks (per-CLI on/off + refresh) ──
+            div { style: "border:1px solid var(--line);border-radius:12px;background:var(--panel);overflow:hidden;margin-top:16px",
+                div { style: "display:flex;align-items:center;gap:12px;padding:15px 20px;border-bottom:1px solid var(--hair)",
+                    div { style: "flex:1",
+                        div { style: "font-size:13.5px;font-weight:600", "Agent CLI hooks" }
+                        div { style: "font-size:12px;color:var(--dim);margin-top:2px", "Which agent CLIs Kintsugi is wired into. Toggle to enable or strip the hook per CLI; refresh to re-detect newly installed CLIs." }
+                    }
+                    button { class: "kn-btn-ghost", title: "Re-detect installed agent CLIs",
+                        style: "font-family:inherit;font-size:12px;font-weight:600;color:var(--ink);background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:7px 12px;cursor:pointer;display:inline-flex;align-items:center;gap:6px",
+                        onclick: move |_| {
+                            let t = *tick.read(); tick.set(t + 1);
+                            store.toast(crate::state::ToastKind::Info, "Re-detecting agent CLIs…");
+                        },
+                        svg { view_box: "0 0 24 24", width: "13", height: "13", fill: "none", stroke: "currentColor", stroke_width: "1.8", stroke_linecap: "round", stroke_linejoin: "round",
+                            path { d: "M21 12a9 9 0 1 1-3.5-7.1 M21 3v6h-6" }
+                        }
+                        "Refresh"
+                    }
+                }
+                if hooks_res().is_none() {
+                    Loader { label: "Detecting agent CLIs…".to_string() }
+                } else if agent_hooks.is_empty() {
+                    div { style: "padding:24px;text-align:center;color:var(--dim);font-size:12.5px;line-height:1.55",
+                        "No agent CLIs detected. Install one (e.g. Claude Code) and click Refresh."
+                    }
+                } else {
+                    for h in agent_hooks.iter().cloned() {
+                        {
+                            let id = h.id.clone();
+                            let name = h.name.clone();
+                            let path = h.config_path.clone();
+                            let installed = h.installed;
+                            let pill_color = if installed { "var(--green)" } else { "var(--dim)" };
+                            let pill_border = if installed { "rgba(90,247,142,.4)" } else { "var(--line)" };
+                            rsx! {
+                                div { style: "display:flex;align-items:center;gap:15px;padding:14px 20px;border-bottom:1px solid var(--hair)",
+                                    div { style: "flex:1;min-width:0",
+                                        div { style: "font-size:13px;font-weight:600", "{name}" }
+                                        div { style: "font-size:11px;color:var(--dim);margin-top:2px;font-family:'IBM Plex Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap", "{path}" }
+                                    }
+                                    span { style: "flex:none;font-size:11px;font-weight:600;border-radius:6px;padding:3px 9px;color:{pill_color};border:1px solid {pill_border}",
+                                        if installed { "wired" } else { "off" }
+                                    }
+                                    Toggle {
+                                        on: installed,
+                                        on_click: move |_| {
+                                            let id_s = id.clone();
+                                            let name_s = name.clone();
+                                            let res = if installed {
+                                                crate::bindings::disable_agent_hook(&id_s)
+                                            } else {
+                                                crate::bindings::enable_agent_hook(&id_s)
+                                            };
+                                            match res {
+                                                Ok(()) => {
+                                                    store.toast(crate::state::ToastKind::Success,
+                                                        if installed { format!("Disabled hook for {name_s}.") } else { format!("Wired Kintsugi into {name_s}.") });
+                                                    let t = *tick.read(); tick.set(t + 1);
+                                                }
+                                                Err(e) => { store.toast(crate::state::ToastKind::Error, format!("Couldn't change {name_s} hook: {e}")); }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

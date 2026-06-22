@@ -5,6 +5,20 @@ use dioxus::prelude::*;
 use crate::theme::Theme;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ToastKind {
+    Success,
+    Error,
+    Info,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct Toast {
+    pub id: u64,
+    pub kind: ToastKind,
+    pub message: String,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Screen {
     Dashboard,
     Held,
@@ -93,6 +107,10 @@ pub struct Store {
     /// sets this on a row click; the drawer renders at the app shell.
     pub detail: Signal<Option<crate::bindings::TimelineRow>>,
 
+    /// Stack of transient notifications shown at the bottom-right. Push via
+    /// `Store::toast(...)`; each entry auto-dismisses after a few seconds.
+    pub toasts: Signal<Vec<Toast>>,
+
     // live-refresh heartbeats. `tick` fires every 250ms and drives the light
     // reads (row lists, engine status); `slow_tick` fires every 2s for the heavy
     // aggregates (metrics full-scan, chain verify) so a 4 Hz refresh never
@@ -129,9 +147,21 @@ impl Store {
             model_progress: Signal::new(0.0),
             model_search: Signal::new(String::new()),
             detail: Signal::new(None),
+            toasts: Signal::new(Vec::new()),
             tick: Signal::new(0),
             slow_tick: Signal::new(0),
         }
+    }
+
+    /// Push a toast and return its id (so the caller can dismiss it early).
+    pub fn toast(&mut self, kind: ToastKind, message: impl Into<String>) -> u64 {
+        let mut toasts = self.toasts.write();
+        let id = toasts.last().map(|t| t.id + 1).unwrap_or(1);
+        toasts.push(Toast { id, kind, message: message.into() });
+        id
+    }
+    pub fn dismiss_toast(&mut self, id: u64) {
+        self.toasts.write().retain(|t| t.id != id);
     }
 
     pub fn try_unlock(&mut self) {

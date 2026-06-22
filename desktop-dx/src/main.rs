@@ -78,6 +78,8 @@ fn App() -> Element {
                 }
                 // Per-activity detail drawer — overlays everything when a row is clicked.
                 screens::DetailDrawer {}
+                // Transient toast notifications stack (bottom-right).
+                screens::Toasts {}
             }
         }
     }

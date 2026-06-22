@@ -558,6 +558,139 @@ pub fn download_model(id: &str) -> anyhow::Result<String> {
     Ok(filename)
 }
 
+// ---- agent hooks (Settings: list + per-CLI on/off + refresh) --------------
+
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct AgentHook {
+    pub id: String,
+    pub name: String,
+    pub installed: bool,
+    pub config_path: String,
+}
+
+fn kintsugi_bin() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(|h| PathBuf::from(h).join(".local/bin/kintsugi"))
+        .filter(|p| p.exists())
+        .unwrap_or_else(|| PathBuf::from("kintsugi"))
+}
+
+/// List detected agent CLIs + whether the Kintsugi hook is installed in each.
+pub fn agent_hooks() -> Vec<AgentHook> {
+    let out = std::process::Command::new(kintsugi_bin())
+        .args(["hook", "list", "--json"])
+        .output();
+    let Ok(out) = out else { return Vec::new() };
+    serde_json::from_slice(&out.stdout).unwrap_or_default()
+}
+
+pub fn enable_agent_hook(id: &str) -> anyhow::Result<()> {
+    let out = std::process::Command::new(kintsugi_bin())
+        .args(["hook", "enable", "--agent", id])
+        .output()?;
+    if !out.status.success() {
+        anyhow::bail!("{}", String::from_utf8_lossy(&out.stderr));
+    }
+    Ok(())
+}
+
+pub fn disable_agent_hook(id: &str) -> anyhow::Result<()> {
+    let out = std::process::Command::new(kintsugi_bin())
+        .args(["hook", "disable", "--agent", id])
+        .output()?;
+    if !out.status.success() {
+        anyhow::bail!("{}", String::from_utf8_lossy(&out.stderr));
+    }
+    Ok(())
+}
+
+// ---- passive session recording (Settings toggle) --------------------------
+
+fn shell_rc() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME").map(PathBuf::from)?;
+    // Same priority pick-model.sh uses: zsh first on macOS, else bash.
+    let zsh = home.join(".zshrc");
+    let bash = home.join(".bashrc");
+    if zsh.exists() {
+        Some(zsh)
+    } else if bash.exists() {
+        Some(bash)
+    } else if cfg!(target_os = "macos") {
+        Some(zsh)
+    } else {
+        Some(bash)
+    }
+}
+
+/// Is the passive recorder block currently present in the user's shell rc?
+pub fn recording_installed() -> bool {
+    let Some(rc) = shell_rc() else { return false };
+    std::fs::read_to_string(&rc)
+        .map(|s| s.contains("kintsugi session recorder"))
+        .unwrap_or(false)
+}
+
+pub fn install_recording() -> anyhow::Result<()> {
+    let rc = shell_rc().ok_or_else(|| anyhow::anyhow!("no shell rc"))?;
+    let out = std::process::Command::new(kintsugi_bin())
+        .args(["record", "install", "--write"])
+        .arg(&rc)
+        .output()?;
+    if !out.status.success() {
+        anyhow::bail!("{}", String::from_utf8_lossy(&out.stderr));
+    }
+    Ok(())
+}
+
+pub fn uninstall_recording() -> anyhow::Result<()> {
+    let rc = shell_rc().ok_or_else(|| anyhow::anyhow!("no shell rc"))?;
+    let out = std::process::Command::new(kintsugi_bin())
+        .args(["record", "uninstall", "--write"])
+        .arg(&rc)
+        .output()?;
+    if !out.status.success() {
+        anyhow::bail!("{}", String::from_utf8_lossy(&out.stderr));
+    }
+    Ok(())
+}
+
+// ---- auto-restart service (Settings toggle) -------------------------------
+
+/// Is the OS supervisor (systemd / launchd) installed for the daemon?
+pub fn service_installed() -> bool {
+    let out = std::process::Command::new(kintsugi_bin())
+        .args(["service", "status"])
+        .output();
+    match out {
+        Ok(o) => {
+            let s = String::from_utf8_lossy(&o.stdout).to_string()
+                + &String::from_utf8_lossy(&o.stderr);
+            s.contains("installed") && !s.contains("not installed")
+        }
+        Err(_) => false,
+    }
+}
+
+pub fn install_service() -> anyhow::Result<()> {
+    let out = std::process::Command::new(kintsugi_bin())
+        .args(["service", "install"])
+        .output()?;
+    if !out.status.success() {
+        anyhow::bail!("{}", String::from_utf8_lossy(&out.stderr));
+    }
+    Ok(())
+}
+
+pub fn uninstall_service() -> anyhow::Result<()> {
+    let out = std::process::Command::new(kintsugi_bin())
+        .args(["service", "uninstall"])
+        .output()?;
+    if !out.status.success() {
+        anyhow::bail!("{}", String::from_utf8_lossy(&out.stderr));
+    }
+    Ok(())
+}
+
 /// Run `kintsugi uninstall --yes` (password already verified by the UI), so the
 /// CLI does the actual destructive work — the same code path the terminal flow
 /// uses. The UI captures the password into the env so the CLI doesn't re-prompt.
