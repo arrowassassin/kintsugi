@@ -32,6 +32,13 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
+      # Defender real-time scanning intermittently locks a just-linked .exe while
+      # the next bin links, causing `LNK1104: cannot open file …exe`. Excluding the
+      # workspace stops the lock. Windows-only; best-effort.
+      - name: Exclude workspace from Defender (Windows linker lock)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Add-MpPreference -ExclusionPath "${{ github.workspace }}" -ErrorAction SilentlyContinue
       - name: Build release binaries
         run: cargo build --release --target ${{ matrix.target }} --bins
       - name: Package + checksum

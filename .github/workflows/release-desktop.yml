@@ -131,7 +131,12 @@ jobs:
       - uses: actions/download-artifact@v4
         with: { path: dist }
       - name: Flatten
-        run: find dist -mindepth 2 -type f -exec mv -t dist {} +
+        # Move every artifact file up into dist/, then drop the now-empty
+        # per-artifact subdirs — otherwise `sha256sum *` below trips on them
+        # ("Is a directory") and fails the publish.
+        run: |
+          find dist -mindepth 2 -type f -exec mv -t dist {} +
+          find dist -mindepth 1 -type d -empty -delete
       - name: Compute SHA256SUMS
         working-directory: dist
         run: sha256sum * > SHA256SUMS
