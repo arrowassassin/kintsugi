@@ -14,7 +14,9 @@ use serde_json::Value;
 use crate::{cmd_stop, init, shim_dir};
 
 fn home() -> PathBuf {
-    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default()
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_default()
 }
 
 /// The dir holding the running `kintsugi` (its siblings are the other binaries).
@@ -75,7 +77,9 @@ fn strip_hooks(home: &Path) -> Vec<String> {
     }
 
     for p in hook_files(home) {
-        let Ok(text) = std::fs::read_to_string(&p) else { continue };
+        let Ok(text) = std::fs::read_to_string(&p) else {
+            continue;
+        };
         if !text.contains("kintsugi") {
             continue;
         }
@@ -144,9 +148,15 @@ pub fn run(purge: bool, yes: bool) -> Result<()> {
     println!("  • remove the shim dir:    {}", shim.display());
     println!("  • remove the binaries in: {}", bdir.display());
     if purge {
-        println!("  • PURGE all stored data:  {}  (events, vault, model — UNRECOVERABLE)", data.display());
+        println!(
+            "  • PURGE all stored data:  {}  (events, vault, model — UNRECOVERABLE)",
+            data.display()
+        );
     } else {
-        println!("  • KEEP your stored data:  {}  (pass --purge to erase it)", data.display());
+        println!(
+            "  • KEEP your stored data:  {}  (pass --purge to erase it)",
+            data.display()
+        );
     }
     println!();
 

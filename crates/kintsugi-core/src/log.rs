@@ -950,9 +950,7 @@ impl EventLog {
         let mut stmt = self
             .conn
             .prepare("SELECT decision, COUNT(*) FROM events GROUP BY decision")?;
-        let rows = stmt.query_map([], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
-        })?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
         for row in rows {
             let (decision, n) = row?;
             match decision.as_str() {

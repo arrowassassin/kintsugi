@@ -148,7 +148,6 @@ pub fn metrics(db_path: &std::path::Path) -> anyhow::Result<Metrics> {
         held,
         denied,
         trifecta_blocks,
-        ..Default::default()
     })
 }
 

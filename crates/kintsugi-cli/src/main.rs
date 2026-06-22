@@ -624,13 +624,15 @@ fn main() -> Result<()> {
 /// `kintsugi install-desktop` — find the `kintsugi-control-room` binary
 /// (PATH, then ~/.cargo/bin) and invoke its `--install` flag.
 fn cmd_install_desktop() -> Result<()> {
-    let bin = which_kintsugi_control_room().ok_or_else(|| anyhow::anyhow!(
-        "couldn't find the desktop binary `kintsugi-control-room` on PATH.\n\n\
+    let bin = which_kintsugi_control_room().ok_or_else(|| {
+        anyhow::anyhow!(
+            "couldn't find the desktop binary `kintsugi-control-room` on PATH.\n\n\
          Install it first, then re-run this:\n  \
          cargo install kintsugi-control-room\n  \
          kintsugi install-desktop\n\n\
          Or download a prebuilt build from https://github.com/arrowassassin/kintsugi/releases."
-    ))?;
+        )
+    })?;
     println!("kintsugi: running {} --install", bin.display());
     let status = std::process::Command::new(&bin).arg("--install").status()?;
     if !status.success() {
@@ -640,17 +642,25 @@ fn cmd_install_desktop() -> Result<()> {
 }
 
 fn which_kintsugi_control_room() -> Option<PathBuf> {
-    let name = if cfg!(windows) { "kintsugi-control-room.exe" } else { "kintsugi-control-room" };
+    let name = if cfg!(windows) {
+        "kintsugi-control-room.exe"
+    } else {
+        "kintsugi-control-room"
+    };
     if let Some(paths) = std::env::var_os("PATH") {
         for d in std::env::split_paths(&paths) {
             let c = d.join(name);
-            if c.exists() { return Some(c); }
+            if c.exists() {
+                return Some(c);
+            }
         }
     }
     if let Some(home) = std::env::var_os("HOME") {
         for sub in [".cargo/bin", ".local/bin"] {
             let c = PathBuf::from(&home).join(sub).join(name);
-            if c.exists() { return Some(c); }
+            if c.exists() {
+                return Some(c);
+            }
         }
     }
     None
@@ -716,8 +726,12 @@ fn unwire_hook(home: &std::path::Path, kind: init::HookKind) -> Result<()> {
         }
         // JSON files we merged into → scrub.
         Claude | Qwen | Gemini | Cursor => {
-            let Ok(text) = std::fs::read_to_string(&path) else { return Ok(()) };
-            let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&text) else { return Ok(()) };
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                return Ok(());
+            };
+            let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&text) else {
+                return Ok(());
+            };
             if scrub_kintsugi(&mut v) {
                 write_file(&path, &serde_json::to_string_pretty(&v)?)?;
             }
@@ -725,7 +739,9 @@ fn unwire_hook(home: &std::path::Path, kind: init::HookKind) -> Result<()> {
         }
         // TOML: drop any line mentioning kintsugi (best-effort).
         Codex => {
-            let Ok(text) = std::fs::read_to_string(&path) else { return Ok(()) };
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                return Ok(());
+            };
             let kept: Vec<&str> = text.lines().filter(|l| !l.contains("kintsugi")).collect();
             write_file(&path, &kept.join("\n"))
         }
@@ -765,7 +781,11 @@ fn cmd_hook(cmd: HookCmd) -> Result<()> {
                     return Ok(());
                 }
                 for e in &entries {
-                    let mark = if e.installed { "✓ installed" } else { "•   off    " };
+                    let mark = if e.installed {
+                        "✓ installed"
+                    } else {
+                        "•   off    "
+                    };
                     println!("  {mark}  {:20}  {}", e.name, e.config_path);
                 }
             }

@@ -318,7 +318,9 @@ impl Client {
     /// pruned (reported by the daemon via a `Pending { status: "N" }` reply).
     pub fn prune_pending() -> Result<u64> {
         match round_trip(&Request::PrunePending)? {
-            Response::Pending { status } => status.parse().map_err(|e| anyhow::anyhow!("bad count: {e}")),
+            Response::Pending { status } => status
+                .parse()
+                .map_err(|e| anyhow::anyhow!("bad count: {e}")),
             Response::Error { message } => anyhow::bail!("daemon error: {message}"),
             _ => anyhow::bail!("unexpected response to PrunePending"),
         }

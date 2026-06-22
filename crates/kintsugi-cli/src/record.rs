@@ -114,7 +114,11 @@ fi
 /// the gated variant that describes commands and confirms risky ones.
 pub fn install(write: Option<PathBuf>, gate: bool) -> Result<()> {
     let hook = if gate { HOOK_GATE } else { HOOK };
-    let kind = if gate { "gated recorder" } else { "passive recorder" };
+    let kind = if gate {
+        "gated recorder"
+    } else {
+        "passive recorder"
+    };
     let Some(rc) = write else {
         // Default: print to stdout so it composes with a redirect, and never touch
         // the user's rc ourselves — that's their file to own.
@@ -310,8 +314,8 @@ pub fn ingest(command: &str, cwd: Option<PathBuf>) -> Result<()> {
 /// Never crashes the shell: a parse error, daemon outage, or no TTY all fall
 /// back to passive recording + exit 0 (i.e. the existing behavior).
 pub fn ingest_gate(command: &str, cwd: Option<PathBuf>) -> Result<i32> {
-    use std::io::{BufRead, Write};
     use kintsugi_core::{Class, Decision};
+    use std::io::Write;
 
     let command = command.trim();
     if command.is_empty() {
@@ -372,7 +376,10 @@ pub fn ingest_gate(command: &str, cwd: Option<PathBuf>) -> Result<i32> {
     }
     // Catastrophic: never ask — print and decline.
     if verdict.class == Class::Catastrophic {
-        let _ = writeln!(tty, "   declined — catastrophic commands aren't gated through y/n.");
+        let _ = writeln!(
+            tty,
+            "   declined — catastrophic commands aren't gated through y/n."
+        );
         let _ = writeln!(tty, "   re-run via `kintsugi run` if you really mean it.");
         let _ = Client::record(&cmd);
         return Ok(1);
@@ -385,7 +392,9 @@ pub fn ingest_gate(command: &str, cwd: Option<PathBuf>) -> Result<i32> {
         match std::io::Read::read(tty, &mut buf) {
             Ok(0) => break,
             Ok(_) => {
-                if buf[0] == b'\n' { break; }
+                if buf[0] == b'\n' {
+                    break;
+                }
                 line.push(buf[0] as char);
             }
             Err(_) => break,

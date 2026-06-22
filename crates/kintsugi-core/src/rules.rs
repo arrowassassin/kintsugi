@@ -694,7 +694,8 @@ fn removes_kintsugi(prog: &str, args: &[&str], seg: &str) -> bool {
         "kintsugi" => is(&["uninstall"]),
         // Deleting the installed binaries / shims / data by path.
         "rm" | "unlink" | "trash" => {
-            seg.contains("kintsugi") && (seg.contains("/bin") || seg.contains("kintsugi/") || seg.contains("shims"))
+            seg.contains("kintsugi")
+                && (seg.contains("/bin") || seg.contains("kintsugi/") || seg.contains("shims"))
         }
         _ => false,
     }
@@ -1638,7 +1639,11 @@ mod tests {
             "rm /Users/me/.local/bin/kintsugi-daemon",
             "rm -f ~/.local/share/kintsugi/events.db",
         ] {
-            assert_eq!(class_of(s), Class::Catastrophic, "must protect against: {s}");
+            assert_eq!(
+                class_of(s),
+                Class::Catastrophic,
+                "must protect against: {s}"
+            );
         }
         // Uninstalling an unrelated package is not self-protection.
         assert_ne!(class_of("cargo uninstall ripgrep"), Class::Catastrophic);

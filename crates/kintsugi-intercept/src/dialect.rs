@@ -840,7 +840,9 @@ mod tests {
         let mut v = Verdict::rules(Class::Ambiguous, Decision::Hold, "ambiguous:cargo");
         v.summary = Some("updates a dependency and runs its build script".into());
         v.risk = Some(42);
-        let Resolved::Ask(msg) = resolve(&v) else { panic!("expected ask") };
+        let Resolved::Ask(msg) = resolve(&v) else {
+            panic!("expected ask")
+        };
         assert!(msg.contains("Kintsugi flagged this"));
         assert!(msg.contains("updates a dependency and runs its build script"));
         assert!(msg.contains("risk 42/100"));

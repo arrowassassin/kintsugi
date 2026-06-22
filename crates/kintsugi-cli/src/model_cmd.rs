@@ -124,7 +124,9 @@ fn models_dir() -> PathBuf {
     if let Ok(d) = std::env::var("KINTSUGI_DATA_DIR") {
         return PathBuf::from(d).join("models");
     }
-    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_default();
     home.join(".local/share/kintsugi/models")
 }
 
@@ -145,8 +147,12 @@ pub fn rm(name: &str) -> Result<()> {
                 .ok()
                 .and_then(|rd| {
                     rd.flatten().map(|e| e.path()).find(|p| {
-                        p.extension().map(|e| e.eq_ignore_ascii_case("gguf")).unwrap_or(false)
-                            && p.file_name().map(|f| f.to_string_lossy().contains(name)).unwrap_or(false)
+                        p.extension()
+                            .map(|e| e.eq_ignore_ascii_case("gguf"))
+                            .unwrap_or(false)
+                            && p.file_name()
+                                .map(|f| f.to_string_lossy().contains(name))
+                                .unwrap_or(false)
                     })
                 })
                 .ok_or_else(|| anyhow::anyhow!("no model matching '{name}' in {}", dir.display()))?

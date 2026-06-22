@@ -137,13 +137,22 @@ fn hook_disable_unknown_agent_errors_cleanly() {
 
 #[test]
 fn record_install_gate_prints_the_gated_hook() {
-    let out = kintsugi().args(["record", "install", "--gate"]).output().unwrap();
+    let out = kintsugi()
+        .args(["record", "install", "--gate"])
+        .output()
+        .unwrap();
     assert!(out.status.success());
     let s = String::from_utf8_lossy(&out.stdout);
     // Gated hook calls ingest --gate and reroutes Enter (zsh) / uses extdebug (bash).
     assert!(s.contains("kintsugi ingest --gate"));
-    assert!(s.contains("zle .accept-line"), "zsh path must rebind accept-line");
-    assert!(s.contains("extdebug"), "bash path must enable extdebug for cancellation");
+    assert!(
+        s.contains("zle .accept-line"),
+        "zsh path must rebind accept-line"
+    );
+    assert!(
+        s.contains("extdebug"),
+        "bash path must enable extdebug for cancellation"
+    );
     // Same fences as the passive hook, so re-install cleanly replaces.
     assert!(s.contains("# >>> kintsugi session recorder >>>"));
     assert!(s.contains("# <<< kintsugi session recorder <<<"));
