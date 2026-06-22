@@ -25,6 +25,11 @@ hex = "0.4"
 zeroize = "1.8.2"
 # Localize the stored UTC timestamps to the user's timezone for display.
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# Live Hugging Face model search + GGUF download (the only outbound network the
+# app makes, and only when the user searches/downloads a model).
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 # The engine + daemon, called directly in-process (no IPC / no invoke).
 kintsugi-app = { path = "../crates/kintsugi-app" }
 kintsugi-daemon = { path = "../crates/kintsugi-daemon" }

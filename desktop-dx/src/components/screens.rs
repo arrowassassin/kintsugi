@@ -1540,6 +1540,16 @@ pub fn Settings() -> Element {
     // Path pending a delete confirmation (two-step, so a 2GB file isn't one click).
     let mut delete_confirm = use_signal(|| None::<String>);
 
+    // Live Hugging Face search — re-runs as the query changes; empty → suggested.
+    let hf_res = use_resource(move || async move {
+        let q = store.model_search.read().clone();
+        tokio::task::spawn_blocking(move || crate::bindings::hf_search(&q)).await.unwrap_or_default()
+    });
+    let hf_loading = hf_res().is_none();
+    let hf_models = hf_res().unwrap_or_default();
+    // Repo ids with an in-flight download.
+    let downloading = use_signal(std::collections::HashSet::<String>::new);
+
     // The remaining toggles stay store-signal UI (service/admin-path driven).
     let toggles = [
         ("Auto-restart watchdog", "Run under systemd / launchd with restart-always.", store.watchdog),
@@ -1912,17 +1922,64 @@ pub fn Settings() -> Element {
                     }
                 }
 
-                div { style: "font-size:11.5px;color:var(--dim);line-height:1.5;margin-top:13px;border-left:2px solid var(--gold);padding-left:12px",
-                    "A model you pick is your choice — trusted because you selected it. The daemon never downloads on its own."
+                // ── browse Hugging Face (live search + download) ──
+                div { style: "margin-top:20px;margin-bottom:9px;font-size:10.5px;font-weight:600;letter-spacing:.6px;text-transform:uppercase;color:var(--dim)",
+                    if store.model_search.read().trim().is_empty() { "Suggested on Hugging Face" } else { "Hugging Face results" }
                 }
-                // Honest note: download is still a CLI step; selection + on/off are live here.
-                div { style: "font-size:11px;color:var(--dim);line-height:1.5;margin-top:8px;display:inline-flex;align-items:flex-start;gap:6px",
-                    span { style: "color:var(--amber)", "ⓘ" }
-                    span {
-                        "Selecting and turning the model on/off works here. To download a NEW model, run "
-                        span { style: "font-family:'IBM Plex Mono',monospace;color:var(--ink)", "kintsugi model pick" }
-                        " — it fetches the .gguf, which then appears in the list above."
+                if hf_loading {
+                    Loader { label: "Searching Hugging Face…".to_string() }
+                } else if hf_models.is_empty() {
+                    div { style: "font-size:12px;color:var(--dim)", "No models found (or you're offline). Try another search." }
+                } else {
+                    div { style: "display:flex;flex-direction:column;gap:9px",
+                        for hm in hf_models.iter().cloned() {
+                            {
+                                let dl_id = hm.id.clone();
+                                let is_dl = downloading.read().contains(&hm.id);
+                                rsx! {
+                                    div { style: "display:flex;align-items:center;gap:13px;border:1px solid var(--line);border-radius:10px;background:var(--panel2);padding:12px 14px",
+                                        div { style: "flex:1;min-width:0",
+                                            span { style: "display:block;font-family:'IBM Plex Mono',monospace;font-size:12.5px;font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap", "{hm.id}" }
+                                            div { style: "font-size:11px;color:var(--dim);margin-top:3px", "{hm.downloads} downloads · {hm.likes} likes" }
+                                        }
+                                        if is_dl {
+                                            span { style: "flex:none;font-size:12px;color:var(--gold);display:inline-flex;align-items:center;gap:7px",
+                                                span { style: "width:13px;height:13px;border-radius:50%;border:2px solid var(--line);border-top-color:var(--gold);animation:kspin .7s linear infinite" }
+                                                "Downloading…"
+                                            }
+                                        } else {
+                                            button { class: "kn-btn-ghost", style: "flex:none;font-family:inherit;font-size:12px;font-weight:600;color:var(--gold);background:var(--panel);border:1px solid var(--gold-line);border-radius:7px;padding:7px 13px;cursor:pointer",
+                                                onclick: move |_| {
+                                                    let id = dl_id.clone();
+                                                    let mut downloading = downloading;
+                                                    let mut model_msg = model_msg;
+                                                    let mut tick = tick;
+                                                    downloading.write().insert(id.clone());
+                                                    model_msg.set(format!("Downloading {id} — a few GB; it'll appear under 'on disk' when done."));
+                                                    spawn(async move {
+                                                        let id2 = id.clone();
+                                                        let res = tokio::task::spawn_blocking(move || crate::bindings::download_model(&id2)).await;
+                                                        match res {
+                                                            Ok(Ok(name)) => model_msg.set(format!("Downloaded {name} — select it under 'on disk'.")),
+                                                            Ok(Err(e)) => model_msg.set(format!("Download failed: {e}")),
+                                                            Err(_) => model_msg.set("Download task crashed.".to_string()),
+                                                        }
+                                                        downloading.write().remove(&id);
+                                                        let t = *tick.read(); tick.set(t + 1);
+                                                    });
+                                                },
+                                                "Download"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
+                }
+
+                div { style: "font-size:11.5px;color:var(--dim);line-height:1.5;margin-top:14px;border-left:2px solid var(--gold);padding-left:12px",
+                    "A model you pick is your choice — trusted because you selected it. The daemon never downloads on its own; this search and download happen only when you ask."
                 }
             }
 

@@ -435,6 +435,106 @@ pub fn available_models() -> Vec<LocalModel> {
     out
 }
 
+// ---- Hugging Face live search + GGUF download -------------------------------
+
+/// A model repo from the Hugging Face search API.
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct HfModel {
+    pub id: String,
+    #[serde(default)]
+    pub downloads: u64,
+    #[serde(default)]
+    pub likes: u64,
+}
+
+fn hf_client() -> reqwest::blocking::Client {
+    reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .user_agent("kintsugi-control-room")
+        .build()
+        .unwrap_or_default()
+}
+
+fn hf_query(search: &str, limit: usize) -> anyhow::Result<Vec<HfModel>> {
+    let limit = limit.to_string();
+    let models: Vec<HfModel> = hf_client()
+        .get("https://huggingface.co/api/models")
+        .query(&[
+            ("search", search),
+            ("filter", "gguf"),
+            ("sort", "downloads"),
+            ("direction", "-1"),
+            ("limit", &limit),
+        ])
+        .send()?
+        .error_for_status()?
+        .json()?;
+    Ok(models)
+}
+
+/// Live search Hugging Face for GGUF models. Empty query → the suggested set.
+pub fn hf_search(query: &str) -> Vec<HfModel> {
+    if query.trim().is_empty() {
+        return hf_suggested();
+    }
+    hf_query(query.trim(), 12).unwrap_or_default()
+}
+
+/// A short, RAM-appropriate suggested list (small instruct GGUFs), shown by
+/// default — same spirit as `pick-model.sh`'s curated picks.
+pub fn hf_suggested() -> Vec<HfModel> {
+    hf_query("Qwen3 4B Instruct GGUF", 5).unwrap_or_default()
+}
+
+/// Resolve a downloadable Q4_K_M `.gguf` in a repo (prefer Q4_K_M, else any gguf).
+fn hf_pick_gguf(id: &str) -> anyhow::Result<(String, String)> {
+    let v: serde_json::Value = hf_client()
+        .get(format!("https://huggingface.co/api/models/{id}"))
+        .send()?
+        .error_for_status()?
+        .json()?;
+    let files: Vec<String> = v["siblings"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|s| s["rfilename"].as_str().map(|x| x.to_string()))
+                .filter(|f| f.to_lowercase().ends_with(".gguf"))
+                .collect()
+        })
+        .unwrap_or_default();
+    let pick = files
+        .iter()
+        .find(|f| f.to_lowercase().contains("q4_k_m"))
+        .or_else(|| files.first())
+        .ok_or_else(|| anyhow::anyhow!("no .gguf file found in {id}"))?;
+    let url = format!("https://huggingface.co/{id}/resolve/main/{pick}?download=true");
+    Ok((url, pick.clone()))
+}
+
+fn models_download_dir() -> PathBuf {
+    if let Ok(d) = std::env::var("KINTSUGI_MODEL_DIR") {
+        return PathBuf::from(d);
+    }
+    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+    home.join(".local/share/kintsugi/models")
+}
+
+/// Download the chosen repo's GGUF into the models dir (blocking; call from a
+/// background task). Streams to a `.part` file, then renames on success. Returns
+/// the saved filename.
+pub fn download_model(id: &str) -> anyhow::Result<String> {
+    let (url, filename) = hf_pick_gguf(id)?;
+    let dir = models_download_dir();
+    std::fs::create_dir_all(&dir)?;
+    let dest = dir.join(&filename);
+    let part = dir.join(format!("{filename}.part"));
+    let mut resp = hf_client().get(&url).send()?.error_for_status()?;
+    let mut file = std::fs::File::create(&part)?;
+    resp.copy_to(&mut file)?;
+    std::fs::rename(&part, &dest)?;
+    Ok(filename)
+}
+
 /// Restart the daemon (stop + start) so a model selection takes effect. Uses the
 /// session password for the authenticated shutdown.
 pub fn restart_engine_with_password(password: &str) -> anyhow::Result<()> {
