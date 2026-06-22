@@ -6242,7 +6242,21 @@
                         >cargo install kintsugi</code
                     >
                     &middot; MIT-licensed &middot; no account, no telemetry,
-                    nothing leaves your machine.
+                    nothing leaves your machine.<br />
+                    <span style="color: var(--dim)"
+                        >Served over HTTPS. Every release ships a
+                        <a
+                            href="https://github.com/arrowassassin/kintsugi/releases/latest/download/SHA256SUMS"
+                            style="color: var(--gold-bright); text-decoration: none"
+                            >SHA256SUMS</a
+                        >
+                        — verify with
+                        <code
+                            style="font-family: 'IBM Plex Mono', monospace; color: var(--gold-bright)"
+                            >shasum -a 256 -c SHA256SUMS</code
+                        >. The install script checks it automatically and refuses
+                        on a mismatch.</span
+                    >
                 </p>
             </section>
 
