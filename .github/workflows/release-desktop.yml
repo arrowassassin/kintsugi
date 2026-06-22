@@ -74,6 +74,14 @@ jobs:
           STAGE="$(mktemp -d)"
           HOME="$STAGE" "$BIN" --install
           test -d "$STAGE/Applications/Kintsugi.app"
+          # Ad-hoc sign the whole .app bundle (no Apple account / secrets needed).
+          # Without ANY valid signature, a quarantined arm64 app reads as "damaged
+          # and can't be opened"; an ad-hoc signature seals the bundle so it instead
+          # shows the normal "unidentified developer" prompt — right-click → Open
+          # (or `xattr -dr com.apple.quarantine`) then works. Proper Developer ID
+          # signing + notarization (zero warnings) is a separate, secret-gated step.
+          codesign --force --deep --sign - "$STAGE/Applications/Kintsugi.app"
+          codesign --verify --deep --strict "$STAGE/Applications/Kintsugi.app"
           DMG="kintsugi-control-room-${{ matrix.target.name }}.dmg"
           hdiutil create -volname Kintsugi -srcfolder "$STAGE/Applications/Kintsugi.app" \
             -ov -format UDZO "$DMG"

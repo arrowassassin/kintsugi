@@ -24,7 +24,7 @@ set -eu
 
 REPO="arrowassassin/kintsugi"
 BINS="kintsugi kintsugi-daemon kintsugi-shim kintsugi-hook kintsugi-mcp"
-BIN_DIR="${KINTSUGI_BIN_DIR:-$HOME/.local/bin}"
+BIN_DIR="${KINTSUGI_BIN_DIR:-}"   # empty → resolved in main() to where kintsugi already lives
 VERSION=""
 FROM_SOURCE=0
 WITH_MODEL=0
@@ -69,6 +69,49 @@ detect_target() {
   esac
 }
 
+# The standard places a kintsugi suite can live. `cargo install` always uses
+# ~/.cargo/bin; this script defaults to ~/.local/bin. Keeping these coherent (one
+# suite, not two competing copies on PATH) is what resolve_bin_dir / warn_other_install do.
+STD_DIRS="$HOME/.cargo/bin $HOME/.local/bin /usr/local/bin"
+
+# Decide where to install. An explicit --bin-dir / $KINTSUGI_BIN_DIR always wins.
+# Otherwise install WHERE KINTSUGI ALREADY LIVES (a prior `cargo install` or
+# install.sh run) so the two install methods never leave two copies shadowing each
+# other; only with no existing install do we fall back to ~/.local/bin.
+resolve_bin_dir() {
+  [ -n "$BIN_DIR" ] && return 0          # explicit choice — honor it
+  existing="$(command -v kintsugi 2>/dev/null || true)"
+  if [ -z "$existing" ]; then
+    for d in $STD_DIRS; do
+      [ -x "$d/kintsugi" ] && { existing="$d/kintsugi"; break; }
+    done
+  fi
+  if [ -n "$existing" ]; then
+    cand="$(CDPATH= cd -- "$(dirname -- "$existing")" && pwd)"
+    if mkdir -p "$cand" 2>/dev/null && [ -w "$cand" ]; then
+      BIN_DIR="$cand"
+      say "found an existing install in $BIN_DIR — updating it in place (no duplicate copies)."
+      return 0
+    fi
+    warn "existing install in $(dirname -- "$existing") isn't writable; using \$HOME/.local/bin instead."
+  fi
+  BIN_DIR="$HOME/.local/bin"
+}
+
+# Warn if a SECOND kintsugi sits in another standard dir after we install — a stale
+# copy can shadow the one we just installed depending on PATH order, and (if it's a
+# different version) its daemon could be the one already bound to the socket.
+warn_other_install() {
+  here="$1"
+  for d in $STD_DIRS; do
+    [ "$d" = "$here" ] && continue
+    [ -x "$d/kintsugi" ] || continue
+    ov="$("$d/kintsugi" --version 2>/dev/null | awk '{print $NF}')"
+    warn "another kintsugi is installed in $d (v${ov:-?}); whichever is earlier on PATH wins."
+    warn "  remove the stale copy to stay coherent:  rm -f $d/kintsugi $d/kintsugi-daemon $d/kintsugi-hook $d/kintsugi-shim $d/kintsugi-mcp"
+  done
+}
+
 fetch() { # fetch URL → stdout
   if have curl; then curl -fsSL "$1"
   elif have wget; then wget -qO- "$1"
@@ -83,6 +126,22 @@ sha256() { # sha256 of FILE → hex
   if have sha256sum; then sha256sum "$1" | cut -d' ' -f1
   elif have shasum; then shasum -a 256 "$1" | cut -d' ' -f1
   else echo ""; fi
+}
+
+# The latest release tag. Tries the API first, then falls back to the
+# `releases/latest` redirect — the unauthenticated API is rate-limited (60/hr per
+# IP), which a popular one-liner installer can hit, and we don't want a rate-limit
+# to silently downgrade everyone to a slow source build.
+latest_tag() {
+  t="$(fetch "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null \
+        | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n1 || true)"
+  if [ -z "$t" ] && have curl; then
+    # …/releases/latest 302-redirects to …/releases/tag/<TAG>.
+    loc="$(curl -fsSLI -o /dev/null -w '%{url_effective}' \
+            "https://github.com/$REPO/releases/latest" 2>/dev/null || true)"
+    case "$loc" in */tag/*) t="${loc##*/tag/}" ;; esac
+  fi
+  printf '%s' "$t"
 }
 
 # Run a long command with a live spinner + elapsed time; on failure, print the
@@ -221,6 +280,29 @@ persist_env() {
   fi
 }
 
+# Add the bin dir to PATH in the user's shell profile (once) AND export it into
+# this process, so `kintsugi` is on PATH both now and in new shells. Without this,
+# a `curl | sh` install lands in ~/.local/bin and the user hits "command not found".
+persist_path() {
+  dir="$1"
+  case ":$PATH:" in *":$dir:"*) return 0 ;; esac   # already on PATH — nothing to do
+  export PATH="$dir:$PATH"
+  line="export PATH=\"$dir:\$PATH\""
+  case "${SHELL:-}" in
+    */zsh)  prof="$HOME/.zshrc" ;;
+    */bash) prof="$HOME/.bashrc" ;;
+    *)      prof="$HOME/.profile" ;;
+  esac
+  if grep -qs "$dir" "$prof" 2>/dev/null; then
+    :  # already referenced in the profile
+  elif printf '\n# added by the kintsugi installer\n%s\n' "$line" >> "$prof" 2>/dev/null; then
+    say "added $dir to your PATH in $prof"
+  else
+    warn "add this to your shell profile:  $line"
+  fi
+  say "open a new terminal — or run: export PATH=\"$dir:\$PATH\" — to use the kintsugi command."
+}
+
 # Optional step: build the llama.cpp engine and download a model from Hugging Face.
 setup_model() {
   dir="$1"
@@ -293,10 +375,10 @@ setup_model() {
 stepper() {
   dir="$1"
   echo
-  case ":$PATH:" in
-    *":$dir:"*) : ;;
-    *) say "add to your shell profile:  export PATH=\"$dir:\$PATH\"" ;;
-  esac
+  # Put the bin dir on PATH (profile + this process) so `kintsugi` just works.
+  persist_path "$dir"
+  # Flag any second copy (e.g. a `cargo install` in ~/.cargo/bin) that could shadow it.
+  warn_other_install "$dir"
 
   # Decide on wiring up front, but DEFER running `kintsugi init` until after the
   # model is in place. Otherwise init starts the daemon on the heuristic scorer,
@@ -330,6 +412,7 @@ stepper() {
 }
 
 main() {
+  resolve_bin_dir   # pick where to install: where kintsugi already lives, else ~/.local/bin
   if [ "$FROM_SOURCE" -eq 1 ]; then install_from_source; return; fi
 
   target="$(detect_target)"
@@ -339,10 +422,7 @@ main() {
   fi
 
   tag="$VERSION"
-  if [ -z "$tag" ]; then
-    tag="$(fetch "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null \
-      | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n1 || true)"
-  fi
+  [ -z "$tag" ] && tag="$(latest_tag)"
   if [ -z "$tag" ]; then
     warn "no published release found; building from source."
     install_from_source; return

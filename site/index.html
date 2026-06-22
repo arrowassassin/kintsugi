@@ -225,6 +225,59 @@
                 border: 3px solid transparent;
                 background-clip: content-box;
             }
+
+            /* ---------------------------------------------------------------
+               Responsive. The page is built with fixed-px inline styles and had
+               no breakpoints, so these overrides are max-width-gated (desktop
+               is untouched) and reach inline layout via [style*=…] selectors.
+               --------------------------------------------------------------- */
+            @media (max-width: 860px) {
+                /* Never scroll sideways on a phone. */
+                html,
+                body {
+                    overflow-x: hidden;
+                }
+                #kk-root img,
+                #kk-root svg,
+                #kk-root video,
+                #kk-root canvas {
+                    max-width: 100%;
+                    height: auto;
+                }
+                /* Stack every multi-column grid into a single column. */
+                #kk-root [style*="grid-template-columns"] {
+                    grid-template-columns: 1fr !important;
+                }
+                /* The header's middle nav links don't fit; the logo, theme
+                   toggle and GitHub button stay. (No hamburger — anchors are
+                   reachable by scrolling the one-page site.) */
+                #kk-root header nav {
+                    display: none !important;
+                }
+                /* Tighten the generous desktop section padding. */
+                #kk-root [style*="padding: 0 40px"],
+                #kk-root [style*="padding:0 40px"] {
+                    padding-left: 20px !important;
+                    padding-right: 20px !important;
+                }
+            }
+            @media (max-width: 600px) {
+                /* Let fixed-width flex *rows* (not inline-flex chips) wrap. */
+                #kk-root [style*="display: flex"] {
+                    flex-wrap: wrap;
+                }
+                /* Tame the largest display type so headlines don't overflow. */
+                #kk-root h1 {
+                    font-size: clamp(30px, 9vw, 46px) !important;
+                    letter-spacing: -0.5px !important;
+                }
+                #kk-root h2 {
+                    font-size: clamp(24px, 7vw, 34px) !important;
+                }
+                #kk-root h3 {
+                    font-size: clamp(17px, 5vw, 22px) !important;
+                }
+            }
         </style>
     </head>
     <body>
@@ -6211,6 +6264,8 @@
                         <span data-bind="copyLabel">Copy</span>
                     </button>
                 </div>
+                <!-- Desktop app downloads parked until the desktop story is settled; install via the curl command above or `cargo install kintsugi`. Restore from git history when ready. -->
+                <template id="parked-app-downloads">
                 <div
                     style="
                         margin: 18px auto 0;
@@ -6228,7 +6283,25 @@
                 </div>
                 <p
                     style="
-                        margin: 18px auto 0;
+                        margin: 14px auto 0;
+                        font-size: 12.5px;
+                        color: var(--dim);
+                        max-width: 640px;
+                    "
+                >
+                    <strong style="color: var(--ink)">First open on macOS:</strong>
+                    the build isn't notarized yet, so right-click the app &rarr;
+                    <strong style="color: var(--ink)">Open</strong>. If macOS says it's
+                    &ldquo;damaged&rdquo;, clear the download quarantine once:
+                    <code
+                        style="font-family: 'IBM Plex Mono', monospace; color: var(--gold-bright)"
+                        >xattr -dr com.apple.quarantine /Applications/Kintsugi.app</code
+                    >
+                </p>
+                </template>
+                <p
+                    style="
+                        margin: 12px auto 0;
                         font-size: 12.5px;
                         color: var(--dim);
                     "
