@@ -348,6 +348,14 @@ pub fn SetupWizard() -> Element {
                                 match step {
                                     crate::state::WizardStep::Welcome => store.wizard_step.set(Some(crate::state::WizardStep::Password)),
                                     crate::state::WizardStep::Password => {
+                                        // Second click ("I've saved it — next"): the password is
+                                        // already set and the recovery key has been shown — ADVANCE.
+                                        // (Re-running set_master_password here would fail now that a
+                                        // vault exists, leaving the wizard stuck.)
+                                        if recovery_key.read().is_some() {
+                                            store.wizard_step.set(Some(crate::state::WizardStep::Model));
+                                            return;
+                                        }
                                         // If they typed a password, set it; else skip.
                                         let new = pw_new.read().clone();
                                         if new.is_empty() {

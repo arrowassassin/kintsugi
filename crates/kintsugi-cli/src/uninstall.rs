@@ -317,3 +317,65 @@ pub fn run(purge: bool, yes: bool) -> Result<()> {
     );
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::reset_system_config;
+
+    #[test]
+    fn reset_removes_password_and_config_but_keeps_audit_data() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data = tmp.path();
+        let vault = data.join("admin-vault.json");
+
+        // The password vault + system config / runtime state.
+        std::fs::write(&vault, b"{}").unwrap();
+        for f in [
+            "model.path",
+            "fail-closed.flag",
+            "panic.flag",
+            "desktop-prefs.json",
+            "desktop-setup-done",
+            "kintsugi.pid",
+            "kintsugi.sock",
+            "watch.pid",
+        ] {
+            std::fs::write(data.join(f), b"x").unwrap();
+        }
+        // The audit data that MUST survive a non-purge uninstall.
+        for f in ["events.db", "events.db-wal", "events.db-shm"] {
+            std::fs::write(data.join(f), b"log").unwrap();
+        }
+        std::fs::create_dir(data.join("snapshots")).unwrap();
+        std::fs::write(data.join("snapshots/s1"), b"snap").unwrap();
+
+        let removed = reset_system_config(data, &vault);
+
+        // Password + system config are gone.
+        assert!(
+            !vault.exists(),
+            "the admin password (vault) must be removed"
+        );
+        for f in [
+            "model.path",
+            "fail-closed.flag",
+            "desktop-prefs.json",
+            "kintsugi.pid",
+        ] {
+            assert!(!data.join(f).exists(), "{f} (system config) must be reset");
+        }
+        assert!(
+            removed.iter().any(|r| r.contains("password")),
+            "removal summary should mention the password"
+        );
+
+        // The audit log + snapshots are kept.
+        for f in ["events.db", "events.db-wal", "events.db-shm"] {
+            assert!(data.join(f).exists(), "{f} (audit log) must be kept");
+        }
+        assert!(
+            data.join("snapshots/s1").exists(),
+            "snapshots must be kept on a non-purge uninstall"
+        );
+    }
+}
