@@ -425,14 +425,34 @@ pub fn file_changes(limit: usize) -> Vec<TimelineRow> {
 pub fn shell_log(limit: usize) -> Vec<TimelineRow> {
     newest_first(app::timeline_for_agent(&db(), "shell", limit).unwrap_or_default())
 }
+/// Newest catastrophic-class commands, fs-watch excluded — a class-targeted query
+/// so the (usually small) catastrophic set is never windowed out by a flood of
+/// ambiguous holds. Backs the Activity "Catastrophic" filter and the History merge.
+pub fn catastrophic(limit: usize) -> Vec<TimelineRow> {
+    newest_first(
+        app::timeline_by_class(&db(), kintsugi_core::Class::Catastrophic, limit)
+            .unwrap_or_default(),
+    )
+}
+
 /// History as the ENFORCEMENT record: only the commands Kintsugi actually acted
 /// on — held or blocked. This is the distinction from Activity (the full live
 /// feed): History answers "what did Kintsugi catch?", not "what happened?".
 pub fn history(limit: usize) -> Vec<TimelineRow> {
     let mut rows = app::timeline_excluding(&db(), "fs-watch", 800).unwrap_or_default();
     rows.retain(|r| r.outcome == "held" || r.outcome == "denied");
-    rows.reverse(); // newest-first
-    rows.truncate(limit); // keep the freshest `limit`, not the oldest
+    // Always fold in catastrophic-class events even if they fell outside the 800
+    // window (e.g. buried under hundreds of ambiguous holds) — they're the whole
+    // point of an enforcement record. Dedupe by id, then sort newest-first.
+    for c in app::timeline_by_class(&db(), kintsugi_core::Class::Catastrophic, 200)
+        .unwrap_or_default()
+    {
+        if !rows.iter().any(|r| r.id == c.id) {
+            rows.push(c);
+        }
+    }
+    rows.sort_by(|a, b| b.ts.cmp(&a.ts)); // RFC3339 strings sort chronologically
+    rows.truncate(limit); // keep the freshest `limit`
     rows
 }
 

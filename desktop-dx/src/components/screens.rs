@@ -798,9 +798,14 @@ pub fn Feed() -> Element {
     let timeline = use_resource(move || async move {
         let _ = store.tick.read();
         let files = *show_files.read();
+        let filt = *store.feed_filter.read();
         tokio::task::spawn_blocking(move || {
             if files {
                 crate::bindings::file_changes(100) // fs-watch backstop, on demand
+            } else if filt == "catastrophic" {
+                // Class-targeted so old catastrophic events aren't windowed out by
+                // a flood of ambiguous holds (a newest-200 feed would miss them).
+                crate::bindings::catastrophic(200)
             } else {
                 crate::bindings::commands(200) // agent feed, fs-watch EXCLUDED
             }
@@ -817,6 +822,7 @@ pub fn Feed() -> Element {
         .filter(|r| {
             let dec = outcome_decision(&r.outcome);
             match filter {
+                "catastrophic" => r.class == "catastrophic",
                 "held" => dec == "held",
                 "blocked" => dec == "blocked",
                 "tainted" => r.provenance_block,
@@ -845,6 +851,7 @@ pub fn Feed() -> Element {
     let cols = "grid-template-columns:64px 1fr 130px 124px 150px 110px;gap:14px";
     let filters = [
         ("all", "All"),
+        ("catastrophic", "Catastrophic"),
         ("held", "Held"),
         ("blocked", "Blocked"),
         ("tainted", "Tainted"),
@@ -1093,6 +1100,7 @@ pub fn Held() -> Element {
                         let session = q.session.clone().unwrap_or_default();
                         let command = q.command.clone();
                         let reason = q.reason.clone();
+                        let summary = q.summary.clone();
                         let ts = clock(&q.ts);
                         let trifecta = q.provenance_block;
                         let head_bg = if trifecta {
@@ -1142,6 +1150,15 @@ pub fn Held() -> Element {
 
                                     // reason — plain english
                                     div { style: "font-size:14px;line-height:1.55;margin-bottom:14px;color:var(--ink)", "{reason}" }
+
+                                    // model summary — the Tier-2 plain-English read of the
+                                    // command, when the local model scored it at hold time.
+                                    if let Some(s) = summary.clone() {
+                                        div { style: "display:flex;gap:10px;align-items:flex-start;margin-bottom:14px;padding:11px 13px;border:1px solid var(--gold-line);border-radius:9px;background:rgba(212,175,55,.06)",
+                                            span { style: "flex:none;font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:var(--gold);padding-top:1px", "Model" }
+                                            span { style: "font-size:13px;line-height:1.5;color:var(--ink)", "{s}" }
+                                        }
+                                    }
 
                                     // raw command verbatim, on the --term surface
                                     div { style: "font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px", "Raw command — shown verbatim" }
