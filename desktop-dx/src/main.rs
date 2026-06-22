@@ -174,6 +174,15 @@ fn App() -> Element {
         }
     });
 
+    // Persist the look whenever it changes — reads both signals so a theme swap
+    // OR a menu-bar toggle re-runs it, writing the prefs file the next launch
+    // restores from. Best-effort; the write never blocks the UI.
+    use_effect(move || {
+        let theme = *store.theme.read();
+        let nav_open = *store.nav_open.read();
+        crate::bindings::save_ui_prefs(theme, nav_open);
+    });
+
     let theme_vars = store.theme.read().root_vars();
     let unlocked = *store.unlocked.read();
     let panic = *store.panic.read();

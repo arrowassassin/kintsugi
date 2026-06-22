@@ -828,6 +828,45 @@ pub fn policy_view() -> PolicyView {
     }
 }
 
+// ---- persisted UI prefs (theme + menu-bar visibility) ----------------------
+
+/// Where the desktop's UI prefs live — next to the event log, like the setup
+/// marker, so they survive restarts and travel with the data dir.
+fn prefs_path() -> PathBuf {
+    kintsugi_daemon::default_db_path().with_file_name("desktop-prefs.json")
+}
+
+/// Load the persisted theme + menu-bar (`nav_open`) state. A missing or corrupt
+/// file falls back to the historical defaults (dark theme, menu open), so a fresh
+/// install looks exactly as it did before this was persisted.
+pub fn load_ui_prefs() -> (crate::theme::Theme, bool) {
+    let default = (crate::theme::Theme::Dark, true);
+    let Ok(text) = std::fs::read_to_string(prefs_path()) else {
+        return default;
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return default;
+    };
+    let theme = v
+        .get("theme")
+        .and_then(|t| t.as_str())
+        .map(crate::theme::Theme::from_key)
+        .unwrap_or(default.0);
+    let nav_open = v.get("nav_open").and_then(|b| b.as_bool()).unwrap_or(default.1);
+    (theme, nav_open)
+}
+
+/// Persist the theme + menu-bar state. Best-effort: a write failure just means
+/// the choice won't survive the next restart — never block a toggle or surface it.
+pub fn save_ui_prefs(theme: crate::theme::Theme, nav_open: bool) {
+    let p = prefs_path();
+    if let Some(dir) = p.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let body = serde_json::json!({ "theme": theme.key(), "nav_open": nav_open });
+    let _ = std::fs::write(&p, serde_json::to_vec_pretty(&body).unwrap_or_default());
+}
+
 // ---- updates (Settings → "Check for updates") -----------------------------
 
 /// Result of a `kintsugi update --check` run, for the Settings update control.

@@ -10,6 +10,23 @@ pub enum Theme {
 }
 
 impl Theme {
+    /// Stable string key for persistence (see `bindings::save_ui_prefs`).
+    pub fn key(self) -> &'static str {
+        match self {
+            Theme::Dark => "dark",
+            Theme::Light => "light",
+        }
+    }
+
+    /// Parse a persisted key back to a theme; anything unrecognized → `Dark`
+    /// (the default), so a corrupt or future-written prefs file is harmless.
+    pub fn from_key(s: &str) -> Theme {
+        match s {
+            "light" => Theme::Light,
+            _ => Theme::Dark,
+        }
+    }
+
     /// The CSS-variable block applied to the root element's `style`.
     pub fn root_vars(self) -> &'static str {
         match self {

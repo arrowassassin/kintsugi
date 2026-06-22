@@ -139,10 +139,13 @@ pub const FEED_PAGE_SIZE: usize = 9;
 
 impl Store {
     pub fn new() -> Self {
+        // Restore the user's persisted look (theme + menu-bar visibility) so the
+        // app reopens the way they left it; defaults to dark + menu-open.
+        let (theme0, nav_open0) = crate::bindings::load_ui_prefs();
         Store {
             screen: Signal::new(Screen::Dashboard),
-            nav_open: Signal::new(true),
-            theme: Signal::new(Theme::Dark),
+            nav_open: Signal::new(nav_open0),
+            theme: Signal::new(theme0),
             unlocked: Signal::new(false),
             pw: Signal::new(String::new()),
             pw_error: Signal::new(false),
