@@ -654,7 +654,7 @@ pub fn Dashboard() -> Element {
     ];
 
     rsx! {
-        div { style: "padding:30px 26px;max-width:720px;margin:0 auto;{FADE}",
+        div { style: "padding:30px 26px;{FADE}",
             div { style: "border:1px solid {line};border-radius:16px;background:{bg};padding:22px 24px",
                 div { style: "display:flex;align-items:center;gap:16px",
                     span { style: "display:inline-flex;align-items:center;justify-content:center;width:46px;height:46px;flex:none;border-radius:12px;background:{icon_bg}",
@@ -806,7 +806,7 @@ pub fn Feed() -> Element {
     };
 
     rsx! {
-        div { style: "padding:26px;max-width:1180px;{FADE}",
+        div { style: "padding:26px;{FADE}",
             div { style: "display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:center",
                 div { style: "position:relative;flex:1;min-width:200px;max-width:300px",
                     svg { view_box: "0 0 24 24", width: "15", height: "15", fill: "none", stroke: "var(--dim)", stroke_width: "1.8", stroke_linecap: "round", stroke_linejoin: "round", style: "position:absolute;left:11px;top:50%;transform:translateY(-50%)",
@@ -958,7 +958,7 @@ pub fn Held() -> Element {
 
     let total_pending = rows.len();
     rsx! {
-        div { style: "padding:26px;max-width:920px;{FADE}",
+        div { style: "padding:26px;{FADE}",
 
             // Bulk recovery: prune every stale "pending" entry left over by older
             // ambiguous holds an agent's native prompt approved. The spine fix in
@@ -1183,7 +1183,7 @@ pub fn Audit() -> Element {
     let cols = "grid-template-columns:64px 1fr 130px 124px 150px";
 
     rsx! {
-        div { style: "padding:26px;max-width:1180px;{FADE}",
+        div { style: "padding:26px;{FADE}",
 
             // ── tamper-evidence badge ────────────────────────────────────
             {
@@ -1413,7 +1413,7 @@ pub fn Provenance() -> Element {
     // Calm empty state: nothing untrusted-influenced was ever seen.
     if candidates.is_empty() {
         return rsx! {
-            div { style: "padding:26px;max-width:1180px;{FADE}",
+            div { style: "padding:26px;{FADE}",
                 div { style: "border:1px solid rgba(90,247,142,.3);border-radius:14px;background:linear-gradient(100deg,rgba(90,247,142,.07),transparent);padding:40px 30px;text-align:center",
                     span { style: "display:inline-flex;align-items:center;justify-content:center;width:52px;height:52px;border-radius:14px;background:rgba(90,247,142,.13);margin-bottom:16px",
                         svg { view_box: "0 0 24 24", width: "26", height: "26", fill: "none", stroke: "var(--green)", stroke_width: "1.7", stroke_linecap: "round", stroke_linejoin: "round",
@@ -1432,7 +1432,7 @@ pub fn Provenance() -> Element {
     let sel_session = selected.read().as_ref().map(|(s, _)| s.clone());
 
     rsx! {
-        div { style: "padding:26px;max-width:1180px;{FADE}",
+        div { style: "padding:26px;{FADE}",
             // header card — matches the design's provenance intro
             div { style: "border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:16px 18px;margin-bottom:18px;display:flex;align-items:center;gap:13px",
                 svg { view_box: "0 0 24 24", width: "18", height: "18", fill: "none", stroke: "var(--gold)", stroke_width: "1.7", stroke_linecap: "round", stroke_linejoin: "round",
@@ -1643,7 +1643,7 @@ pub fn Recorder() -> Element {
     let cols = "grid-template-columns:64px 150px 1fr 110px;gap:14px";
 
     rsx! {
-        div { style: "padding:26px;max-width:1180px;{FADE}",
+        div { style: "padding:26px;{FADE}",
 
             // ── gold "passive recorder active" banner ──
             div { style: "display:flex;align-items:center;gap:14px;border:1px solid var(--gold-line);border-radius:12px;background:linear-gradient(100deg,rgba(212,175,55,.06),transparent);padding:15px 18px;margin-bottom:18px",
@@ -1840,7 +1840,7 @@ pub fn Snapshots() -> Element {
     let count = rows.len();
 
     rsx! {
-        div { style: "padding:26px;max-width:1100px;{FADE}",
+        div { style: "padding:26px;{FADE}",
 
             // The honest promise — copied from the design's undo intro.
             div { style: "font-size:13px;color:var(--dim);margin-bottom:16px;line-height:1.5;max-width:760px",
@@ -2046,7 +2046,7 @@ pub fn Settings() -> Element {
     };
 
     rsx! {
-        div { style: "padding:26px;max-width:880px;{FADE}",
+        div { style: "padding:26px;{FADE}",
             // ── admin lock ──
             div { style: "border:1px solid var(--gold-line);border-radius:12px;background:linear-gradient(100deg,rgba(212,175,55,.06),transparent);padding:18px 20px;margin-bottom:16px;display:flex;align-items:center;gap:15px",
                 span { style: "display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;border-radius:10px;background:rgba(212,175,55,.13);flex:none",
@@ -2829,7 +2829,7 @@ pub fn Policy() -> Element {
     };
 
     rsx! {
-        div { style: "padding:26px;max-width:920px;{FADE}",
+        div { style: "padding:26px;{FADE}",
 
             // ── (a) Built-in protections ─────────────────────────────────
             div { style: "border:1px solid var(--line);border-radius:14px;background:var(--panel);overflow:hidden;margin-bottom:18px",

@@ -34,6 +34,7 @@ const ICON_PNG_128: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/logo-128.p
 const ICON_PNG_512: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/logo-512.png"));
 
 mod install;
+mod tray;
 
 fn main() {
     // Self-install flags so `cargo install kintsugi-control-room && kintsugi-control-room --install`
@@ -98,6 +99,11 @@ fn main() {
         .with_window(window)
         .with_background_color((11, 13, 18, 255));
 
+    // Build the system tray BEFORE launching dioxus (macOS requires it on the
+    // main thread, which dioxus blocks below). The handle is held by `_tray` so
+    // it lives for the duration of the app — dropping it removes the icon.
+    let _tray = tray::install_tray();
+
     dioxus::LaunchBuilder::desktop()
         .with_cfg(cfg)
         .launch(App);
@@ -108,6 +114,23 @@ fn App() -> Element {
     // Provide the shared store to the whole tree (context = `this`).
     use_context_provider(Store::new);
     let mut store = use_context::<Store>();
+
+    // Bridge the system tray to the window: when a left-click on the tray (or
+    // "Show Kintsugi" from the menu) flips the flag, set the window visible +
+    // focused so the user finds the app where they expect it.
+    let window = dioxus::desktop::use_window();
+    use_future(move || {
+        let window = window.clone();
+        async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                if tray::SHOW_REQUESTED.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                    window.set_visible(true);
+                    window.set_focus();
+                }
+            }
+        }
+    });
 
     // First-run setup wizard — show once on first launch (no marker file yet),
     // and only when the user is unlocked so the password card etc. are usable.
