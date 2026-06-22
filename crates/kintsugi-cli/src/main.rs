@@ -1973,11 +1973,12 @@ fn stop_via_daemon() -> Result<()> {
 
 /// The GitHub repo + installer URL. The installer is the single source of
 /// truth for download/checksum/source-fallback logic — `update` just re-runs it.
+/// The installer scripts are served from the product site (kintsugi.tools, a
+/// GitHub Pages custom domain) and mirrored as release assets; the site URL is the
+/// stable, human-facing one we point users at.
 const UPDATE_REPO: &str = "arrowassassin/kintsugi";
-pub(crate) const INSTALL_URL: &str =
-    "https://github.com/arrowassassin/kintsugi/releases/latest/download/install.sh";
-pub(crate) const PICKER_URL: &str =
-    "https://github.com/arrowassassin/kintsugi/releases/latest/download/pick-model.sh";
+pub(crate) const INSTALL_URL: &str = "https://kintsugi.tools/install.sh";
+pub(crate) const PICKER_URL: &str = "https://kintsugi.tools/pick-model.sh";
 
 /// `kintsugi update`: check GitHub for a newer release and (with consent) install it.
 ///

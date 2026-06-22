@@ -61,7 +61,7 @@ pub fn audit(query: &str, limit: usize) -> Vec<TimelineRow> {
     newest_first(app::audit(&db(), query, limit).unwrap_or_default())
 }
 pub fn queue() -> Vec<QueueRow> {
-    let mut q = app::queue().unwrap_or_default();
+    let mut q = app::queue(&db()).unwrap_or_default();
     q.reverse();
     q
 }
@@ -73,6 +73,60 @@ pub fn provenance(session: &str, command: Option<&str>) -> Option<ProvenanceView
 }
 pub fn resolve(id: &str, allow: bool) -> bool {
     app::resolve(id, allow).is_ok()
+}
+
+/// Approve a held command **and run it from the app** — the GUI equivalent of
+/// `kintsugi run <id>`.
+///
+/// For an *out-of-band* hold (a one-shot agent hook like claude-code already got
+/// the deny and left, so nothing is waiting to execute it), the human runs it
+/// here: the daemon's `approve` snapshots the predicted paths first (so
+/// `kintsugi undo` can roll it back) and records the Allow, then we execute the
+/// raw command in its original directory. For an *in-band* hold (mcp/shim) a
+/// caller is parked waiting, so we only approve and let that caller run it —
+/// running here too would double-run it.
+///
+/// Safe by construction: this lives in the GUI binary and is reachable only by a
+/// human clicking in the unlocked app — never over the daemon socket — so an agent
+/// shelling out cannot self-approve-and-run. That process isolation, plus the
+/// two-step confirm in the UI, is the GUI's equivalent of the CLI's typed-at-the-
+/// terminal code gate.
+pub fn approve_and_run(id: &str) -> anyhow::Result<String> {
+    use kintsugi_daemon::Client;
+    let item = Client::list_pending()?
+        .into_iter()
+        .find(|i| i.command.id.to_string() == id)
+        .ok_or_else(|| anyhow::anyhow!("that command is no longer held"))?;
+    // mcp/shim: a caller is waiting to run it on approval; just approve.
+    let in_band = matches!(item.command.agent.as_str(), "mcp" | "shim");
+    // approve: snapshots the predicted paths, records the Allow, marks resolved.
+    Client::approve(id).map_err(|e| anyhow::anyhow!("approve failed: {e}"))?;
+    if in_band {
+        return Ok("Approved — the waiting agent will run it.".to_string());
+    }
+    let status = run_in_shell(&item.command.cwd, &item.command.raw)?;
+    Ok(match status.code() {
+        Some(0) => "Ran it. `kintsugi undo` can roll back the snapshot.".to_string(),
+        Some(code) => format!("Ran it — the command exited with code {code}."),
+        None => "Ran it (terminated by a signal).".to_string(),
+    })
+}
+
+/// Execute a raw command line in `cwd` via the platform shell, inheriting stdio.
+/// Mirrors the CLI's `run_in_shell` so chaining/redirects behave identically.
+fn run_in_shell(cwd: &std::path::Path, raw: &str) -> anyhow::Result<std::process::ExitStatus> {
+    let mut cmd = if cfg!(windows) {
+        let mut c = std::process::Command::new("cmd");
+        c.arg("/C").arg(raw);
+        c
+    } else {
+        let mut c = std::process::Command::new("sh");
+        c.arg("-c").arg(raw);
+        c
+    };
+    cmd.current_dir(cwd);
+    cmd.status()
+        .map_err(|e| anyhow::anyhow!("run `{raw}`: {e}"))
 }
 
 // ---- engine controls (the on / off / panic switches) -----------------------
@@ -371,14 +425,34 @@ pub fn file_changes(limit: usize) -> Vec<TimelineRow> {
 pub fn shell_log(limit: usize) -> Vec<TimelineRow> {
     newest_first(app::timeline_for_agent(&db(), "shell", limit).unwrap_or_default())
 }
+/// Newest catastrophic-class commands, fs-watch excluded — a class-targeted query
+/// so the (usually small) catastrophic set is never windowed out by a flood of
+/// ambiguous holds. Backs the Activity "Catastrophic" filter and the History merge.
+pub fn catastrophic(limit: usize) -> Vec<TimelineRow> {
+    newest_first(
+        app::timeline_by_class(&db(), kintsugi_core::Class::Catastrophic, limit)
+            .unwrap_or_default(),
+    )
+}
+
 /// History as the ENFORCEMENT record: only the commands Kintsugi actually acted
 /// on — held or blocked. This is the distinction from Activity (the full live
 /// feed): History answers "what did Kintsugi catch?", not "what happened?".
 pub fn history(limit: usize) -> Vec<TimelineRow> {
     let mut rows = app::timeline_excluding(&db(), "fs-watch", 800).unwrap_or_default();
     rows.retain(|r| r.outcome == "held" || r.outcome == "denied");
-    rows.reverse(); // newest-first
-    rows.truncate(limit); // keep the freshest `limit`, not the oldest
+    // Always fold in catastrophic-class events even if they fell outside the 800
+    // window (e.g. buried under hundreds of ambiguous holds) — they're the whole
+    // point of an enforcement record. Dedupe by id, then sort newest-first.
+    for c in app::timeline_by_class(&db(), kintsugi_core::Class::Catastrophic, 200)
+        .unwrap_or_default()
+    {
+        if !rows.iter().any(|r| r.id == c.id) {
+            rows.push(c);
+        }
+    }
+    rows.sort_by(|a, b| b.ts.cmp(&a.ts)); // RFC3339 strings sort chronologically
+    rows.truncate(limit); // keep the freshest `limit`
     rows
 }
 
@@ -958,6 +1032,21 @@ pub fn apply_update() -> anyhow::Result<String> {
         anyhow::bail!("{}", text.trim());
     }
     Ok(text.trim().to_string())
+}
+
+/// What provenance tracks, for the Rules view — the untrusted ingest channels
+/// that taint a session. Sourced from kintsugi-core's `SourceKind`, so the
+/// displayed list is the real one the interception layer classifies, never a
+/// drifting copy.
+pub fn untrusted_sources() -> Vec<(&'static str, &'static str)> {
+    kintsugi_core::untrusted_sources()
+}
+
+/// The egress channels provenance watches for the "data leaves the machine" leg
+/// (curl, wget, ssh, scp, `git push`, DNS tools, …). Sourced from kintsugi-core's
+/// `is_egress_sink` catalog so it stays in lock-step with what actually fires.
+pub fn egress_channels() -> Vec<(&'static str, &'static str)> {
+    kintsugi_core::egress_channels()
 }
 
 /// The built-in deterministic protections — always on, the heart of the gate.

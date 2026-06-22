@@ -920,6 +920,34 @@ pub fn is_sensitive_read(cmd: &ProposedCommand) -> Option<String> {
 /// approximation only matters when a session is *also* tainted and a secret is
 /// *also* in play (the full trifecta), so erring toward caution is cheap. Returns
 /// a short descriptor of the sink (program name, or `git push`).
+/// Programs that are *always* a network egress channel. The single source of
+/// truth for the unconditional half of [`is_egress_sink`] **and** the human-facing
+/// [`egress_channels`] catalog the app's Rules view renders — so what's displayed
+/// can never drift from what actually fires. The conditional channels (scp/rsync
+/// to a remote target, ssh to a remote command, `git push`) are handled in
+/// `is_egress_sink` and described in `egress_channels`.
+const ALWAYS_EGRESS: &[&str] = &[
+    // HTTP(S) + raw socket + file transfer.
+    "curl", "wget", "fetch", "nc", "ncat", "netcat", "telnet", "ftp", "sftp", "tftp",
+    // DNS tools can tunnel data out via crafted lookups.
+    "dig", "host", "nslookup",
+];
+
+/// The egress channels the provenance/trifecta engine watches for the "data
+/// leaves the machine" leg, as (channels, what it is) for the Rules view. Kept
+/// honest against [`is_egress_sink`] by `always_egress_programs_are_all_flagged`.
+pub fn egress_channels() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("curl, wget, fetch", "HTTP(S) upload / download"),
+        ("nc, ncat, netcat, telnet", "raw TCP / UDP socket"),
+        ("ftp, sftp, tftp", "file transfer"),
+        ("dig, host, nslookup", "DNS lookups — can tunnel data out"),
+        ("scp, rsync", "remote copy — when the target is remote"),
+        ("ssh", "running a remote command or login"),
+        ("git push", "pushes commits to a remote"),
+    ]
+}
+
 pub fn is_egress_sink(cmd: &ProposedCommand) -> Option<String> {
     for seg in segment_command(&cmd.raw) {
         let tokens = shell::split(&seg);
@@ -930,11 +958,8 @@ pub fn is_egress_sink(cmd: &ProposedCommand) -> Option<String> {
         let prog = program_name(argv[0]);
         let args: Vec<&str> = argv[1..].to_vec();
         let hit = match prog.as_str() {
-            // Always a network egress channel.
-            "curl" | "wget" | "fetch" | "nc" | "ncat" | "netcat" | "telnet" | "ftp" | "sftp"
-            | "tftp" => true,
-            // DNS tools can tunnel data out via crafted lookups.
-            "dig" | "host" | "nslookup" => true,
+            // Unconditional egress channels — see `ALWAYS_EGRESS`.
+            p if ALWAYS_EGRESS.contains(&p) => true,
             // Remote transfer only when a target looks remote (local scp/rsync isn't egress).
             "scp" | "rsync" => args.iter().any(|a| looks_remote(a)),
             // ssh running a remote command/login is an egress channel.
@@ -1234,6 +1259,42 @@ mod tests {
 
     fn class_of(line: &str) -> Class {
         classify_line(line).class
+    }
+
+    #[test]
+    fn always_egress_programs_are_all_flagged() {
+        // The Rules view advertises these channels; prove each one the displayed
+        // catalog promises is actually treated as an egress sink, so the UI can't
+        // claim coverage the engine doesn't have.
+        for p in ALWAYS_EGRESS {
+            let raw = format!("{p} example.com");
+            let cmd = crate::types::ProposedCommand::new(
+                "t",
+                std::path::Path::new("/"),
+                vec![p.to_string(), "example.com".to_string()],
+                &raw,
+            );
+            assert!(
+                is_egress_sink(&cmd).is_some(),
+                "{p} is in the advertised egress catalog but is_egress_sink missed it"
+            );
+        }
+    }
+
+    #[test]
+    fn egress_catalog_is_non_empty_and_mentions_the_core_channels() {
+        let cat = egress_channels();
+        assert!(!cat.is_empty());
+        let blob = cat
+            .iter()
+            .map(|(a, b)| format!("{a} {b}"))
+            .collect::<String>();
+        for needle in ["curl", "wget", "ssh", "git push"] {
+            assert!(
+                blob.contains(needle),
+                "egress catalog should mention {needle}"
+            );
+        }
     }
 
     #[test]

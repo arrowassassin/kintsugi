@@ -1,7 +1,7 @@
 #!/bin/sh
 # Kintsugi model picker — fetch *compatible* GGUF options and install one.
 #
-#   curl -fsSL https://github.com/arrowassassin/kintsugi/releases/latest/download/pick-model.sh | sh
+#   curl -fsSL https://kintsugi.tools/pick-model.sh | sh
 #
 # Kintsugi runs fine with no model (the default heuristic scorer is offline and
 # always available). This optional helper fetches a short, RAM-appropriate list

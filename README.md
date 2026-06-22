@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://arrowassassin.github.io/kintsugi/logo.svg" alt="Kintsugi" width="420" />
+  <img src="https://kintsugi.tools/logo.svg" alt="Kintsugi" width="420" />
 </p>
 
 # Kintsugi
@@ -20,9 +20,9 @@ dangerous command **before** it runs, explains it in one plain sentence, makes
 destructive actions **reversible**, and keeps a tamper-evident record of everything
 every agent did. Local-first: no cloud, no account, nothing leaves your machine.
 
-**Website:** https://arrowassassin.github.io/kintsugi/ · **Docs:** [`docs/`](docs/)
+**Website:** https://kintsugi.tools/ · **Docs:** [`docs/`](docs/)
 
-![Kintsugi: a destructive command is held before it runs, denied, and lands on the tamper-evident timeline; then the live TUI](https://arrowassassin.github.io/kintsugi/cast.svg)
+![Kintsugi: a destructive command is held before it runs, denied, and lands on the tamper-evident timeline; then the live TUI](https://kintsugi.tools/cast.svg)
 
 *Real Kintsugi output, looping: hold card → denied timeline → live TUI. (Static
 frames in [`docs/img/`](docs/img/) if the animation doesn't play.)*
@@ -210,7 +210,7 @@ your platform has none), then walks you through wiring your agents and an
 **optional** local model — everything optional can be skipped:
 
 ```sh
-curl -fsSL https://github.com/arrowassassin/kintsugi/releases/latest/download/install.sh | sh
+curl -fsSL https://kintsugi.tools/install.sh | sh
 ```
 
 Prefer Cargo? `cargo install kintsugi` installs all five CLI binaries; then

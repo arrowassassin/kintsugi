@@ -798,9 +798,14 @@ pub fn Feed() -> Element {
     let timeline = use_resource(move || async move {
         let _ = store.tick.read();
         let files = *show_files.read();
+        let filt = *store.feed_filter.read();
         tokio::task::spawn_blocking(move || {
             if files {
                 crate::bindings::file_changes(100) // fs-watch backstop, on demand
+            } else if filt == "catastrophic" {
+                // Class-targeted so old catastrophic events aren't windowed out by
+                // a flood of ambiguous holds (a newest-200 feed would miss them).
+                crate::bindings::catastrophic(200)
             } else {
                 crate::bindings::commands(200) // agent feed, fs-watch EXCLUDED
             }
@@ -817,6 +822,7 @@ pub fn Feed() -> Element {
         .filter(|r| {
             let dec = outcome_decision(&r.outcome);
             match filter {
+                "catastrophic" => r.class == "catastrophic",
                 "held" => dec == "held",
                 "blocked" => dec == "blocked",
                 "tainted" => r.provenance_block,
@@ -845,6 +851,7 @@ pub fn Feed() -> Element {
     let cols = "grid-template-columns:64px 1fr 130px 124px 150px 110px;gap:14px";
     let filters = [
         ("all", "All"),
+        ("catastrophic", "Catastrophic"),
         ("held", "Held"),
         ("blocked", "Blocked"),
         ("tainted", "Tainted"),
@@ -1005,6 +1012,10 @@ pub fn Held() -> Element {
     // Local tick re-runs the resource right after a resolve(); the global tick
     // keeps the list live. The queue read runs OFF the UI thread.
     let mut tick = use_signal(|| 0u32);
+    // Which card (by id) is armed for "Approve & run" — a deliberate two-step so a
+    // catastrophic command can't run on a single stray click. One signal for the
+    // whole list (only one card arms at a time).
+    let mut arming = use_signal(|| None::<String>);
     let rows = use_resource(move || async move {
         let _ = tick(); // refresh immediately after resolve()
         let _ = store.tick.read(); // live refresh on the heartbeat
@@ -1076,12 +1087,40 @@ pub fn Held() -> Element {
                         let id = q.id.clone();
                         let allow_id = id.clone();
                         let deny_id = id.clone();
+                        let run_id = id.clone();
+                        let arm_id = id.clone();
                         let (class_label, class_color) = class_style(&q.class);
                         let agent = q.agent.clone();
+                        // In-band agents (mcp/shim) have a caller parked, waiting to run the
+                        // command the instant it's approved. Out-of-band ones (a one-shot
+                        // agent hook like claude-code) already got the deny and left — nothing
+                        // is waiting, so the human runs it here, from this trusted UI.
+                        let in_band = matches!(q.agent.as_str(), "mcp" | "shim");
+                        let armed = arming.read().as_deref() == Some(id.as_str());
                         let session = q.session.clone().unwrap_or_default();
                         let command = q.command.clone();
                         let reason = q.reason.clone();
+                        let summary = q.summary.clone();
                         let ts = clock(&q.ts);
+                        // The same "Activity detail" drawer the feed opens — built from the
+                        // held command so a reviewer can inspect it (cwd, summary, rule, id)
+                        // without leaving the queue. outcome is "held"; tier follows the
+                        // summary (the model only scores the ambiguous/catastrophic bands).
+                        let detail_row = crate::bindings::TimelineRow {
+                            id: q.id.clone(),
+                            ts: q.ts.clone(),
+                            agent: q.agent.clone(),
+                            session: q.session.clone(),
+                            command: q.command.clone(),
+                            class: q.class.clone(),
+                            outcome: "held".to_string(),
+                            reason: q.reason.clone(),
+                            provenance_block: q.provenance_block,
+                            risk: None,
+                            summary: q.summary.clone(),
+                            cwd: q.cwd.clone(),
+                            tier: if q.summary.is_some() { 2 } else { 1 },
+                        };
                         let trifecta = q.provenance_block;
                         let head_bg = if trifecta {
                             "background:linear-gradient(90deg,rgba(255,93,93,.1),transparent)"
@@ -1131,32 +1170,87 @@ pub fn Held() -> Element {
                                     // reason — plain english
                                     div { style: "font-size:14px;line-height:1.55;margin-bottom:14px;color:var(--ink)", "{reason}" }
 
+                                    // model summary — the Tier-2 plain-English read of the
+                                    // command, when the local model scored it at hold time.
+                                    if let Some(s) = summary.clone() {
+                                        div { style: "display:flex;gap:10px;align-items:flex-start;margin-bottom:14px;padding:11px 13px;border:1px solid var(--gold-line);border-radius:9px;background:rgba(212,175,55,.06)",
+                                            span { style: "flex:none;font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:var(--gold);padding-top:1px", "Model" }
+                                            span { style: "font-size:13px;line-height:1.5;color:var(--ink)", "{s}" }
+                                        }
+                                    }
+
                                     // raw command verbatim, on the --term surface
-                                    div { style: "font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px", "Raw command — shown verbatim" }
-                                    div { style: "font-family:'IBM Plex Mono',monospace;font-size:13px;line-height:1.5;background:var(--term);border:1px solid var(--line);border-radius:9px;padding:13px 15px;color:#e7ecf6;overflow-x:auto;white-space:nowrap", "{command}" }
+                                    div { style: "display:flex;align-items:center;justify-content:space-between;margin-bottom:6px",
+                                        span { style: "font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px", "Raw command — shown verbatim" }
+                                        span { style: "font-size:11px;color:var(--gold);font-weight:600", "View detail →" }
+                                    }
+                                    div {
+                                        style: "font-family:'IBM Plex Mono',monospace;font-size:13px;line-height:1.5;background:var(--term);border:1px solid var(--line);border-radius:9px;padding:13px 15px;color:#e7ecf6;overflow-x:auto;white-space:nowrap;cursor:pointer",
+                                        title: "Open the Activity detail drawer",
+                                        onclick: move |_| store.detail.set(Some(detail_row.clone())),
+                                        "{command}"
+                                    }
 
                                     // actions
                                     div { style: "display:flex;gap:11px;flex-wrap:wrap;margin-top:18px;padding-top:18px;border-top:1px solid var(--line)",
                                         button { style: "font-family:inherit;font-size:13.5px;font-weight:600;color:#fff;background:var(--red);border:none;border-radius:9px;padding:11px 20px;cursor:pointer;display:inline-flex;align-items:center;gap:9px",
                                             onclick: move |_| {
                                                 crate::bindings::resolve(&deny_id, false);
+                                                arming.set(None);
                                                 let t = *tick.read();
                                                 tick.set(t + 1);
                                             },
                                             kbd { style: "font-family:inherit;font-size:10.5px;background:rgba(0,0,0,.22);border-radius:4px;padding:1px 5px", "D" }
                                             "Deny"
                                         }
-                                        button { style: "font-family:inherit;font-size:13.5px;font-weight:600;color:var(--ink);background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:11px 20px;cursor:pointer;display:inline-flex;align-items:center;gap:9px",
-                                            onclick: move |_| {
-                                                crate::bindings::resolve(&allow_id, true);
-                                                let t = *tick.read();
-                                                tick.set(t + 1);
-                                            },
-                                            kbd { style: "font-family:inherit;font-size:10.5px;background:var(--bg);border-radius:4px;padding:1px 5px", "A" }
-                                            "Allow once"
-                                        }
-                                        span { style: "margin-left:auto;align-self:center;font-size:12px;color:var(--dim);max-width:240px;text-align:right;line-height:1.4",
-                                            "False positive? Approving is one key — the context above is the whole story."
+
+                                        if in_band {
+                                            // A caller is parked waiting — approving lets IT run the command.
+                                            button { style: "font-family:inherit;font-size:13.5px;font-weight:600;color:var(--ink);background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:11px 20px;cursor:pointer;display:inline-flex;align-items:center;gap:9px",
+                                                onclick: move |_| {
+                                                    crate::bindings::resolve(&allow_id, true);
+                                                    let t = *tick.read();
+                                                    tick.set(t + 1);
+                                                },
+                                                kbd { style: "font-family:inherit;font-size:10.5px;background:var(--bg);border-radius:4px;padding:1px 5px", "A" }
+                                                "Allow once"
+                                            }
+                                            span { style: "margin-left:auto;align-self:center;font-size:12px;color:var(--dim);max-width:260px;text-align:right;line-height:1.4",
+                                                "The {agent} call is waiting — approving lets it run."
+                                            }
+                                        } else if armed {
+                                            // Step 2: confirm. The agent already got the deny and left;
+                                            // running it here is the human taking over (snapshot + undo).
+                                            button { style: "font-family:inherit;font-size:13.5px;font-weight:700;color:#fff;background:var(--gold);border:none;border-radius:9px;padding:11px 20px;cursor:pointer;display:inline-flex;align-items:center;gap:9px",
+                                                onclick: move |_| {
+                                                    let res = crate::bindings::approve_and_run(&run_id);
+                                                    arming.set(None);
+                                                    match res {
+                                                        Ok(msg) => store.toast(crate::state::ToastKind::Success, msg),
+                                                        Err(e) => store.toast(crate::state::ToastKind::Error, format!("Couldn't run it: {e}")),
+                                                    };
+                                                    let t = *tick.read();
+                                                    tick.set(t + 1);
+                                                },
+                                                "⚠ Run it now"
+                                            }
+                                            button { style: "font-family:inherit;font-size:13.5px;font-weight:600;color:var(--dim);background:transparent;border:1px solid var(--line);border-radius:9px;padding:11px 18px;cursor:pointer",
+                                                onclick: move |_| { arming.set(None); },
+                                                "Cancel"
+                                            }
+                                            span { style: "margin-left:auto;align-self:center;font-size:12px;color:var(--gold);max-width:300px;text-align:right;line-height:1.4",
+                                                "Runs it in its original directory. Snapshots first — `kintsugi undo` can roll it back (unbounded targets like rm -rf may not fully revert)."
+                                            }
+                                        } else {
+                                            // Step 1: arm. The agent won't resume — you run it.
+                                            button { style: "font-family:inherit;font-size:13.5px;font-weight:600;color:var(--ink);background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:11px 20px;cursor:pointer;display:inline-flex;align-items:center;gap:9px",
+                                                onclick: move |_| { arming.set(Some(arm_id.clone())); },
+                                                kbd { style: "font-family:inherit;font-size:10.5px;background:var(--bg);border-radius:4px;padding:1px 5px", "A" }
+                                                "Approve & run"
+                                            }
+                                            span { style: "margin-left:auto;align-self:center;font-size:12px;color:var(--dim);max-width:280px;text-align:right;line-height:1.4",
+                                                "The agent already got the deny and won't resume. If you want it, run it here — then tell your agent to continue."
+                                            }
                                         }
                                     }
                                 }
@@ -1401,13 +1495,18 @@ struct ProvCandidate {
     tainted: bool,
 }
 
-/// De-dupe rows by session (newest-first), keeping the ones worth a provenance
-/// look: taint-driven blocks, or any row that carries a session id. Shared by the
-/// left rail and the default-selection effect so they never disagree.
+/// De-dupe rows by session (newest-first), keeping only the ones this view is
+/// about: commands where a taint-driven rule actually fired (`provenance_block`,
+/// i.e. a `TRIFECTA-*` reason). The screen's promise is "how untrusted content
+/// reached a risky command" — a session that merely has an id but never ingested
+/// anything untrusted is *not* provenance, so it doesn't belong in the rail (and
+/// picking its newest, non-trifecta command is what produced the misleading
+/// "carries a label / no trail" state). Shared by the left rail and the
+/// default-selection effect so they never disagree.
 fn prov_candidates(rows: &[crate::bindings::TimelineRow]) -> Vec<ProvCandidate> {
     let mut candidates: Vec<ProvCandidate> = Vec::new();
     for r in rows.iter() {
-        if !r.provenance_block && r.session.is_none() {
+        if !r.provenance_block {
             continue;
         }
         let Some(session) = r.session.clone() else {
@@ -1420,7 +1519,7 @@ fn prov_candidates(rows: &[crate::bindings::TimelineRow]) -> Vec<ProvCandidate> 
             session,
             command: r.command.clone(),
             ts: r.ts.clone(),
-            tainted: r.provenance_block,
+            tainted: true,
         });
     }
     candidates
@@ -1616,14 +1715,29 @@ pub fn Provenance() -> Element {
                                                     }
                                                 }
                                             }
-                                            _ => rsx! {
+                                            // Tainted session, but this particular command has no
+                                            // source→sink legs to chart (e.g. a later, safe command).
+                                            Some(v) if v.tainted => rsx! {
                                                 div { style: "padding:30px 8px;text-align:center",
-                                                    div { style: "font-size:14px;font-weight:600;color:var(--ink)", "◌ No trail recorded" }
-                                                    div { style: "font-size:12.5px;color:var(--dim);margin-top:6px;line-height:1.5;max-width:420px;margin-left:auto;margin-right:auto",
-                                                        "This session carries a label but no taint steps were recorded for this command — nothing untrusted flowed into it."
+                                                    div { style: "font-size:14px;font-weight:600;color:var(--ink)", "◌ No trail for this command" }
+                                                    div { style: "font-size:12.5px;color:var(--dim);margin-top:6px;line-height:1.5;max-width:440px;margin-left:auto;margin-right:auto",
+                                                        "This session is tainted, but the selected command has no untrusted-read → sink legs of its own. Pick the trifecta command to see the full chain."
                                                     }
                                                 }
-                                            }
+                                            },
+                                            // Clean session — say so plainly; don't claim a label it doesn't have.
+                                            Some(_) => rsx! {
+                                                div { style: "padding:30px 8px;text-align:center",
+                                                    div { style: "font-size:14px;font-weight:600;color:var(--green)", "✓ Nothing untrusted" }
+                                                    div { style: "font-size:12.5px;color:var(--dim);margin-top:6px;line-height:1.5;max-width:440px;margin-left:auto;margin-right:auto",
+                                                        "No untrusted content has touched this session — there's no provenance trail to show."
+                                                    }
+                                                }
+                                            },
+                                            // Daemon round-trip hasn't landed (or failed) yet.
+                                            None => rsx! {
+                                                div { style: "padding:30px 8px;text-align:center;color:var(--dim);font-size:12.5px", "Loading the provenance trail…" }
+                                            },
                                         }
                                     }
                                 }
@@ -2608,9 +2722,30 @@ pub fn Settings() -> Element {
                                                 onclick: move |_| {
                                                     match crate::bindings::set_model(&path) {
                                                         Ok(()) => {
-                                                            model_msg.set("Selected — restart to load.".to_string());
-                                                            store.toast(crate::state::ToastKind::Success, "Model selected — restart to load.");
-                                                            restart_pending.set(true);
+                                                            // Auto-restart so the daemon loads the pick in one click,
+                                                            // like the CLI's `model use`. Reuse the in-memory session
+                                                            // password (present after unlock when a vault is set);
+                                                            // a plain start otherwise.
+                                                            let pw = store.session_pw.peek().clone();
+                                                            let restart = match pw {
+                                                                Some(p) => crate::bindings::restart_engine_with_password(&p),
+                                                                None => crate::bindings::start_engine(),
+                                                            };
+                                                            match restart {
+                                                                Ok(()) => {
+                                                                    restart_pending.set(false);
+                                                                    model_msg.set("Switched — the daemon restarted with this model.".to_string());
+                                                                    store.toast(crate::state::ToastKind::Success, "Model switched — daemon restarted with it.");
+                                                                }
+                                                                Err(e) => {
+                                                                    // The pick is saved; only the auto-restart failed —
+                                                                    // fall back to the manual Restart banner.
+                                                                    restart_pending.set(true);
+                                                                    let m = e.to_string();
+                                                                    model_msg.set(format!("Selected — auto-restart failed ({m}); use Restart to apply."));
+                                                                    store.toast(crate::state::ToastKind::Error, format!("Selected, but restart failed: {m}"));
+                                                                }
+                                                            }
                                                             let t = *tick.read(); tick.set(t + 1);
                                                         }
                                                         Err(e) => {
@@ -3008,9 +3143,21 @@ pub fn Policy() -> Element {
             .await
             .unwrap_or_default()
     });
+    // What provenance tracks — sourced from the engine so the list can't drift.
+    let prov_res = use_resource(move || async move {
+        tokio::task::spawn_blocking(|| {
+            (
+                crate::bindings::untrusted_sources(),
+                crate::bindings::egress_channels(),
+            )
+        })
+        .await
+        .unwrap_or_default()
+    });
 
     let policy = policy_res().flatten();
     let builtins = builtins_res().unwrap_or_default();
+    let (untrusted_sources, egress_channels) = prov_res().unwrap_or_default();
 
     // Mode → a plain-language line + accent, so it's a word, never color alone.
     let (mode_label, mode_note, mode_color) = match policy.as_ref().map(|p| p.mode.as_str()) {
@@ -3063,6 +3210,53 @@ pub fn Policy() -> Element {
                 }
                 if builtins.is_empty() {
                     div { style: "padding:24px 20px;text-align:center;font-size:12.5px;color:var(--dim)", "◌ Loading protections…" }
+                }
+            }
+
+            // ── (a2) Provenance tracking ─────────────────────────────────
+            // Make the lethal-trifecta machinery legible: what the engine treats
+            // as untrusted input, and what it counts as data leaving the machine.
+            div { style: "border:1px solid var(--line);border-radius:14px;background:var(--panel);overflow:hidden;margin-bottom:18px",
+                div { style: "display:flex;align-items:center;gap:12px;padding:15px 20px;border-bottom:1px solid var(--line);background:linear-gradient(100deg,rgba(212,175,55,.06),transparent)",
+                    span { style: "display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:9px;background:rgba(212,175,55,.13);flex:none",
+                        svg { view_box: "0 0 24 24", width: "19", height: "19", fill: "none", stroke: "var(--gold)", stroke_width: "1.8", stroke_linecap: "round", stroke_linejoin: "round",
+                            circle { cx: "6", cy: "6", r: "2.5" }
+                            circle { cx: "18", cy: "18", r: "2.5" }
+                            path { d: "M8 7.5l8 9" }
+                        }
+                    }
+                    div { style: "flex:1",
+                        div { style: "font-size:14.5px;font-weight:700", "Provenance tracking" }
+                        div { style: "font-size:12px;color:var(--dim);margin-top:1px", "Untrusted input + a secret read + an egress sink → the lethal trifecta is blocked. These are the channels watched." }
+                    }
+                    span { style: "font-size:11.5px;font-weight:600;color:var(--gold);border:1px solid var(--gold-line);border-radius:7px;padding:5px 10px;white-space:nowrap", "tracked" }
+                }
+
+                // Untrusted sources (taint a session)
+                div { style: "padding:13px 20px 6px;font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--dim)", "Untrusted input — taints the session" }
+                for (name, detail) in untrusted_sources.iter() {
+                    div { style: "display:flex;align-items:center;gap:14px;padding:11px 20px;border-bottom:1px solid var(--hair)",
+                        span { style: "display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:6px;flex:none;background:rgba(212,175,55,.12);color:var(--gold);font-size:12px;font-weight:700", "↓" }
+                        div { style: "flex:1;min-width:0",
+                            div { style: "font-size:13.5px;font-weight:600;color:var(--ink)", "{name}" }
+                            div { style: "font-size:11.5px;color:var(--dim);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap", "{detail}" }
+                        }
+                    }
+                }
+
+                // Egress sinks (data leaves the machine)
+                div { style: "padding:13px 20px 6px;font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--dim)", "Egress — data leaves the machine" }
+                for (name, detail) in egress_channels.iter() {
+                    div { style: "display:flex;align-items:center;gap:14px;padding:11px 20px;border-bottom:1px solid var(--hair)",
+                        span { style: "display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:6px;flex:none;background:rgba(255,93,93,.12);color:var(--red);font-size:12px;font-weight:700", "↑" }
+                        div { style: "flex:1;min-width:0",
+                            div { style: "font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:600;color:var(--ink)", "{name}" }
+                            div { style: "font-size:11.5px;color:var(--dim);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap", "{detail}" }
+                        }
+                    }
+                }
+                if untrusted_sources.is_empty() && egress_channels.is_empty() {
+                    div { style: "padding:24px 20px;text-align:center;font-size:12.5px;color:var(--dim)", "◌ Loading…" }
                 }
             }
 
@@ -3202,5 +3396,69 @@ pub fn Placeholder() -> Element {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod prov_candidate_tests {
+    use super::*;
+    use crate::bindings::TimelineRow;
+
+    fn row(session: Option<&str>, command: &str, provenance_block: bool) -> TimelineRow {
+        TimelineRow {
+            id: command.to_string(),
+            ts: "2026-06-21T00:00:00Z".to_string(),
+            agent: "claude-code".to_string(),
+            session: session.map(str::to_string),
+            command: command.to_string(),
+            class: "ambiguous".to_string(),
+            outcome: "held".to_string(),
+            reason: if provenance_block {
+                "TRIFECTA-01:provenance (sink)".to_string()
+            } else {
+                "safe:ls".to_string()
+            },
+            provenance_block,
+            risk: None,
+            summary: None,
+            cwd: "/tmp".to_string(),
+            tier: 1,
+        }
+    }
+
+    #[test]
+    fn only_trifecta_sessions_are_candidates() {
+        // The fix: a clean session that merely carries an id must NOT appear —
+        // the rail is "how untrusted content reached a risky command".
+        let clean = vec![
+            row(Some("clean-sess"), "grep foo .", false),
+            row(Some("clean-sess"), "echo hi", false),
+        ];
+        assert!(
+            prov_candidates(&clean).is_empty(),
+            "a session with no trifecta event is not provenance"
+        );
+
+        // A session with a trifecta block appears exactly once (deduped), tainted,
+        // and shows the newest trifecta command (not a later safe one).
+        let dirty = vec![
+            row(Some("dirty"), "newest-safe-cmd", false),
+            row(Some("dirty"), "exfil-attempt-A", true),
+            row(Some("dirty"), "exfil-attempt-B", true),
+        ];
+        let cands = prov_candidates(&dirty);
+        assert_eq!(cands.len(), 1, "one row per session");
+        assert_eq!(cands[0].session, "dirty");
+        assert!(cands[0].tainted);
+        assert_eq!(cands[0].command, "exfil-attempt-A", "newest trifecta wins the slot");
+    }
+
+    #[test]
+    fn a_block_row_without_a_session_is_skipped() {
+        let rows = vec![row(None, "exfil-attempt", true)];
+        assert!(
+            prov_candidates(&rows).is_empty(),
+            "no session id → cannot chart provenance"
+        );
     }
 }

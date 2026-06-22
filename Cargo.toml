@@ -12,7 +12,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.2.1"
+version = "0.3.0"
 edition = "2021"
 license = "MIT"
 authors = ["arrowassassin"]
@@ -26,16 +26,16 @@ rust-version = "1.96"
 [workspace.dependencies]
 # Internal crates. A `version` alongside `path` is required to publish to
 # crates.io (the path is used in-workspace; the version is used from the registry).
-# These must allow the published workspace version — 0.2.x is a new semver series
-# (^0.1 would NOT match 0.2.0), so they're pinned to the 0.2 floor and bumped in
-# lockstep with the workspace version on each minor release.
-kintsugi-core = { path = "crates/kintsugi-core", version = "0.2.1" }
-kintsugi-daemon = { path = "crates/kintsugi-daemon", version = "0.2.1" }
-kintsugi-intercept = { path = "crates/kintsugi-intercept", version = "0.2.1" }
-kintsugi-model = { path = "crates/kintsugi-model", version = "0.2.1" }
-kintsugi-tui = { path = "crates/kintsugi-tui", version = "0.2.1" }
-kintsugi-app-types = { path = "crates/kintsugi-app-types", version = "0.2.1" }
-kintsugi-app = { path = "crates/kintsugi-app", version = "0.2.1" }
+# These must allow the published workspace version — each 0.x.0 is its own semver
+# series (^0.2 would NOT match 0.3.0), so they're pinned to the current minor and
+# bumped in lockstep with the workspace version on each minor release.
+kintsugi-core = { path = "crates/kintsugi-core", version = "0.3.0" }
+kintsugi-daemon = { path = "crates/kintsugi-daemon", version = "0.3.0" }
+kintsugi-intercept = { path = "crates/kintsugi-intercept", version = "0.3.0" }
+kintsugi-model = { path = "crates/kintsugi-model", version = "0.3.0" }
+kintsugi-tui = { path = "crates/kintsugi-tui", version = "0.3.0" }
+kintsugi-app-types = { path = "crates/kintsugi-app-types", version = "0.3.0" }
+kintsugi-app = { path = "crates/kintsugi-app", version = "0.3.0" }
 
 # Serialization / data
 serde = { version = "1.0.228", features = ["derive"] }

@@ -1687,7 +1687,7 @@ dependencies = [
 
 [[package]]
 name = "kintsugi"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1709,7 +1709,7 @@ dependencies = [
 
 [[package]]
 name = "kintsugi-app"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "kintsugi-app-types",
@@ -1723,7 +1723,7 @@ dependencies = [
 
 [[package]]
 name = "kintsugi-app-types"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1731,7 +1731,7 @@ dependencies = [
 
 [[package]]
 name = "kintsugi-core"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "argon2",
@@ -1757,7 +1757,7 @@ dependencies = [
 
 [[package]]
 name = "kintsugi-daemon"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "directories",
@@ -1776,7 +1776,7 @@ dependencies = [
 
 [[package]]
 name = "kintsugi-intercept"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "interprocess",
@@ -1792,7 +1792,7 @@ dependencies = [
 
 [[package]]
 name = "kintsugi-model"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "directories",
@@ -1808,7 +1808,7 @@ dependencies = [
 
 [[package]]
 name = "kintsugi-tui"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "crossterm",

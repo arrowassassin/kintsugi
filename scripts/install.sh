@@ -1,7 +1,7 @@
 #!/bin/sh
 # Kintsugi remote installer — no repo clone required.
 #
-#   curl -fsSL https://github.com/arrowassassin/kintsugi/releases/latest/download/install.sh | sh
+#   curl -fsSL https://kintsugi.tools/install.sh | sh
 #
 # Downloads the prebuilt release binaries for your OS/arch (verified against
 # SHA256SUMS) and installs them to a bin dir. If no prebuilt build matches (or
@@ -31,7 +31,7 @@ WITH_MODEL=0
 DO_INIT="ask"          # ask | yes | no
 ASSUME_YES=0
 BIN_ONLY=0             # 1 = install binaries only, skip the setup stepper
-PICKER_URL="https://github.com/arrowassassin/kintsugi/releases/latest/download/pick-model.sh"
+PICKER_URL="https://kintsugi.tools/pick-model.sh"
 # Use sudo for system package installs when not already root.
 SUDO=""
 if [ "$(id -u 2>/dev/null || echo 1)" != "0" ] && command -v sudo >/dev/null 2>&1; then

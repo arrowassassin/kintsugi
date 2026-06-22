@@ -170,6 +170,9 @@ pub struct PendingItem {
     pub class: Class,
     /// Why it was held.
     pub reason: String,
+    /// The model's one-line plain-English summary from when it was scored at hold
+    /// time (Tier-2), if any — carried so the review UI can show it on the card.
+    pub summary: Option<String>,
     /// When it was enqueued.
     #[serde(with = "time::serde::rfc3339")]
     pub ts: OffsetDateTime,
@@ -399,7 +402,13 @@ impl EventLog {
             // can step backwards by a few ms (NTP slew on the VM host), which
             // made ts(second insert) < ts(first insert) and put the newer row
             // before the older one. Rowid is monotonic, so it doesn't care.
-            "SELECT command, class, reason, ts FROM pending WHERE status = 'pending' ORDER BY rowid ASC",
+            // The model summary lives on the hold *event* (events.summary), keyed by
+            // the same id as the pending row; pull the latest non-null one so the
+            // review card can show the plain-English explanation without re-scoring.
+            "SELECT p.command, p.class, p.reason, p.ts, \
+             (SELECT e.summary FROM events e WHERE e.id = p.id AND e.summary IS NOT NULL \
+              ORDER BY e.seq DESC LIMIT 1) \
+             FROM pending p WHERE p.status = 'pending' ORDER BY p.rowid ASC",
         )?;
         let rows = stmt.query_map([], |row| {
             Ok((
@@ -407,17 +416,19 @@ impl EventLog {
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
                 row.get::<_, String>(3)?,
+                row.get::<_, Option<String>>(4)?,
             ))
         })?;
         let mut out = Vec::new();
         for r in rows {
-            let (cmd_json, class_s, reason, ts_s) = r?;
+            let (cmd_json, class_s, reason, ts_s, summary) = r?;
             let command: ProposedCommand = serde_json::from_str(&cmd_json)
                 .map_err(|e| LogError::Corrupt(format!("pending parse: {e}")))?;
             out.push(PendingItem {
                 command,
                 class: parse_class(&class_s)?,
                 reason,
+                summary,
                 ts: OffsetDateTime::parse(&ts_s, &Rfc3339)?,
             });
         }

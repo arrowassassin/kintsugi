@@ -28,6 +28,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # Substitute the Google Analytics tag from the repo secret at deploy time, so
+      # the real measurement ID is never committed. The page ships the literal
+      # `{G_ANALYTICS_TAG}` placeholder; with no secret set it stays a harmless
+      # placeholder (the gtag request just no-ops) rather than failing the build.
+      - name: Inject Google Analytics tag
+        env:
+          GA: ${{ secrets.G_ANALYTICS_TAG }}
+        run: |
+          if [ -n "$GA" ]; then
+            find site -name '*.html' -print0 | xargs -0 sed -i "s/{G_ANALYTICS_TAG}/${GA}/g"
+            echo "Injected the Google Analytics tag into the site HTML."
+          else
+            echo "No G_ANALYTICS_TAG secret set — leaving the placeholder in place."
+          fi
       - uses: actions/configure-pages@v5
         with:
           # Auto-enable Pages via the API so the first deploy doesn't require a

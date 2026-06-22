@@ -81,9 +81,9 @@ instruct GGUF models from the Hugging Face API, downloads your choice, prints it
 SHA-256, and tells you the one env var to set:
 
 ```sh
-curl -fsSL https://github.com/arrowassassin/kintsugi/releases/latest/download/pick-model.sh | sh
+curl -fsSL https://kintsugi.tools/pick-model.sh | sh
 # or during install:
-curl -fsSL https://github.com/arrowassassin/kintsugi/releases/latest/download/install.sh | sh -s -- --with-model
+curl -fsSL https://kintsugi.tools/install.sh | sh -s -- --with-model
 ```
 
 It constrains the query (`filter=gguf`, `pipeline_tag=text-generation`, sized to

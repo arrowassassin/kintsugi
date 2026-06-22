@@ -140,20 +140,25 @@ fn send_ingest(dialect: Dialect, src: observe::IngestSource, session: Option<&st
     let _ = Client::ingest(&observed);
 }
 
-/// Augment a catastrophic deny with the guarded way to run it yourself.
+/// Augment a catastrophic deny with the stop → approve → continue flow.
 ///
-/// A hook is one-shot: by the time you see this, the agent already got the deny.
-/// The agent must never run a catastrophic itself, but the human can — via
-/// `kintsugi run <id>`, which snapshots first (so `kintsugi undo` works), runs the
-/// command in its original directory, and is gated on a real-terminal keypress
-/// (so an agent shelling out to it still can't self-approve). The queue id is
-/// the command's id, so we surface its short prefix here.
+/// A hook is one-shot: by the time you see this, the agent already got the deny
+/// and there is no parked tool call to resume. The agent must never run a
+/// catastrophic itself, and approving it elsewhere does NOT auto-resume the agent.
+/// So this message tells the agent to *stop and hand off to the human*, who can
+/// run it from the trusted UI (Held → Approve & run) or via `kintsugi run <id>` —
+/// both snapshot first (so `kintsugi undo` works) and are gated on a deliberate
+/// human action (a real-terminal keypress on the CLI; a click in the unlocked app)
+/// so an agent shelling out still can't self-approve. After the human handles it,
+/// they tell the agent to continue. The short id prefix is surfaced for the CLI.
 fn held_for_approval(reason: &str, id: &str) -> String {
     let short = id.get(..8).unwrap_or(id);
     format!(
-        "{reason} Kintsugi blocked it; the agent will not run it. To run it yourself: \
-         `kintsugi run {short}` — it snapshots the affected files first (so `kintsugi undo` \
-         can roll them back) and confirms with a code typed at your terminal."
+        "{reason} Kintsugi blocked this catastrophic command — do NOT run it or try to work \
+         around it. Stop and tell the user: if they want it, they can approve it in the Kintsugi \
+         app (Held → Approve & run) or run `kintsugi run {short}` in their terminal — either way \
+         it is snapshotted first, so `kintsugi undo` can roll it back. You will not resume \
+         automatically; once they've handled it, they can tell you to continue."
     )
 }
 
@@ -233,18 +238,26 @@ mod tests {
     }
 
     #[test]
-    fn held_for_approval_points_at_kintsugi_run_with_short_id() {
+    fn held_for_approval_guides_stop_approve_continue() {
         let msg = held_for_approval("recursively deletes files.", "abcd1234-5678-90ab-cdef");
         assert!(msg.contains("recursively deletes files."));
         assert!(
-            msg.contains("will not run"),
-            "must say the agent won't run it"
+            msg.contains("do NOT run it") && msg.contains("work around"),
+            "must tell the agent to stop, not run or work around it"
+        );
+        assert!(
+            msg.contains("Kintsugi app") || msg.contains("Approve & run"),
+            "should point at approving in the app"
         );
         assert!(
             msg.contains("kintsugi run abcd1234"),
-            "should give the guarded run command"
+            "should give the guarded CLI run command with the short id"
         );
         assert!(msg.contains("undo"), "should mention reversibility");
+        assert!(
+            msg.contains("continue"),
+            "should set up the human-driven resume (tell the agent to continue)"
+        );
     }
 
     #[test]

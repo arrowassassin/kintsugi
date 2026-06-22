@@ -120,6 +120,25 @@ pub fn timeline_for_agent(
     Ok(log.query(&filter)?.into_iter().map(timeline_row).collect())
 }
 
+/// Newest events of a single classification (`catastrophic` / `ambiguous` /
+/// `safe`), fs-watch excluded. The Activity "Catastrophic" filter and History use
+/// this so a small-but-important class is never windowed out by a flood of holds
+/// (a class-targeted SQL query, not a client-side filter on the newest-N tail).
+pub fn timeline_by_class(
+    db_path: &std::path::Path,
+    class: kintsugi_core::Class,
+    limit: usize,
+) -> anyhow::Result<Vec<TimelineRow>> {
+    let log = EventLog::open(db_path)?;
+    let filter = Filter {
+        limit: Some(limit),
+        agent_not: Some("fs-watch".to_string()),
+        class: Some(class),
+        ..Default::default()
+    };
+    Ok(log.query(&filter)?.into_iter().map(timeline_row).collect())
+}
+
 /// Audit-log search: the timeline filtered by a case-insensitive command substring
 /// (the audit screen's search box). An empty query returns the recent tail.
 pub fn audit(
@@ -174,8 +193,13 @@ pub fn verify(db_path: &std::path::Path) -> anyhow::Result<ChainVerify> {
 }
 
 /// The current approval queue, read live from the daemon over IPC.
-pub fn queue() -> anyhow::Result<Vec<QueueRow>> {
-    let items = Client::list_pending()?;
+pub fn queue(db_path: &std::path::Path) -> anyhow::Result<Vec<QueueRow>> {
+    // Read the pending table IN-PROCESS (like every other view), not via the daemon
+    // IPC — so the queue (and its model summary, fetched by EventLog::list_pending's
+    // events join) reflects the on-disk truth and never depends on the running
+    // daemon binary's version. Mutations still go through the daemon.
+    let log = EventLog::open(db_path)?;
+    let items = log.list_pending()?;
     Ok(items
         .into_iter()
         .map(|it| QueueRow {
@@ -186,6 +210,8 @@ pub fn queue() -> anyhow::Result<Vec<QueueRow>> {
             command: it.command.raw.clone(),
             class: it.class.as_str().to_string(),
             provenance_block: is_provenance_block(&it.reason),
+            summary: it.summary,
+            cwd: it.command.cwd.display().to_string(),
             reason: it.reason,
         })
         .collect())

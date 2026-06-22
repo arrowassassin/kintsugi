@@ -112,8 +112,9 @@ fn catastrophic_bash_hook_payload_is_denied_not_ask() {
         .as_str()
         .unwrap();
     assert!(
-        reason.contains("will not run") && reason.contains("kintsugi run "),
-        "deny reason should explain the agent won't run it and give `kintsugi run <id>`: {reason}"
+        reason.contains("do NOT run it") && reason.contains("kintsugi run "),
+        "deny reason should tell the agent to stop (not run it) and give the guarded \
+         `kintsugi run <id>` path: {reason}"
     );
 
     h.join();

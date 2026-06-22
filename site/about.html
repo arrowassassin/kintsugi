@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id={G_ANALYTICS_TAG}"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', '{G_ANALYTICS_TAG}');
+</script>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kintsugi — Under the hood | How the safety layer for AI agents actually works</title>
+<meta name="description" content="A deep dive into Kintsugi: the deterministic rule engine, the two-pass shell AST parser, the lethal-trifecta provenance model, copy-on-write undo, the interception surfaces, the enterprise lock, and an honest threat model. For developers who want to drill down.">
+<meta name="robots" content="index,follow,max-image-preview:large">
+<meta name="theme-color" content="#f3efe3">
+<meta name="color-scheme" content="light dark">
+<link rel="canonical" href="https://kintsugi.tools/about.html">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Kintsugi">
+<meta property="og:title" content="Kintsugi — Under the hood">
+<meta property="og:description" content="How Kintsugi actually works: deterministic rules, a real bash AST, provenance against the lethal trifecta, reversible-by-default undo, and an honest threat model.">
+<meta property="og:url" content="https://kintsugi.tools/about.html">
+<meta property="og:image" content="https://kintsugi.tools/og.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;}
+html{scroll-behavior:smooth;}
+body{-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;background:#f3efe3;font-family:'IBM Plex Sans',ui-sans-serif,system-ui,sans-serif;}
+::selection{background:rgba(212,175,55,.30);color:inherit;}
+a{color:inherit;}
+.kk-btn{transition:filter .15s ease, transform .12s ease, border-color .15s ease, background .15s ease, color .15s ease;}
+.kk-btn:hover{filter:brightness(1.06);}
+.kk-btn:active{transform:translateY(1px);}
+.kk-ghost:hover{border-color:var(--gold)!important;color:var(--ink)!important;}
+.kk-card{transition:transform .18s ease, border-color .18s ease, background .18s ease;}
+.kk-card:hover{transform:translateY(-3px);border-color:var(--gold-line)!important;}
+.kk-nav{transition:color .15s;text-decoration:none;}
+.kk-nav:hover{color:var(--ink)!important;}
+code,.mono{font-family:'IBM Plex Mono',monospace;}
+.prose{font-size:15px;line-height:1.7;color:var(--ink);}
+.prose strong{font-weight:600;}
+.prose em{font-style:normal;color:var(--gold);font-weight:600;}
+.kk-kbd{font-family:'IBM Plex Mono',monospace;font-size:12px;background:var(--panel2);border:1px solid var(--line);border-radius:5px;padding:1px 6px;color:var(--gold);}
+::-webkit-scrollbar{width:11px;height:11px;}
+::-webkit-scrollbar-thumb{background:var(--line);border-radius:8px;border:3px solid transparent;background-clip:content-box;}
+@media(max-width:760px){.kk-hide-sm{display:none!important;}.kk-grid2{grid-template-columns:1fr!important;}}
+</style>
+</head>
+<body>
+<div id="kk-root" data-theme="light" style="--bg:#f3efe3;--bg2:#efe9da;--panel:#fbf8ef;--panel2:#f6f1e4;--term:#11151d;--line:#d8cfb6;--hair:rgba(201,192,166,.55);--ink:#1b2230;--dim:#6a7488;--gold:#9C6F1C;--gold-bright:#B8860B;--gold-line:rgba(156,111,28,.4);--green:#1f8a4c;--amber:#a9760a;--red:#c0392b;--cyan:#1f6f8b;background:var(--bg);color:var(--ink);min-height:100vh;">
+
+  <!-- header -->
+  <header style="position:sticky;top:0;z-index:60;backdrop-filter:saturate(140%) blur(14px);background:color-mix(in srgb,var(--bg) 82%,transparent);border-bottom:1px solid var(--hair);">
+    <div style="max-width:1100px;margin:0 auto;padding:0 28px;height:64px;display:flex;align-items:center;gap:14px;">
+      <a href="/" class="kk-nav" style="display:flex;align-items:center;gap:11px;">
+        <img src="logo-mark.svg" alt="" width="28" height="28" style="flex:none;display:block;">
+        <span style="font-weight:700;font-size:18px;letter-spacing:-.3px;color:var(--ink);">Kintsugi</span>
+        <span class="kk-hide-sm" style="font-size:12px;font-weight:600;color:var(--gold);border:1px solid var(--gold-line);border-radius:6px;padding:2px 8px;">Under the hood</span>
+      </a>
+      <nav style="margin-left:auto;display:flex;align-items:center;gap:22px;">
+        <a class="kk-nav" href="#spine" style="font-size:13px;color:var(--dim);" >Spine</a>
+        <a class="kk-nav kk-hide-sm" href="#gate" style="font-size:13px;color:var(--dim);">The gate</a>
+        <a class="kk-nav kk-hide-sm" href="#provenance" style="font-size:13px;color:var(--dim);">Provenance</a>
+        <a class="kk-nav kk-hide-sm" href="#limits" style="font-size:13px;color:var(--dim);">Limits</a>
+        <button id="themeBtn" class="kk-btn" title="Toggle light / dark" aria-label="Toggle theme" style="display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border:1px solid var(--line);border-radius:9px;background:var(--panel);color:var(--gold);cursor:pointer;flex:none;">◐</button>
+        <a class="kk-btn kk-ghost" href="/" style="display:inline-flex;align-items:center;gap:7px;height:34px;padding:0 14px;border:1px solid var(--line);border-radius:9px;background:var(--panel);color:var(--ink);font-size:13px;font-weight:600;text-decoration:none;">← Home</a>
+      </nav>
+    </div>
+  </header>
+
+  <main style="max-width:840px;margin:0 auto;padding:64px 28px 40px;">
+
+    <!-- intro -->
+    <div style="font-size:12px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;color:var(--gold);margin-bottom:14px;">The long version</div>
+    <h1 style="font-size:clamp(32px,5vw,46px);line-height:1.08;font-weight:700;letter-spacing:-1px;margin:0 0 18px;color:var(--ink);">What Kintsugi is, all the way down</h1>
+    <p class="prose" style="font-size:17px;max-width:680px;">
+      The <a class="kk-nav" href="/" style="color:var(--gold);font-weight:600;">home page</a> is the elevator pitch. This page is for the people who don't take "it's deterministic, trust us" for an answer — engineers, security folks, and anyone wiring Kintsugi into a real workflow. It walks the whole machine: how a command is read, why the block can't be talked out of, how untrusted input is tracked, what "reversible" actually promises, and — just as important — <em>what Kintsugi cannot do.</em>
+    </p>
+
+    <!-- security spine -->
+    <section id="spine" style="margin-top:54px;scroll-margin-top:84px;">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
+        <span style="display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:9px;background:rgba(156,111,28,.13);color:var(--gold);flex:none;">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4-3 7-7 9-4-2-7-5-7-9V6z"></path><path d="M9 12l2 2 4-4"></path></svg>
+        </span>
+        <h2 style="font-size:24px;font-weight:700;letter-spacing:-.4px;margin:0;color:var(--ink);">The security spine</h2>
+      </div>
+      <p class="prose">Everything else is built on four invariants that never bend. They're the reason a clever prompt can't turn the gate off:</p>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:13px;margin-top:18px;" class="kk-grid2">
+        <div class="kk-card" style="border:1px solid var(--line);border-radius:13px;background:var(--panel);padding:18px 19px;">
+          <div style="font-weight:700;font-size:14.5px;color:var(--ink);margin-bottom:5px;">Rules decide, never an LLM</div>
+          <div class="prose" style="font-size:13.5px;color:var(--dim);">The hold/deny verdict on a catastrophic command comes from fixed rules a human wrote. A model can only ever <strong>explain</strong> and <strong>add</strong> caution — it can never downgrade a verdict or open the gate.</div>
+        </div>
+        <div class="kk-card" style="border:1px solid var(--line);border-radius:13px;background:var(--panel);padding:18px 19px;">
+          <div style="font-weight:700;font-size:14.5px;color:var(--ink);margin-bottom:5px;">The raw command is shown verbatim</div>
+          <div class="prose" style="font-size:13.5px;color:var(--dim);">You always see exactly what would run — never a model's paraphrase. The summary sits <em>beside</em> the command, never in place of it.</div>
+        </div>
+        <div class="kk-card" style="border:1px solid var(--line);border-radius:13px;background:var(--panel);padding:18px 19px;">
+          <div style="font-weight:700;font-size:14.5px;color:var(--ink);margin-bottom:5px;">The log is append-only &amp; hash-chained</div>
+          <div class="prose" style="font-size:13.5px;color:var(--dim);">Every event links to the hash of the one before it. Tamper with a past entry and verification breaks — the record is evidence, not a convenience.</div>
+        </div>
+        <div class="kk-card" style="border:1px solid var(--line);border-radius:13px;background:var(--panel);padding:18px 19px;">
+          <div style="font-weight:700;font-size:14.5px;color:var(--ink);margin-bottom:5px;">Nothing leaves the machine</div>
+          <div class="prose" style="font-size:13.5px;color:var(--dim);">No cloud, no account, no telemetry. The model is local. The whole system runs and decides offline.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- the gate -->
+    <section id="gate" style="margin-top:54px;scroll-margin-top:84px;">
+      <h2 style="font-size:24px;font-weight:700;letter-spacing:-.4px;margin:0 0 10px;color:var(--ink);">How the gate reads a command</h2>
+      <p class="prose">Substring matching is how scanners get fooled. Kintsugi parses <strong>real shell structure</strong> and takes the more cautious of two passes:</p>
+      <ul class="prose" style="padding-left:20px;">
+        <li style="margin:9px 0;"><strong>A fast tokenizer</strong> for the common case, and</li>
+        <li style="margin:9px 0;"><strong>a true bash AST parser</strong> (<a class="kk-nav" href="https://crates.io/crates/brush-parser" style="color:var(--gold);">brush-parser</a>, pure-Rust). The AST pass sees what text matching can't — commands hidden inside <code>$(…)</code> / backticks, here-documents fed to a shell, subshells, and <code>if</code>/<code>for</code>/<code>while</code> blocks.</li>
+      </ul>
+      <p class="prose">So both of these are caught, not waved through:</p>
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:13px;line-height:1.7;background:var(--term);border:1px solid var(--line);border-radius:11px;padding:16px 18px;color:#cdd6ea;overflow-x:auto;">
+        <div><span style="color:#7da3ff;">echo</span> "<span style="color:#ff8a8a;">$(rm -rf /)</span>"   <span style="color:#6a7488;"># caught inside the substitution</span></div>
+        <div><span style="color:#7da3ff;">bash</span> &lt;&lt;&lt;'<span style="color:#ff8a8a;">rm -rf /</span>'   <span style="color:#6a7488;"># caught inside the here-string</span></div>
+      </div>
+      <p class="prose" style="margin-top:18px;">It <strong>fails toward caution</strong>: a line the parser can't fully understand is <em>held</em>, never assumed safe — and a parse failure can only add caution, never downgrade a catastrophic verdict. The hard guarantee, locked by a golden corpus, is <strong>zero catastrophic-classified-as-safe</strong> — verified at <strong>0 / 176</strong> dangerous commands across a MITRE ATT&amp;CK + GTFOBins corpus.</p>
+      <p class="prose">The catastrophic categories map to the damage that actually matters: data destruction (<code>rm -rf</code>, <code>DROP TABLE</code>, <code>git push --force</code>, <code>terraform destroy</code>), disk/device writes (<code>dd</code>, <code>mkfs</code>), and secret reads (<code>.env</code>, <code>~/.ssh</code>, <code>~/.aws</code>, keychains).</p>
+    </section>
+
+    <!-- tiers -->
+    <section style="margin-top:54px;">
+      <h2 style="font-size:24px;font-weight:700;letter-spacing:-.4px;margin:0 0 10px;color:var(--ink);">Two tiers: deterministic rules, then an optional model</h2>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:16px;">
+        <div class="kk-card" style="flex:1;min-width:260px;border:1px solid var(--line);border-radius:13px;background:var(--panel);padding:20px;">
+          <div style="font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--gold);margin-bottom:7px;">Tier 1 · the gate</div>
+          <div class="prose" style="font-size:14px;">The deterministic rule engine. It alone decides Allow / Hold / Deny. Always on, sub-millisecond on safe commands, and impossible to prompt-inject — it never consults a model.</div>
+        </div>
+        <div class="kk-card" style="flex:1;min-width:260px;border:1px solid var(--line);border-radius:13px;background:var(--panel);padding:20px;">
+          <div style="font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--gold);margin-bottom:7px;">Tier 2 · explain &amp; score</div>
+          <div class="prose" style="font-size:14px;">A warm local scorer fills a plain-English summary and a risk score for the <em>ambiguous</em> band — heuristic by default, real CPU GGUF inference behind <code>--features llama</code>. <strong>Escalation-only:</strong> it can raise caution, never lower a rule's decision.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- provenance -->
+    <section id="provenance" style="margin-top:54px;scroll-margin-top:84px;">
+      <h2 style="font-size:24px;font-weight:700;letter-spacing:-.4px;margin:0 0 10px;color:var(--ink);">Provenance &amp; the lethal trifecta</h2>
+      <p class="prose">The scariest failure isn't one bad command — it's a chain: an agent reads <strong>untrusted content</strong>, then reads a <strong>secret</strong>, then has a way to <strong>send data out</strong>. Any one leg is fine; all three together is how a prompt-injected agent exfiltrates your <code>.env</code>. Kintsugi tracks information flow to catch that combination deterministically.</p>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:11px;margin:18px 0;" class="kk-grid2">
+        <div style="border:1px solid var(--gold-line);border-radius:11px;background:rgba(156,111,28,.05);padding:15px;"><div style="font-size:20px;">↓</div><div style="font-weight:700;font-size:13.5px;margin:4px 0;">Untrusted in</div><div class="prose" style="font-size:12.5px;color:var(--dim);">web fetches, downloads, MCP output, out-of-workspace reads, clipboard, search results — any of these taints the session.</div></div>
+        <div style="border:1px solid var(--line);border-radius:11px;background:var(--panel);padding:15px;"><div style="font-size:20px;">🔑</div><div style="font-weight:700;font-size:13.5px;margin:4px 0;">Secret read</div><div class="prose" style="font-size:12.5px;color:var(--dim);"><code>.env</code>, <code>~/.ssh</code>, <code>~/.aws</code>, keychains — a sensitive read in a tainted session.</div></div>
+        <div style="border:1px solid rgba(192,57,43,.4);border-radius:11px;background:rgba(192,57,43,.05);padding:15px;"><div style="font-size:20px;">↑</div><div style="font-weight:700;font-size:13.5px;margin:4px 0;">Egress out</div><div class="prose" style="font-size:12.5px;color:var(--dim);"><code>curl</code>, <code>wget</code>, <code>ssh</code>, <code>scp</code>, <code>git push</code>, DNS tools — a way off the machine.</div></div>
+      </div>
+      <p class="prose">All three present → the command is forced to the <strong style="color:var(--red);">catastrophic floor</strong> and held. Taint is <strong>monotonic</strong> (it only ever adds caution; only an explicit policy reset clears it), <strong>durable</strong> (event-sourced and replayed on restart, so killing the daemon can't quietly clear it), and recorded by <strong>identifier only</strong> — a URL that smuggles a secret is redacted before it ever reaches the log.</p>
+    </section>
+
+    <!-- reversibility -->
+    <section style="margin-top:54px;">
+      <h2 style="font-size:24px;font-weight:700;letter-spacing:-.4px;margin:0 0 10px;color:var(--ink);">Reversible by default</h2>
+      <p class="prose">Before a destructive operation runs, Kintsugi snapshots the paths it will touch — copy-on-write reflinks where the filesystem supports them, a plain copy otherwise — so <code>kintsugi undo</code> (or <code>undo --session</code>) brings them back. A filesystem-watcher backstop records changes that slip past interception, so the audit trail and undo stay complete even for an agent in auto-approve mode.</p>
+      <p class="prose">The honest promise is <em>nothing unrecoverable</em>, not "transactional." An in-database <code>DROP</code> / <code>TRUNCATE</code> isn't a file — Kintsugi flags and records it, but recovery there is your database's PITR / backups. Unbounded targets (a glob, a device, <code>/</code>) may not be fully covered by a snapshot; the backstop is the net.</p>
+    </section>
+
+    <!-- interception surfaces -->
+    <section style="margin-top:54px;">
+      <h2 style="font-size:24px;font-weight:700;letter-spacing:-.4px;margin:0 0 10px;color:var(--ink);">Where it sits — every agent, and your shell</h2>
+      <p class="prose">Protection lives at the <strong>process / PATH layer</strong>, not inside any one tool, so anything that runs commands is covered. <code>kintsugi init</code> wires it all in one command:</p>
+      <ul class="prose" style="padding-left:20px;">
+        <li style="margin:8px 0;"><strong>Native pre-tool hooks</strong> for Claude Code, Cursor, Codex, Qwen, Gemini, Copilot, OpenCode, and Google Antigravity.</li>
+        <li style="margin:8px 0;"><strong>A <code>$PATH</code> shim</strong> for raw <code>bash</code> shell-outs — even commands an agent runs without its own hook.</li>
+        <li style="margin:8px 0;"><strong>The <code>kintsugi-exec</code> MCP server</strong> for MCP-based agents.</li>
+        <li style="margin:8px 0;"><strong><code>kintsugi guard</code></strong> forces the shim onto an agent's PATH so a "yolo" / auto-approve agent still hits the gate, and <strong>fail-closed</strong> makes an unreachable daemon <em>block</em> rather than run unguarded.</li>
+      </ul>
+    </section>
+
+    <!-- enterprise -->
+    <section style="margin-top:54px;">
+      <h2 style="font-size:24px;font-weight:700;letter-spacing:-.4px;margin:0 0 10px;color:var(--ink);">The managed posture</h2>
+      <p class="prose"><code>kintsugi init --enterprise</code> adds the controls a shared or production host needs: a <strong>password lock</strong> (argon2id verifier + XChaCha20-Poly1305, one-time recovery key) so stopping, unhooking, or disabling Kintsugi requires the admin password — enforced <em>daemon-side</em> via a challenge-response (the password never crosses the socket) with brute-force lockout. An <strong>auto-restart watchdog</strong> relaunches a killed daemon within seconds; a <strong>passive recorder</strong> lands every human shell command on the same tamper-evident log for DBA/operator compliance. And a real <strong>Control Room</strong> — a native desktop app and a <code>ratatui</code> TUI — over the live log, with one-key approve/deny/undo.</p>
+    </section>
+
+    <!-- limits -->
+    <section id="limits" style="margin-top:54px;scroll-margin-top:84px;">
+      <div style="border:1px solid var(--gold-line);border-radius:14px;background:linear-gradient(100deg,rgba(156,111,28,.06),transparent);padding:24px 24px 8px;">
+        <h2 style="font-size:24px;font-weight:700;letter-spacing:-.4px;margin:0 0 10px;color:var(--ink);">An honest threat model</h2>
+        <p class="prose">A safety tool that names its blind spots is one you can actually trust. Kintsugi is deliberate about what it is <em>not</em>:</p>
+        <ul class="prose" style="padding-left:20px;">
+          <li style="margin:9px 0;"><strong>It is interception, not an unbypassable firewall.</strong> A tool invoked by absolute path, or a sufficiently clever escape, can dodge observation. The deterministic base rules still stand regardless — but coverage is "every surface we wire," not "every syscall."</li>
+          <li style="margin:9px 0;"><strong>The lock defeats an agent or a non-root user — not root.</strong> The password lock turns a forced shutdown into a logged, recoverable event and stops an audited account from quietly disabling the gate. It does not stop a root adversary; that's a different threat class.</li>
+          <li style="margin:9px 0;"><strong>Undo is a filesystem recoverer, not a transaction log.</strong> Files come back; in-database destruction needs your DB's backups.</li>
+        </ul>
+        <p class="prose" style="margin-bottom:18px;">Run <code>kintsugi limits</code> any time for the live version of this scope, straight from the binary.</p>
+      </div>
+    </section>
+
+    <!-- assurance -->
+    <section style="margin-top:46px;">
+      <h2 style="font-size:24px;font-weight:700;letter-spacing:-.4px;margin:0 0 14px;color:var(--ink);">Measured, not asserted</h2>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;" class="kk-grid2">
+        <div style="text-align:center;border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:18px 10px;"><div style="font-size:26px;font-weight:700;color:var(--gold);letter-spacing:-1px;">0 / 176</div><div class="prose" style="font-size:12px;color:var(--dim);">dangerous commands leak to Safe</div></div>
+        <div style="text-align:center;border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:18px 10px;"><div style="font-size:26px;font-weight:700;color:var(--gold);letter-spacing:-1px;">1.4M</div><div class="prose" style="font-size:12px;color:var(--dim);">fuzz inputs, no crash</div></div>
+        <div style="text-align:center;border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:18px 10px;"><div style="font-size:26px;font-weight:700;color:var(--gold);letter-spacing:-1px;">0</div><div class="prose" style="font-size:12px;color:var(--dim);">known CVEs</div></div>
+        <div style="text-align:center;border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:18px 10px;"><div style="font-size:26px;font-weight:700;color:var(--gold);letter-spacing:-1px;">0</div><div class="prose" style="font-size:12px;color:var(--dim);"><code>unsafe</code> blocks</div></div>
+      </div>
+      <p class="prose" style="font-size:13px;color:var(--dim);margin-top:12px;">Every figure is reproduced by a committed test. The full adversarial stress + vulnerability assessment lives in the repo.</p>
+    </section>
+
+    <!-- cta -->
+    <section style="margin-top:54px;border-top:1px solid var(--line);padding-top:32px;text-align:center;">
+      <h2 style="font-size:22px;font-weight:700;margin:0 0 8px;color:var(--ink);">That's the whole machine.</h2>
+      <p class="prose" style="max-width:520px;margin:0 auto 20px;color:var(--dim);">Install is one command; it works immediately with no model and no setup beyond <code>kintsugi init</code>.</p>
+      <div style="display:flex;gap:11px;justify-content:center;flex-wrap:wrap;">
+        <a class="kk-btn" href="/#download" style="display:inline-flex;align-items:center;gap:8px;height:46px;padding:0 22px;border:1px solid var(--gold-line);border-radius:11px;background:linear-gradient(180deg,var(--gold-bright),var(--gold));color:#1a1206;font-size:14.5px;font-weight:700;text-decoration:none;box-shadow:0 10px 26px -10px var(--gold);">Install Kintsugi</a>
+        <a class="kk-btn kk-ghost" href="https://github.com/arrowassassin/kintsugi" style="display:inline-flex;align-items:center;gap:8px;height:46px;padding:0 20px;border:1px solid var(--line);border-radius:11px;background:var(--panel);color:var(--ink);font-size:14.5px;font-weight:600;text-decoration:none;">Read the source</a>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- footer -->
+  <footer style="border-top:1px solid var(--hair);margin-top:40px;">
+    <div style="max-width:1100px;margin:0 auto;padding:26px 28px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+      <a href="/" class="kk-nav" style="display:flex;align-items:center;gap:9px;">
+        <img src="logo-mark.svg" alt="" width="22" height="22" style="display:block;">
+        <span style="font-weight:700;color:var(--ink);">Kintsugi</span>
+      </a>
+      <span style="font-size:12.5px;color:var(--dim);">Local-first safety for AI coding agents.</span>
+      <nav style="margin-left:auto;display:flex;gap:20px;font-size:13px;">
+        <a class="kk-nav" href="/" style="color:var(--dim);">Home</a>
+        <a class="kk-nav" href="https://github.com/arrowassassin/kintsugi" style="color:var(--dim);">GitHub</a>
+        <a class="kk-nav" href="/#download" style="color:var(--dim);">Install</a>
+      </nav>
+    </div>
+  </footer>
+</div>
+
+<script>
+/* Theme toggle — shares the home page's exact token sets AND its persisted choice
+   (the `kk-theme` localStorage key) so the two pages stay in lockstep: pick dark
+   on the home page, land here in dark, and vice versa. */
+(function(){
+  var root=document.getElementById('kk-root'), btn=document.getElementById('themeBtn');
+  if(!root) return;
+  var dark={'--bg':'#0b0e16','--bg2':'#0e1320','--panel':'#121a2b','--panel2':'#0e1626','--term':'#070a11','--line':'#283557','--hair':'rgba(40,53,87,.5)','--ink':'#e8ecf5','--dim':'#8b95ad','--gold':'#D4AF37','--gold-bright':'#EBC65A','--gold-line':'rgba(212,175,55,.35)','--green':'#5af78e','--amber':'#ffd866','--red':'#ff5d5d','--cyan':'#6bd6ff'};
+  var light={'--bg':'#f3efe3','--bg2':'#efe9da','--panel':'#fbf8ef','--panel2':'#f6f1e4','--term':'#11151d','--line':'#d8cfb6','--hair':'rgba(201,192,166,.55)','--ink':'#1b2230','--dim':'#6a7488','--gold':'#9C6F1C','--gold-bright':'#B8860B','--gold-line':'rgba(156,111,28,.4)','--green':'#1f8a4c','--amber':'#a9760a','--red':'#c0392b','--cyan':'#1f6f8b'};
+  function applyTheme(name){
+    var vars=name==='dark'?dark:light;
+    for(var k in vars) root.style.setProperty(k,vars[k]);
+    root.setAttribute('data-theme',name);
+    try{localStorage.setItem('kk-theme',name);}catch(_){}
+  }
+  var saved=null; try{saved=localStorage.getItem('kk-theme');}catch(_){}
+  applyTheme(saved==='dark'?'dark':'light');
+  if(btn) btn.addEventListener('click',function(){
+    applyTheme(root.getAttribute('data-theme')==='light'?'dark':'light');
+  });
+})();
+</script>
+</body>
+</html>
