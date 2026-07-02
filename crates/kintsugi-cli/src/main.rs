@@ -5,6 +5,7 @@
 //! later phases.
 
 mod admin_cmd;
+mod bench;
 mod dryrun;
 mod init;
 mod logview;
@@ -97,6 +98,25 @@ enum Command {
         show_redacted: bool,
         #[command(flatten)]
         filter: FilterArgs,
+    },
+    /// Replay commands through the deterministic classifier and report the
+    /// class distribution (dev tool — the accuracy measuring stick).
+    Bench {
+        /// Replay the local event-log history.
+        #[arg(long)]
+        events: bool,
+        /// Also replay a newline-delimited command file.
+        #[arg(long)]
+        corpus: Option<std::path::PathBuf>,
+        /// Write the full report as JSON.
+        #[arg(long)]
+        json: Option<std::path::PathBuf>,
+        /// Compare against a baseline JSON report and print gate results.
+        #[arg(long)]
+        baseline: Option<std::path::PathBuf>,
+        /// Exit non-zero if a gate fails (for CI).
+        #[arg(long)]
+        check: bool,
     },
     /// Redact (hide) events without breaking the hash chain. Pass an ID to hide
     /// one, or filters to hide many. The rows stay on disk; use `purge` to erase.
@@ -575,6 +595,9 @@ fn main() -> Result<()> {
             show_redacted,
             filter,
         }) => cmd_log(number, page, show_redacted, &filter),
+        Some(Command::Bench { events, corpus, json, baseline, check }) => {
+            bench::run(events, corpus.as_deref(), json.as_deref(), baseline.as_deref(), check)
+        }
         Some(Command::Redact { id, reason, filter }) => cmd_redact(id, &reason, &filter),
         Some(Command::Purge {
             yes,

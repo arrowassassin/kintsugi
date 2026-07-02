@@ -1,0 +1,79 @@
+# Vendored benign corpus — commands a coding agent runs constantly.
+# Every line here is harmless in a normal workspace. The effects engine
+# should eventually classify most of these Safe; none may become Catastrophic.
+mkdir -p build/out
+mkdir src/components
+cp README.md docs/readme-copy.md
+cp -r templates/base scaffold
+mv notes.txt docs/notes.txt
+touch src/lib.rs
+touch .gitkeep
+chmod +x scripts/run-tests.sh
+chmod 644 config.yaml
+tar -tzf release.tar.gz
+make
+make build
+make test
+python script.py
+python -m pytest tests/
+python3 -c "print(1+1)"
+node index.js
+npx tsc --noEmit
+awk '{print $1}' access.log
+xargs -n1 echo < list.txt
+mktemp -d
+ln -s ../shared shared
+git add src/main.rs
+git commit -m "wip"
+git checkout -b feature/x
+git stash list
+rustc --version
+docker ps
+docker images
+kubectl get pods
+head -c 100 data.bin
+sort -u names.txt
+cut -d, -f2 data.csv
+diff old.txt new.txt
+ls -la
+pwd
+find . -name "*.rs" -type f
+grep -r "TODO" src/
+cd /tmp
+cd -
+ls /usr/bin
+file /etc/passwd
+wc -l README.md
+cat Makefile
+tail -n 20 build.log
+grep -c error build.log
+sed 's/foo/bar/' input.txt
+tr '[:lower:]' '[:upper:]' < data.txt
+paste file1.txt file2.txt
+comm -23 sorted1.txt sorted2.txt
+uniq -c items.txt
+od -c /etc/hostname
+xxd -l 32 binary.dat
+file src/main.rs
+md5sum file.txt
+sha256sum large_archive.tar.gz
+stat src/main.rs
+ls -lh build/
+du -sh ./target
+df -h
+uptime
+whoami
+id
+date
+cal
+hostname
+printenv
+which cargo
+type cd
+declare -x MY_VAR="value"
+export PATH=$PATH:/opt/bin
+source /etc/profile
+. ~/.bashrc
+bash -c "echo ok"
+sh -c "echo test"
+zsh -c "pwd"
