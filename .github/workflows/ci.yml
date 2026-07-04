@@ -46,7 +46,17 @@ jobs:
       - run: cargo build --workspace --all-targets
       - run: cargo test --workspace
       - name: Bench regression gates (hold-rate ↓ only, zero cata-as-safe)
-        run: cargo run --bin kintsugi -- bench --corpus bench/benign.txt --baseline bench/baseline.json --check
+        shell: bash
+        run: |
+          # Pin the baseline to origin/main so a PR cannot regenerate
+          # bench/baseline.json to mask its own classifier regression.
+          git fetch --no-tags --depth=1 origin main
+          if git show FETCH_HEAD:bench/baseline.json > /tmp/baseline-main.json 2>/dev/null; then
+            BASELINE=/tmp/baseline-main.json
+          else
+            BASELINE=bench/baseline.json   # first merge: main has no baseline yet
+          fi
+          cargo run --bin kintsugi -- bench --corpus bench/benign.txt --baseline "$BASELINE" --check
 
   coverage:
     name: coverage (line; branch tracked)

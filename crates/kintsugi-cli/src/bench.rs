@@ -92,12 +92,15 @@ pub fn run(events: bool, corpus: Option<&Path>, json: Option<&Path>, baseline: O
         lines.extend(log.query(&filter)?.into_iter().map(|e| e.command));
     }
     if let Some(p) = corpus {
-        lines.extend(std::fs::read_to_string(p)?.lines().map(str::to_string));
+        lines.extend(std::fs::read_to_string(p).with_context(|| format!("read corpus {}", p.display()))?.lines().map(str::to_string));
     }
     if lines.is_empty() {
         anyhow::bail!("nothing to replay — pass --events and/or --corpus FILE");
     }
     let report = run_corpus(&lines);
+    if report.total == 0 {
+        anyhow::bail!("corpus contained no commands after filtering comments/blanks — refusing to report a vacuous pass");
+    }
     println!(
         "replayed {:>5} commands: {} safe ({:.1}%), {} ambiguous, {} catastrophic",
         report.total,
@@ -117,11 +120,11 @@ pub fn run(events: bool, corpus: Option<&Path>, json: Option<&Path>, baseline: O
         println!("  {n:>5}  {rule}");
     }
     if let Some(p) = json {
-        std::fs::write(p, serde_json::to_string_pretty(&report)?)?;
+        std::fs::write(p, serde_json::to_string_pretty(&report)?).with_context(|| format!("write report {}", p.display()))?;
         println!("wrote {}", p.display());
     }
     if let Some(p) = baseline {
-        let base: BenchReport = serde_json::from_str(&std::fs::read_to_string(p)?)?;
+        let base: BenchReport = serde_json::from_str(&std::fs::read_to_string(p).with_context(|| format!("read baseline {}", p.display()))?).with_context(|| format!("parse baseline {}", p.display()))?;
         match compare(&base, &report) {
             Ok(s) => println!("gates OK: {s}"),
             Err(e) => {
@@ -220,5 +223,11 @@ mod tests {
             ],
         };
         assert!(compare(&base, &cur).is_err());
+    }
+
+    #[test]
+    fn empty_corpus_is_an_error_not_a_pass() {
+        let r = run_corpus(&["# only a comment".to_string(), "".to_string()]);
+        assert_eq!(r.total, 0); // run() refuses this; compare() never sees it
     }
 }
