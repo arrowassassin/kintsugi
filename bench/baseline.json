@@ -1,0 +1,743 @@
+{
+  "total": 147,
+  "safe": 41,
+  "ambiguous": 106,
+  "catastrophic": 0,
+  "rows": [
+    {
+      "command": "mkdir -p build/out",
+      "class": "ambiguous",
+      "rule": "ambiguous:mkdir"
+    },
+    {
+      "command": "mkdir src/components",
+      "class": "ambiguous",
+      "rule": "ambiguous:mkdir"
+    },
+    {
+      "command": "cp README.md docs/readme-copy.md",
+      "class": "ambiguous",
+      "rule": "ambiguous:cp"
+    },
+    {
+      "command": "cp -r templates/base scaffold",
+      "class": "ambiguous",
+      "rule": "ambiguous:cp"
+    },
+    {
+      "command": "mv notes.txt docs/notes.txt",
+      "class": "ambiguous",
+      "rule": "ambiguous:mv"
+    },
+    {
+      "command": "touch src/lib.rs",
+      "class": "ambiguous",
+      "rule": "ambiguous:touch"
+    },
+    {
+      "command": "touch .gitkeep",
+      "class": "ambiguous",
+      "rule": "ambiguous:touch"
+    },
+    {
+      "command": "chmod +x scripts/run-tests.sh",
+      "class": "ambiguous",
+      "rule": "ambiguous:chmod"
+    },
+    {
+      "command": "chmod 644 config.yaml",
+      "class": "ambiguous",
+      "rule": "ambiguous:chmod"
+    },
+    {
+      "command": "tar -tzf release.tar.gz",
+      "class": "ambiguous",
+      "rule": "ambiguous:tar"
+    },
+    {
+      "command": "make",
+      "class": "ambiguous",
+      "rule": "ambiguous:make"
+    },
+    {
+      "command": "make build",
+      "class": "ambiguous",
+      "rule": "ambiguous:make"
+    },
+    {
+      "command": "make test",
+      "class": "ambiguous",
+      "rule": "ambiguous:make"
+    },
+    {
+      "command": "python script.py",
+      "class": "ambiguous",
+      "rule": "ambiguous:python"
+    },
+    {
+      "command": "python -m pytest tests/",
+      "class": "ambiguous",
+      "rule": "ambiguous:python"
+    },
+    {
+      "command": "python3 -c \"print(1+1)\"",
+      "class": "ambiguous",
+      "rule": "ambiguous:python3"
+    },
+    {
+      "command": "node index.js",
+      "class": "ambiguous",
+      "rule": "ambiguous:node"
+    },
+    {
+      "command": "npx tsc --noEmit",
+      "class": "ambiguous",
+      "rule": "ambiguous:npx"
+    },
+    {
+      "command": "awk '{print $1}' access.log",
+      "class": "ambiguous",
+      "rule": "ambiguous:awk"
+    },
+    {
+      "command": "xargs -n1 echo < list.txt",
+      "class": "ambiguous",
+      "rule": "ambiguous:xargs"
+    },
+    {
+      "command": "mktemp -d",
+      "class": "ambiguous",
+      "rule": "ambiguous:mktemp"
+    },
+    {
+      "command": "ln -s ../shared shared",
+      "class": "ambiguous",
+      "rule": "ambiguous:ln"
+    },
+    {
+      "command": "git add src/main.rs",
+      "class": "ambiguous",
+      "rule": "ambiguous:git"
+    },
+    {
+      "command": "git commit -m \"wip\"",
+      "class": "ambiguous",
+      "rule": "ambiguous:git"
+    },
+    {
+      "command": "git checkout -b feature/x",
+      "class": "ambiguous",
+      "rule": "ambiguous:git"
+    },
+    {
+      "command": "git stash list",
+      "class": "safe",
+      "rule": "safe:empty"
+    },
+    {
+      "command": "rustc --version",
+      "class": "ambiguous",
+      "rule": "ambiguous:rustc"
+    },
+    {
+      "command": "docker ps",
+      "class": "ambiguous",
+      "rule": "ambiguous:docker"
+    },
+    {
+      "command": "docker images",
+      "class": "ambiguous",
+      "rule": "ambiguous:docker"
+    },
+    {
+      "command": "kubectl get pods",
+      "class": "ambiguous",
+      "rule": "ambiguous:kubectl"
+    },
+    {
+      "command": "head -c 100 data.bin",
+      "class": "safe",
+      "rule": "safe:empty"
+    },
+    {
+      "command": "sort -u names.txt",
+      "class": "safe",
+      "rule": "safe:empty"
+    },
+    {
+      "command": "cut -d, -f2 data.csv",
+      "class": "safe",
+      "rule": "safe:empty"
+    },
+    {
+      "command": "diff old.txt new.txt",
+      "class": "safe",
+      "rule": "safe:empty"
+    },
+    {
+      "command": "ls -la",
+      "class": "safe",
+      "rule": "safe:empty"
+    },
+    {
+      "command": "pwd",
+      "class": "safe",
+      "rule": "safe:empty"
+    },
+    {
+      "command": "find . -name \"*.rs\" -type f",
+      "class": "safe",
+      "rule": "safe:empty"
+    },
+    {
+      "command": "grep -r \"TODO\" src/",
+      "class": "safe",
+      "rule": "safe:empty"
+    },
+    {
+      "command": "cd /tmp",
+      "class": "ambiguous",
+      "rule": "ambiguous:cd"
+    },
+    {
+      "command": "cd -",
+      "class": "ambiguous",
+      "rule": "ambiguous:cd"
+    },
+    {
+      "command": "ls /usr/bin",
+      "class": "safe",
+      "rule": "safe:empty"
+    },
+    {
+      "command": "file /etc/passwd",
+      "class": "safe",
+      "rule": "safe:empty"
+    },
+    {
+      "command": "wc -l README.md",
+      "class": "safe",
+      "rule": "safe:empty"
+    },
+    {
+      "command": "cat Makefile",
+      "class": "safe",
+      "rule": "safe:empty"
+    },
+    {
+      "command": "tail -n 20 build.log",
+      "class": "safe",
+      "rule": "safe:empty"
+    },
+    {
+      "command": "grep -c error build.log",
+      "class": "safe",
+      "rule": "safe:empty"
+    },
+    {
+      "command": "sed 's/foo/bar/' input.txt",
+      "class": "safe",
+      "rule": "safe:empty"
+    },
+    {
+      "command": "tr '[:lower:]' '[:upper:]' < data.txt",
+      "class": "ambiguous",
+      "rule": "ambiguous:tr"
+    },
+    {
+      "command": "paste file1.txt file2.txt",
+      "class": "ambiguous",
+      "rule": "ambiguous:paste"
+    },
+    {
+      "command": "comm -23 sorted1.txt sorted2.txt",
+      "class": "ambiguous",
+      "rule": "ambiguous:comm"
+    },
+    {
+      "command": "uniq -c items.txt",
+      "class": "safe",
+      "rule": "safe:empty"
+    },
+    {
+      "command": "od -c /etc/hostname",
+      "class": "ambiguous",
+      "rule": "ambiguous:od"
+    },
+    {
+      "command": "xxd -l 32 binary.dat",
+      "class": "ambiguous",
+      "rule": "ambiguous:xxd"
+    },
+    {
+      "command": "file src/main.rs",
+      "class": "safe",
+      "rule": "safe:empty"
+    },
+    {
+      "command": "md5sum file.txt",
+      "class": "ambiguous",
+      "rule": "ambiguous:md5sum"
+    },
+    {
+      "command": "sha256sum large_archive.tar.gz",
+      "class": "ambiguous",
+      "rule": "ambiguous:sha256sum"
+    },
+    {
+      "command": "stat src/main.rs",
+      "class": "safe",
+      "rule": "safe:empty"
+    },
+    {
+      "command": "ls -lh build/",
+      "class": "safe",
+      "rule": "safe:empty"
+    },
+    {
+      "command": "du -sh ./target",
+      "class": "safe",
+      "rule": "safe:empty"
+    },
+    {
+      "command": "df -h",
+      "class": "safe",
+      "rule": "safe:empty"
+    },
+    {
+      "command": "uptime",
+      "class": "ambiguous",
+      "rule": "ambiguous:uptime"
+    },
+    {
+      "command": "whoami",
+      "class": "safe",
+      "rule": "safe:empty"
+    },
+    {
+      "command": "id",
+      "class": "safe",
+      "rule": "safe:empty"
+    },
+    {
+      "command": "date",
+      "class": "safe",
+      "rule": "safe:empty"
+    },
+    {
+      "command": "cal",
+      "class": "ambiguous",
+      "rule": "ambiguous:cal"
+    },
+    {
+      "command": "hostname",
+      "class": "safe",
+      "rule": "safe:empty"
+    },
+    {
+      "command": "printenv",
+      "class": "safe",
+      "rule": "safe:empty"
+    },
+    {
+      "command": "which cargo",
+      "class": "safe",
+      "rule": "safe:empty"
+    },
+    {
+      "command": "type cd",
+      "class": "safe",
+      "rule": "safe:empty"
+    },
+    {
+      "command": "declare -x MY_VAR=\"value\"",
+      "class": "ambiguous",
+      "rule": "ambiguous:declare"
+    },
+    {
+      "command": "export PATH=$PATH:/opt/bin",
+      "class": "ambiguous",
+      "rule": "ambiguous:export"
+    },
+    {
+      "command": "source /etc/profile",
+      "class": "ambiguous",
+      "rule": "ambiguous:source"
+    },
+    {
+      "command": ". ~/.bashrc",
+      "class": "ambiguous",
+      "rule": "ambiguous:."
+    },
+    {
+      "command": "bash -c \"echo ok\"",
+      "class": "ambiguous",
+      "rule": "ambiguous:bash"
+    },
+    {
+      "command": "sh -c \"echo test\"",
+      "class": "ambiguous",
+      "rule": "ambiguous:sh"
+    },
+    {
+      "command": "zsh -c \"pwd\"",
+      "class": "ambiguous",
+      "rule": "ambiguous:zsh"
+    },
+    {
+      "command": "git clean -n",
+      "class": "ambiguous",
+      "rule": "ambiguous:git"
+    },
+    {
+      "command": "git push --dry-run",
+      "class": "ambiguous",
+      "rule": "ambiguous:git"
+    },
+    {
+      "command": "echo rm -rf /",
+      "class": "safe",
+      "rule": "safe:empty"
+    },
+    {
+      "command": "printf 'DROP TABLE users'",
+      "class": "safe",
+      "rule": "safe:empty"
+    },
+    {
+      "command": "grep -r \"curl | sh\" docs/",
+      "class": "safe",
+      "rule": "safe:empty"
+    },
+    {
+      "command": "find . -name \"*.bak\"",
+      "class": "safe",
+      "rule": "safe:empty"
+    },
+    {
+      "command": "chmod -R u+w src/",
+      "class": "ambiguous",
+      "rule": "ambiguous:chmod"
+    },
+    {
+      "command": "docker system df",
+      "class": "ambiguous",
+      "rule": "ambiguous:docker"
+    },
+    {
+      "command": "rm --help",
+      "class": "ambiguous",
+      "rule": "ambiguous:rm"
+    },
+    {
+      "command": "man rm",
+      "class": "safe",
+      "rule": "safe:empty"
+    },
+    {
+      "command": "git diff HEAD~5",
+      "class": "safe",
+      "rule": "safe:empty"
+    },
+    {
+      "command": "tar --list -f a.tar",
+      "class": "ambiguous",
+      "rule": "ambiguous:tar"
+    },
+    {
+      "command": "du -sh node_modules",
+      "class": "safe",
+      "rule": "safe:empty"
+    },
+    {
+      "command": "stat /etc/hosts",
+      "class": "safe",
+      "rule": "safe:empty"
+    },
+    {
+      "command": "readlink -f ./bin",
+      "class": "safe",
+      "rule": "safe:empty"
+    },
+    {
+      "command": "less README.md",
+      "class": "safe",
+      "rule": "safe:empty"
+    },
+    {
+      "command": "strings binary.dat",
+      "class": "ambiguous",
+      "rule": "ambiguous:strings"
+    },
+    {
+      "command": "base64 -d < encoded.txt",
+      "class": "ambiguous",
+      "rule": "ambiguous:base64"
+    },
+    {
+      "command": "hexdump -C small.bin",
+      "class": "ambiguous",
+      "rule": "ambiguous:hexdump"
+    },
+    {
+      "command": "objdump -d binary",
+      "class": "ambiguous",
+      "rule": "ambiguous:objdump"
+    },
+    {
+      "command": "nm library.a",
+      "class": "ambiguous",
+      "rule": "ambiguous:nm"
+    },
+    {
+      "command": "ldd /usr/bin/ls",
+      "class": "ambiguous",
+      "rule": "ambiguous:ldd"
+    },
+    {
+      "command": "strace -e open ls 2>&1 | head",
+      "class": "ambiguous",
+      "rule": "ambiguous:strace"
+    },
+    {
+      "command": "ltrace -e getenv ./program",
+      "class": "ambiguous",
+      "rule": "ambiguous:ltrace"
+    },
+    {
+      "command": "addr2line -e binary 0x400",
+      "class": "ambiguous",
+      "rule": "ambiguous:addr2line"
+    },
+    {
+      "command": "gdb -batch -ex \"run\" ./binary",
+      "class": "ambiguous",
+      "rule": "ambiguous:gdb"
+    },
+    {
+      "command": "valgrind --leak-check=no ./program",
+      "class": "ambiguous",
+      "rule": "ambiguous:valgrind"
+    },
+    {
+      "command": "perf stat -e cycles ./benchmark",
+      "class": "ambiguous",
+      "rule": "ambiguous:perf"
+    },
+    {
+      "command": "timeout 5 ./long_running",
+      "class": "ambiguous",
+      "rule": "ambiguous:long_running"
+    },
+    {
+      "command": "stdbuf -o0 ./program",
+      "class": "ambiguous",
+      "rule": "ambiguous:program"
+    },
+    {
+      "command": "nice -n 10 ./worker",
+      "class": "ambiguous",
+      "rule": "ambiguous:nice"
+    },
+    {
+      "command": "ionice -c3 ./background_task",
+      "class": "ambiguous",
+      "rule": "ambiguous:ionice"
+    },
+    {
+      "command": "taskset -c 0 ./pinned",
+      "class": "ambiguous",
+      "rule": "ambiguous:taskset"
+    },
+    {
+      "command": "chrt -f 99 ./realtime",
+      "class": "ambiguous",
+      "rule": "ambiguous:chrt"
+    },
+    {
+      "command": "setfacl -m u::rx file.txt",
+      "class": "ambiguous",
+      "rule": "ambiguous:setfacl"
+    },
+    {
+      "command": "getfacl file.txt",
+      "class": "ambiguous",
+      "rule": "ambiguous:getfacl"
+    },
+    {
+      "command": "chown --from=old new file.txt",
+      "class": "ambiguous",
+      "rule": "ambiguous:chown"
+    },
+    {
+      "command": "chgrp staff config.yaml",
+      "class": "ambiguous",
+      "rule": "ambiguous:chgrp"
+    },
+    {
+      "command": "umask 0077",
+      "class": "ambiguous",
+      "rule": "ambiguous:umask"
+    },
+    {
+      "command": "wait",
+      "class": "ambiguous",
+      "rule": "ambiguous:wait"
+    },
+    {
+      "command": "disown %1",
+      "class": "ambiguous",
+      "rule": "ambiguous:disown"
+    },
+    {
+      "command": "trap \"echo caught\" SIGTERM",
+      "class": "ambiguous",
+      "rule": "ambiguous:trap"
+    },
+    {
+      "command": "read -p \"Enter name: \" name",
+      "class": "ambiguous",
+      "rule": "ambiguous:read"
+    },
+    {
+      "command": "select opt in a b c; do echo $opt; done",
+      "class": "ambiguous",
+      "rule": "ambiguous:select"
+    },
+    {
+      "command": "until false; do sleep 1; done",
+      "class": "ambiguous",
+      "rule": "ambiguous:until"
+    },
+    {
+      "command": "while true; do break; done",
+      "class": "ambiguous",
+      "rule": "ambiguous:while"
+    },
+    {
+      "command": "for i in {1..5}; do echo $i; done",
+      "class": "ambiguous",
+      "rule": "ambiguous:for"
+    },
+    {
+      "command": "case $1 in a) echo a;; esac",
+      "class": "ambiguous",
+      "rule": "ambiguous:case"
+    },
+    {
+      "command": "if true; then echo yes; fi",
+      "class": "ambiguous",
+      "rule": "ambiguous:if"
+    },
+    {
+      "command": "[[ -f file.txt ]] && echo exists",
+      "class": "ambiguous",
+      "rule": "ambiguous:[["
+    },
+    {
+      "command": "(echo a; echo b) | wc -l",
+      "class": "ambiguous",
+      "rule": "ambiguous:(echo"
+    },
+    {
+      "command": "{ echo a; echo b; } | wc -l",
+      "class": "ambiguous",
+      "rule": "ambiguous:{"
+    },
+    {
+      "command": "(cd /tmp && pwd)",
+      "class": "ambiguous",
+      "rule": "ambiguous:(cd"
+    },
+    {
+      "command": "pushd /tmp; popd",
+      "class": "ambiguous",
+      "rule": "ambiguous:pushd"
+    },
+    {
+      "command": "eval \"echo test\"",
+      "class": "ambiguous",
+      "rule": "ambiguous:eval"
+    },
+    {
+      "command": "exec 3< file.txt",
+      "class": "ambiguous",
+      "rule": "ambiguous:3<"
+    },
+    {
+      "command": "exec 3>&-",
+      "class": "ambiguous",
+      "rule": "ambiguous:3>&-"
+    },
+    {
+      "command": "mapfile -t lines < file.txt",
+      "class": "ambiguous",
+      "rule": "ambiguous:mapfile"
+    },
+    {
+      "command": "readarray -t data < input.txt",
+      "class": "ambiguous",
+      "rule": "ambiguous:readarray"
+    },
+    {
+      "command": "IFS=, read -r a b c <<< \"1,2,3\"",
+      "class": "ambiguous",
+      "rule": "ambiguous:read"
+    },
+    {
+      "command": "printf \"%s\\n\" \"${array[@]}\"",
+      "class": "safe",
+      "rule": "safe:empty"
+    },
+    {
+      "command": "set -x; echo debug; set +x",
+      "class": "ambiguous",
+      "rule": "ambiguous:set"
+    },
+    {
+      "command": "enable -n builtin",
+      "class": "ambiguous",
+      "rule": "ambiguous:enable"
+    },
+    {
+      "command": "history | head",
+      "class": "ambiguous",
+      "rule": "ambiguous:history"
+    },
+    {
+      "command": "fc -l -10",
+      "class": "ambiguous",
+      "rule": "ambiguous:fc"
+    },
+    {
+      "command": "!ls",
+      "class": "ambiguous",
+      "rule": "ambiguous:!ls"
+    },
+    {
+      "command": "!!",
+      "class": "ambiguous",
+      "rule": "ambiguous:!!"
+    },
+    {
+      "command": "type -P ls",
+      "class": "safe",
+      "rule": "safe:empty"
+    },
+    {
+      "command": "command -V cd",
+      "class": "ambiguous",
+      "rule": "ambiguous:cd"
+    },
+    {
+      "command": "compgen -c | head",
+      "class": "ambiguous",
+      "rule": "ambiguous:compgen"
+    },
+    {
+      "command": "complete -F _custom mycmd",
+      "class": "ambiguous",
+      "rule": "ambiguous:complete"
+    }
+  ]
+}

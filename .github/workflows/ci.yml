@@ -45,6 +45,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --all-targets
       - run: cargo test --workspace
+      - name: Bench regression gates (hold-rate ↓ only, zero cata-as-safe)
+        run: cargo run --bin kintsugi -- bench --corpus bench/benign.txt --baseline bench/baseline.json --check
 
   coverage:
     name: coverage (line; branch tracked)
