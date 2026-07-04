@@ -77,3 +77,76 @@ source /etc/profile
 bash -c "echo ok"
 sh -c "echo test"
 zsh -c "pwd"
+
+# boundary-adjacent but benign
+git clean -n
+git push --dry-run
+echo rm -rf /
+printf 'DROP TABLE users'
+grep -r "curl | sh" docs/
+find . -name "*.bak"
+chmod -R u+w src/
+docker system df
+rm --help
+man rm
+git diff HEAD~5
+tar --list -f a.tar
+du -sh node_modules
+stat /etc/hosts
+readlink -f ./bin
+less README.md
+strings binary.dat
+base64 -d < encoded.txt
+hexdump -C small.bin
+objdump -d binary
+nm library.a
+ldd /usr/bin/ls
+strace -e open ls 2>&1 | head
+ltrace -e getenv ./program
+addr2line -e binary 0x400
+gdb -batch -ex "run" ./binary
+valgrind --leak-check=no ./program
+perf stat -e cycles ./benchmark
+timeout 5 ./long_running
+stdbuf -o0 ./program
+nice -n 10 ./worker
+ionice -c3 ./background_task
+taskset -c 0 ./pinned
+chrt -f 99 ./realtime
+setfacl -m u::rx file.txt
+getfacl file.txt
+chown --from=old new file.txt
+chgrp staff config.yaml
+umask 0077
+wait
+disown %1
+trap "echo caught" SIGTERM
+read -p "Enter name: " name
+select opt in a b c; do echo $opt; done
+until false; do sleep 1; done
+while true; do break; done
+for i in {1..5}; do echo $i; done
+case $1 in a) echo a;; esac
+if true; then echo yes; fi
+[[ -f file.txt ]] && echo exists
+(echo a; echo b) | wc -l
+{ echo a; echo b; } | wc -l
+(cd /tmp && pwd)
+pushd /tmp; popd
+eval "echo test"
+exec 3< file.txt
+exec 3>&-
+mapfile -t lines < file.txt
+readarray -t data < input.txt
+IFS=, read -r a b c <<< "1,2,3"
+printf "%s\n" "${array[@]}"
+set -x; echo debug; set +x
+enable -n builtin
+history | head
+fc -l -10
+!ls
+!!
+type -P ls
+command -V cd
+compgen -c | head
+complete -F _custom mycmd

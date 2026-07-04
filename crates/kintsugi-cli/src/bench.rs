@@ -47,8 +47,24 @@ pub fn run_corpus(lines: &[String]) -> BenchReport {
 /// Ok(summary) on pass, Err(reason) on gate failure.
 pub fn compare(baseline: &BenchReport, current: &BenchReport) -> Result<String, String> {
     // Any command catastrophic in baseline that is Safe now = I1 violation.
-    let cur_by_cmd: std::collections::HashMap<&str, Class> =
-        current.rows.iter().map(|r| (r.command.as_str(), r.class)).collect();
+    // For duplicates, keep the SAFEST class seen: Safe > Ambiguous > Catastrophic.
+    // This way, a catastrophic command with even one safe occurrence fails the gate.
+    let mut cur_by_cmd: std::collections::HashMap<&str, Class> =
+        std::collections::HashMap::new();
+    for row in &current.rows {
+        let cmd = row.command.as_str();
+        cur_by_cmd
+            .entry(cmd)
+            .and_modify(|existing| {
+                // Safe > Ambiguous > Catastrophic for gate purposes
+                if row.class == Class::Safe {
+                    *existing = Class::Safe;
+                } else if row.class == Class::Ambiguous && *existing == Class::Catastrophic {
+                    *existing = Class::Ambiguous;
+                }
+            })
+            .or_insert(row.class);
+    }
     for row in &baseline.rows {
         if row.class == Class::Catastrophic {
             if let Some(Class::Safe) = cur_by_cmd.get(row.command.as_str()) {
@@ -96,7 +112,7 @@ pub fn run(events: bool, corpus: Option<&Path>, json: Option<&Path>, baseline: O
         *held.entry(row.rule.clone()).or_default() += 1;
     }
     let mut held: Vec<_> = held.into_iter().collect();
-    held.sort_by(|a, b| b.1.cmp(&a.1));
+    held.sort_by_key(|b| std::cmp::Reverse(b.1));
     for (rule, n) in held.iter().take(15) {
         println!("  {n:>5}  {rule}");
     }
@@ -165,5 +181,44 @@ mod tests {
         cur.safe = 1;
         cur.ambiguous = 0;
         assert!(compare(&base, &cur).is_ok());
+    }
+
+    #[test]
+    fn gate_catches_cata_as_safe_among_duplicates() {
+        // Baseline: rm -rf / is catastrophic.
+        // Current: two rows for rm -rf / — one Safe, one Catastrophic.
+        // Despite the Safe occurrence, the gate should fail because we keep the safest class
+        // for duplicate commands, and Safe > Catastrophic means the map holds Safe,
+        // triggering the I1 violation.
+        let base = BenchReport {
+            total: 1,
+            safe: 0,
+            ambiguous: 0,
+            catastrophic: 1,
+            rows: vec![BenchRow {
+                command: "rm -rf /".to_string(),
+                class: Class::Catastrophic,
+                rule: "catastrophic".to_string(),
+            }],
+        };
+        let cur = BenchReport {
+            total: 2,
+            safe: 1,
+            ambiguous: 0,
+            catastrophic: 1,
+            rows: vec![
+                BenchRow {
+                    command: "rm -rf /".to_string(),
+                    class: Class::Safe,
+                    rule: "safe".to_string(),
+                },
+                BenchRow {
+                    command: "rm -rf /".to_string(),
+                    class: Class::Catastrophic,
+                    rule: "catastrophic".to_string(),
+                },
+            ],
+        };
+        assert!(compare(&base, &cur).is_err());
     }
 }

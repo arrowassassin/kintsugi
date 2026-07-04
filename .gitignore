@@ -13,3 +13,7 @@ tour-nav-light.png
 desktop-dx/dist/*
 desktop-dx/src-tauri/*
 desktop-dx/target/*
+
+# Local editor config and design handoff archives (user-local, not source)
+.zed/
+/*.zip
