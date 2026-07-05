@@ -64,7 +64,10 @@ pub fn path_scope(token: &str, root_known: bool) -> Scope {
         return Scope::Outside; // absolute: judged Outside even with a root —
                                // Phase 0 rescues only relative paths (paranoid).
     }
-    // Lexical traversal check: any `..` component can escape.
+    // Lexical traversal check: any `..` component can escape. Deliberately
+    // ASCII-lexical only — Unicode lookalikes (e.g. U+2024 ONE DOT LEADER)
+    // are not `..` to the OS either, so treating them as traversal would be
+    // both wrong and no safer; the OS-level component match is the ground truth.
     if std::path::Path::new(t)
         .components()
         .any(|c| matches!(c, std::path::Component::ParentDir))
@@ -153,7 +156,11 @@ pub fn extract(prog: &str, args: &[&str], root_known: bool) -> Option<EffectSet>
         match args.first() {
             Some(f) if p.list_flags.iter().any(|l| l == f) => {
                 for a in &args[1..] {
-                    set.effects.push(Effect::FsRead((*a).to_string()));
+                    if crate::rules::is_secret_path(a) {
+                        set.effects.push(Effect::Unknown);
+                    } else {
+                        set.effects.push(Effect::FsRead((*a).to_string()));
+                    }
                 }
                 return Some(set);
             }
@@ -177,7 +184,24 @@ pub fn extract(prog: &str, args: &[&str], root_known: bool) -> Option<EffectSet>
                 return Some(set);
             }
             if p.value_flags.iter().any(|f| f == base) && !a.contains('=') {
-                i += 1; // consume the flag's value
+                // The consumed value token bypasses the flag audit entirely,
+                // so a smuggled flag (e.g. `-m --evil-flag`) would otherwise
+                // slip through unaudited. No legitimate mode/jobs/separator
+                // value starts with '-', and a value_flag at end-of-args has
+                // no value to consume — poison to Unknown either way (I3).
+                match args.get(i + 1) {
+                    Some(v) if v.starts_with('-') => {
+                        set.effects.push(Effect::Unknown);
+                        return Some(set);
+                    }
+                    Some(_) => {
+                        i += 1; // consume the flag's (validated) value
+                    }
+                    None => {
+                        set.effects.push(Effect::Unknown);
+                        return Some(set);
+                    }
+                }
             }
         } else {
             positionals.push(a);
@@ -208,12 +232,16 @@ pub fn extract(prog: &str, args: &[&str], root_known: bool) -> Option<EffectSet>
         if let Some(f) = positionals.first() {
             // Reject inline-code sentinels defensively even though the flag
             // audit should have caught them.
-            match path_scope(f, root_known) {
-                Scope::Workspace => {
-                    set.effects.push(Effect::FsRead((*f).to_string()));
-                    set.effects.push(Effect::ProcExec);
+            if crate::rules::is_secret_path(f) {
+                set.effects.push(Effect::Unknown);
+            } else {
+                match path_scope(f, root_known) {
+                    Scope::Workspace => {
+                        set.effects.push(Effect::FsRead((*f).to_string()));
+                        set.effects.push(Effect::ProcExec);
+                    }
+                    _ => set.effects.push(Effect::Unknown),
                 }
-                _ => set.effects.push(Effect::Unknown),
             }
         }
         return Some(set);
@@ -226,7 +254,11 @@ pub fn extract(prog: &str, args: &[&str], root_known: bool) -> Option<EffectSet>
         match expand_role(role, &positionals) {
             Some(targets) => {
                 for t in targets {
-                    set.effects.push(Effect::FsRead(t.to_string()));
+                    if crate::rules::is_secret_path(t) {
+                        set.effects.push(Effect::Unknown);
+                    } else {
+                        set.effects.push(Effect::FsRead(t.to_string()));
+                    }
                 }
             }
             None => set.effects.push(Effect::Unknown),
@@ -332,6 +364,31 @@ mod tests {
         assert!(!extract("mkdir", &args(&["~/dir"]), false)
             .unwrap()
             .is_benign());
+    }
+
+    #[test]
+    fn value_flag_cannot_smuggle_unaudited_flags() {
+        assert!(!extract("mkdir", &["-m", "--evil-flag", "dir"], true)
+            .unwrap()
+            .is_benign());
+        assert!(!extract("make", &["-j", "-C"], true).unwrap().is_benign()); // flag-shaped value
+        assert!(!extract("mkdir", &["-m"], true).unwrap().is_benign()); // value_flag at end
+        assert!(extract("mkdir", &["-m", "755", "dir"], true)
+            .unwrap()
+            .is_benign()); // real value still fine
+    }
+
+    #[test]
+    fn secret_reads_poison_within_the_module() {
+        // `is_secret_path` doesn't recognize `/etc/shadow` (no such pattern) —
+        // use paths it does match: `.ssh/id_rsa` and a bare `id_rsa` basename.
+        assert!(!extract("tar", &["-tzf", "id_rsa"], true)
+            .unwrap()
+            .is_benign());
+        assert!(!extract("sort", &["../.ssh/id_rsa"], true)
+            .unwrap()
+            .is_benign());
+        assert!(extract("sort", &["names.txt"], true).unwrap().is_benign()); // non-secret read fine
     }
 
     #[test]

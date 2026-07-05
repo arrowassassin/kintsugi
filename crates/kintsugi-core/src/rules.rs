@@ -853,7 +853,7 @@ fn reads_secret(prog: &str, args: &[&str], seg: &str) -> bool {
     args.iter().any(|a| is_secret_path(a)) || seg_mentions_secret(seg)
 }
 
-fn is_secret_path(arg: &str) -> bool {
+pub(crate) fn is_secret_path(arg: &str) -> bool {
     let a = arg.trim_matches(['"', '\'']);
     let lower = a.to_lowercase();
     let base = a.rsplit(['/', '\\']).next().unwrap_or(a);
