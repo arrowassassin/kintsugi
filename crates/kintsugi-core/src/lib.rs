@@ -11,6 +11,7 @@
 #![forbid(unsafe_code)]
 
 pub mod admin;
+pub mod effects;
 pub mod log;
 pub mod memory;
 pub mod negotiate;

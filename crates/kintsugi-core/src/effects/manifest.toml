@@ -1,0 +1,89 @@
+# Effect manifests — deterministic per-program effect profiles.
+# CONTRACT: listing a program here asserts that, invoked with ONLY the flags
+# below, its filesystem/network effects are exactly the declared ones. Any
+# unlisted flag poisons the profile (-> Unknown -> no rescue). When unsure,
+# leave it out — absence just means "held for review", never a miss.
+
+[mkdir]
+writes = "all-args"
+flags = ["-p", "--parents", "-v", "--verbose", "-m", "--mode"]
+value_flags = ["-m", "--mode"]
+
+[touch]
+writes = "all-args"
+flags = ["-a", "-m", "-c", "--no-create"]
+
+[cp]
+reads = "init-args"     # every positional except the last
+writes = "last-arg"
+flags = ["-r", "-R", "--recursive", "-p", "--preserve", "-v", "--verbose", "-n", "--no-clobber", "-a", "--archive"]
+
+[mv]
+reads = "init-args"
+writes = "last-arg"
+deletes = "init-args"   # the source stops existing
+flags = ["-v", "--verbose", "-n", "--no-clobber"]
+
+[ln]
+writes = "last-arg"
+flags = ["-s", "--symbolic", "-v"]
+
+[chmod]
+writes = "path-args"    # metadata write; positional non-mode args are paths
+flags = ["-R", "--recursive", "-v", "--verbose"]
+skip_first_positional = true   # the mode (755 / +x) is not a path
+
+[mktemp]
+writes = "all-args"
+flags = ["-d", "--directory", "-p", "-t"]
+allow_zero_args = true         # bare `mktemp` writes only under $TMPDIR
+
+[make]
+proc_exec = true               # runs project-declared recipes
+reads = "none"
+flags = ["-j", "-C", "-f", "-B", "-k", "-s", "--silent", "-n", "--dry-run"]
+value_flags = ["-j", "-C", "-f"]
+
+[awk]
+reads = "path-args"
+skip_first_positional = true   # the program text
+flags = ["-F", "-v", "-f"]
+value_flags = ["-F", "-v"]
+
+[sort]
+reads = "all-args"
+flags = ["-u", "-r", "-n", "-k", "-t", "-h"]
+value_flags = ["-k", "-t"]
+allow_zero_args = true
+
+[tar]
+# Only LIST mode is profiled; extraction writes archive-controlled paths.
+list_flags = ["-t", "-tf", "-tzf", "-tjf", "-tvf", "-tzvf", "--list"]
+reads = "all-args"
+
+[docker]
+safe_subcommands = ["ps", "images", "version", "info", "logs", "inspect"]
+
+[kubectl]
+safe_subcommands = ["get", "describe", "version", "config"]
+
+[python]
+proc_exec = true
+runs_workspace_file = true     # `python script.py` — file must be a workspace path
+flags = ["-m", "-q", "-u", "-B"]
+
+[python3]
+proc_exec = true
+runs_workspace_file = true
+flags = ["-m", "-q", "-u", "-B"]
+
+[node]
+proc_exec = true
+runs_workspace_file = true
+flags = []
+
+[git]
+# git add/commit/checkout/switch/restore(-staged)/stash(push/list/show) are
+# workspace-confined by construction. Handled in code, not TOML (needs
+# subcommand-aware arg parsing) — this entry is a marker for coverage tests.
+handled_in_code = true
