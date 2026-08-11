@@ -628,3 +628,13 @@ the locked product decisions this build implements.
   which CI/headless can't build — same honest "not-CI-compiled" posture as the
   llama backend. GPUI was considered and declined: immature, macOS-first, and a
   weaker cross-platform story than the hard mac/Linux/Windows requirement allows.
+- Gate v0.4.0 (P-1): widened the confident-safe recognizer with strictly read-only
+  verbs (git/kubectl/docker/helm/terraform/gh/npm/cargo/go queries + text filters)
+  to shrink the Ambiguous→Hold prompt band. Deep-research verdict recorded in
+  `docs/classifier-research.md`: fatigue is fixed statelessly in the classifier —
+  stored per-command "allow always" memory was REJECTED (over-allow drift, rideable
+  entries), and no model may ever gate or downgrade (guardrail-evasion evidence).
+  Safety invariants: the secret-path guard applies to every addition, and
+  subcommand-gated tools match the verb at position 0 only, because a value-taking
+  flag's VALUE could impersonate a safe verb (`kubectl -n get delete …`) — that
+  hole is test-pinned closed. Catastrophic floor untouched.
