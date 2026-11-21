@@ -179,6 +179,30 @@ pub fn extract(prog: &str, args: &[&str], root_known: bool) -> Option<EffectSet>
         if a.starts_with('-') && a.len() > 1 {
             // Audited flag? (exact match, or --flag=value form of an audited flag)
             let base = a.split('=').next().unwrap_or(a);
+            // Short value_flag with the value directly attached (`-j4`, no
+            // `=`, no space) — GNU-style short-option syntax. Recognized only
+            // when the two-char prefix (`-j`) is itself a declared
+            // value_flag AND the attached suffix is not itself flag-shaped
+            // (a `-`-prefixed suffix, e.g. `-j-C`, would smuggle an unaudited
+            // flag past the audit — poison instead, mirroring the guard for
+            // the separate-token form below). Never widens matching for
+            // plain (non-value) short flags.
+            let short_value_prefix = (!base.contains('=') && base.len() > 2)
+                .then(|| &base[..2])
+                .filter(|prefix| p.value_flags.iter().any(|f| f == prefix));
+            if let Some(prefix) = short_value_prefix {
+                if base[2..].starts_with('-') {
+                    set.effects.push(Effect::Unknown);
+                    return Some(set);
+                }
+                if !p.flags.iter().any(|f| f == prefix) {
+                    set.effects.push(Effect::Unknown);
+                    return Some(set);
+                }
+                // Attached value consumed; nothing more to do for this token.
+                i += 1;
+                continue;
+            }
             if !p.flags.iter().any(|f| f == base) {
                 set.effects.push(Effect::Unknown); // unaudited flag poisons
                 return Some(set);
@@ -227,8 +251,30 @@ pub fn extract(prog: &str, args: &[&str], root_known: bool) -> Option<EffectSet>
         set.effects.push(Effect::Unknown);
         return Some(set);
     }
+    // A `reads = "none"` + `proc_exec` profile (e.g. `make`) declares that
+    // running it with ONLY the audited flags has no filesystem effect of its
+    // own — that's true for a bare invocation (the default target), but a
+    // positional here is a *target name* (`install`, `uninstall`, `clean`,
+    // …) selecting an arbitrary, unaudited recipe whose effects (e.g.
+    // installing to a system directory) are invisible to this profile.
+    // Poison rather than silently trust the target name — `allow_zero_args`
+    // exists precisely so the bare/no-target form still rescues.
+    if p.reads.as_deref() == Some("none") && !positionals.is_empty() {
+        set.effects.push(Effect::Unknown);
+        return Some(set);
+    }
 
     if p.runs_workspace_file {
+        // Any positional beyond the script path is an argument *to that
+        // script* (e.g. `manage.py migrate`, `script.py --exec-anything`) —
+        // its effects are entirely opaque to us, so it must poison the
+        // profile to Unknown rather than being silently dropped. Without
+        // this, `python manage.py migrate` (or any script + argv) would
+        // extract as merely {FsRead, ProcExec} and rescue to Safe.
+        if positionals.len() > 1 {
+            set.effects.push(Effect::Unknown);
+            return Some(set);
+        }
         if let Some(f) = positionals.first() {
             // Reject inline-code sentinels defensively even though the flag
             // audit should have caught them.
@@ -392,6 +438,38 @@ mod tests {
     }
 
     #[test]
+    fn runs_workspace_file_rejects_extra_positionals() {
+        // A second positional is an argument *to* the script (e.g. a Django
+        // management command) whose effects we cannot see — must poison to
+        // Unknown, not be silently dropped. Guards against `python manage.py
+        // migrate` (or worse, argv smuggled to the script) rescuing to Safe.
+        assert!(!extract("python", &["manage.py", "migrate"], true)
+            .unwrap()
+            .is_benign());
+        assert!(!extract("python3", &["script.py", "--anything"], true)
+            .unwrap()
+            .is_benign());
+        // Still benign with exactly one positional.
+        assert!(extract("python", &["script.py"], true).unwrap().is_benign());
+    }
+
+    #[test]
+    fn make_with_a_target_name_is_not_benign() {
+        // A target selects an arbitrary, unaudited recipe (e.g. `install`
+        // commonly writes outside the workspace to a system prefix) — the
+        // `reads = "none"` profile has no way to know what a target does, so
+        // it must not be silently trusted. Only the bare/no-target form (the
+        // Makefile's default target) is rescued.
+        assert!(!extract("make", &["install"], true).unwrap().is_benign());
+        assert!(!extract("make", &["-j4", "install"], true)
+            .unwrap()
+            .is_benign());
+        assert!(!extract("make", &["uninstall"], true).unwrap().is_benign());
+        assert!(extract("make", &[], true).unwrap().is_benign());
+        assert!(extract("make", &["-j4"], true).unwrap().is_benign());
+    }
+
+    #[test]
     fn manifest_parses_and_is_nonempty() {
         // A malformed embedded manifest silently fails closed (empty map).
         // Assert the real manifest actually parses and covers the expected
@@ -401,5 +479,18 @@ mod tests {
             "embedded manifest failed to parse or is missing 'mkdir': {:?}",
             manifests().keys().collect::<Vec<_>>()
         );
+    }
+    #[test]
+    fn attached_short_value_flag_is_recognized() {
+        // `make -j4` (GNU-style attached short value) must be treated the
+        // same as `make -j 4` — not poisoned as an unaudited flag.
+        assert!(extract("make", &["-j4"], true).unwrap().is_benign());
+        assert!(extract("make", &["-j", "4"], true).unwrap().is_benign());
+        // A plain short flag must NOT be widened by this: `-j` alone with no
+        // attached digits is unaffected (still a value_flag needing a value).
+        assert!(!extract("make", &["-j"], true).unwrap().is_benign());
+        // An attached value that is itself flag-shaped must still poison —
+        // mirrors the existing smuggling guard for the separate-token form.
+        assert!(!extract("make", &["-j-C"], true).unwrap().is_benign());
     }
 }

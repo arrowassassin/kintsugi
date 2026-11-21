@@ -64,9 +64,6 @@ const CORPUS: &[(&str, Class)] = &[
     ("ls && rm -rf /", Class::Catastrophic),
     // ---- Ambiguous: the middle band ----
     ("rm file.txt", Class::Ambiguous),
-    ("mv src dst", Class::Ambiguous),
-    ("cp -r a b", Class::Ambiguous),
-    ("chmod 755 script.sh", Class::Ambiguous),
     ("npm install", Class::Ambiguous),
     ("make install", Class::Ambiguous),
     ("python manage.py migrate", Class::Ambiguous),
@@ -76,6 +73,18 @@ const CORPUS: &[(&str, Class)] = &[
         Class::Ambiguous,
     ),
     ("docker run ubuntu", Class::Ambiguous),
+
+    // ---- Safe via effects engine (Phase 0): benign, workspace-confined ----
+    ("cp -r a b", Class::Safe),
+    ("chmod 755 script.sh", Class::Safe),
+    ("mv src dst", Class::Safe),
+
+    // ---- Adversarial: lock the rescue's edges ----
+    ("mkdir /etc/evil", Class::Ambiguous),
+    ("cp x ../../outside", Class::Ambiguous),
+    ("tar -xzf a.tgz", Class::Ambiguous),
+    ("cd /tmp && mkdir payload", Class::Ambiguous),
+    ("mkdir -p build && cargo build", Class::Safe),
 ];
 
 #[test]

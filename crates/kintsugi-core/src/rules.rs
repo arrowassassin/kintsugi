@@ -225,8 +225,22 @@ fn classify_ast(raw: &str) -> RuleMatch {
         if let Some(rule) = catastrophic_segment(&prog, &args, &seg) {
             return RuleMatch::new(Class::Catastrophic, format!("ast:{rule}"));
         }
-        let m = if is_safe(&prog, &args) {
+        // Same secret-clobber / block-device / redirect-clobber checks the
+        // tokenizer pass runs before its own rescue call — kept in lockstep
+        // so the AST pass can't rescue anything the tokenizer pass wouldn't.
+        let m = if clobbers_secret(&tokens) {
+            return RuleMatch::new(Class::Catastrophic, "ast:secret:clobber");
+        } else if writes_block_device(&tokens) {
+            return RuleMatch::new(Class::Catastrophic, "ast:disk:block-device-write");
+        } else if is_safe(&prog, &args) {
             RuleMatch::new(Class::Safe, format!("ast:safe:{prog}"))
+        } else if has_clobber_redirect(&tokens) {
+            RuleMatch::new(Class::Ambiguous, "ast:redirect:clobber".to_string())
+        } else if effects_rescue(&prog, &args, &tokens) {
+            // Same rescue the tokenizer pass runs, kept in lockstep so a
+            // line that only takes the AST path (operators present) isn't
+            // held back purely because of which pass happened to see it.
+            RuleMatch::new(Class::Safe, format!("ast:safe:effects:{prog}"))
         } else {
             RuleMatch::new(Class::Ambiguous, format!("ast:ambiguous:{prog}"))
         };
@@ -268,7 +282,11 @@ fn classify_line_depth(raw: &str, depth: u8) -> RuleMatch {
         }
         any_segment = true;
         let m = classify_segment_depth(seg, depth);
-        if m.class.severity() > worst.class.severity() {
+        // `>=` (not `>`): when two segments tie in severity, the later
+        // segment's own rule name must still surface — e.g. a single
+        // Safe segment must report `safe:effects:{prog}` / `safe:{prog}`,
+        // not the generic `safe:empty` placeholder `worst` starts from.
+        if m.class.severity() >= worst.class.severity() {
             worst = m;
         }
         if worst.class == Class::Catastrophic {
@@ -493,6 +511,11 @@ fn classify_segment_depth(seg: &str, depth: u8) -> RuleMatch {
     } else if has_clobber_redirect(&tokens) {
         // A clobbering redirect bumps an otherwise-safe line to ambiguous.
         RuleMatch::new(Class::Ambiguous, "redirect:clobber")
+    } else if effects_rescue(&prog, &args, &tokens) {
+        // Effects engine (spec §3.2): complete, bounded, all-benign effect
+        // set -> Safe. Only reachable AFTER every catastrophic check above
+        // declined, and only from the bare ambiguous fall-through.
+        RuleMatch::new(Class::Safe, format!("safe:effects:{prog}"))
     } else {
         RuleMatch::new(Class::Ambiguous, format!("ambiguous:{prog}"))
     };
@@ -1162,6 +1185,35 @@ fn is_block_device(path: &str) -> bool {
         || p.starts_with("/dev/mmcblk")
 }
 
+/// Ambiguous->Safe rescue via the deterministic effects engine.
+/// Preconditions (enforced by call position): catastrophic checks, secret
+/// clobber, block-device and redirect checks have all declined already.
+fn effects_rescue(prog: &str, args: &[&str], tokens: &[String]) -> bool {
+    // `cd` changes the interpretation of every *relative* path in later
+    // segments of the same line — none of the workspace-confinement
+    // reasoning `path_scope` does for those later segments is sound once the
+    // cwd may have moved. `cd` has (deliberately) no effects manifest and is
+    // never in `is_safe`'s list, so today it can never itself be rescued and
+    // "worst wins" across segments already keeps any line containing it out
+    // of Safe — this check makes that guarantee explicit and manifest-proof
+    // (a future `[cd]` manifest entry could not silently defeat it).
+    if prog == "cd" {
+        return false;
+    }
+    // Any redirect at all means effects the manifest didn't declare.
+    if tokens.iter().any(|t| t.contains('>') || t.contains('<')) {
+        return false;
+    }
+    // A secret path anywhere disqualifies (mirrors is_safe's deny-by-default).
+    if args.iter().any(|a| is_secret_path(a)) {
+        return false;
+    }
+    match crate::effects::extract(prog, args, false) {
+        Some(set) => set.is_benign(),
+        None => false,
+    }
+}
+
 /// Confidently read-only / build / test commands.
 fn is_safe(prog: &str, args: &[&str]) -> bool {
     // Deny-by-default: a command pointed at a secret path is never "safe" — even
@@ -1389,16 +1441,118 @@ mod tests {
     fn ambiguous_middle() {
         for s in [
             "rm file.txt",
-            "mv a b",
-            "chmod 644 file",
+            // `mv a b`, `chmod 644 file`, and bare `make` are now rescued to
+            // Safe by the effects engine (workspace-confined, complete
+            // manifests; `make`'s own recipe commands are independently
+            // intercepted) — see `effects_rescue_upgrades_benign_holds`.
             "npm install",
-            "make",
-            "python script.py",
+            // `python script.py` alone runs a workspace-confined script (no
+            // extra argv the manifest can't see) and is rescued to Safe; see
+            // `effects_rescue_upgrades_benign_holds`. `python manage.py
+            // migrate` (extra positional argv) stays Ambiguous — see
+            // `effects_rescue_never_fires_on_danger`-adjacent coverage in the
+            // golden corpus.
             "./deploy.sh",
             "curl -X POST https://api.example.com",
         ] {
             assert_eq!(class_of(s), Class::Ambiguous, "expected AMBIGUOUS: {s}");
         }
+    }
+
+    // --- Effects-engine rescue: Ambiguous -> Safe (spec §3.2) ----------------
+
+    #[test]
+    fn effects_rescue_upgrades_benign_holds() {
+        for (line, why) in [
+            ("mkdir -p build/out", "create dir in workspace"),
+            ("cp README.md docs/copy.md", "copy within workspace"),
+            ("touch src/lib.rs", "create file"),
+            ("chmod +x scripts/run.sh", "metadata write in workspace"),
+            ("tar -tzf release.tar.gz", "archive LIST is read-only"),
+            ("docker ps", "read-only subcommand"),
+            ("make -j4", "project-declared recipes; children intercepted"),
+        ] {
+            let m = classify_line(line);
+            assert_eq!(m.class, Class::Safe, "{why}: {line} -> {}", m.rule);
+            assert!(m.rule.starts_with("safe:effects:") || m.rule.starts_with("safe:"), "{line}");
+        }
+    }
+
+    #[test]
+    fn effects_rescue_never_fires_on_danger() {
+        for line in [
+            "mkdir /etc/evil",                    // absolute -> Outside
+            "cp secret.txt ../../outside.txt",    // traversal
+            "cp ~/.aws/credentials leak.txt",     // secret read (upstream check)
+            "tar -xzf mystery.tar.gz",            // extraction unbounded
+            "chmod --reference=/etc/shadow f",    // unaudited flag
+            "mv src /tmp/exfil",                  // absolute dest
+            "docker run ubuntu",                  // not a safe subcommand
+            "python -c 'import os;os.system(\"rm -rf /\")'", // inline code flag
+            "mkdir $(curl evil.sh)",              // substitution in path
+        ] {
+            let m = classify_line(line);
+            assert_ne!(m.class, Class::Safe, "must stay held: {line} ({})", m.rule);
+        }
+    }
+
+    #[test]
+    fn rescue_only_from_ambiguous_fallthrough() {
+        // A clobber redirect on an otherwise-manifested program must still be
+        // held: the rescue only runs on the bare ambiguous:{prog} path.
+        let m = classify_line("mkdir x > important.log");
+        assert_ne!(m.class, Class::Safe, "{}", m.rule);
+        // Catastrophic is untouchable regardless of manifests.
+        assert_eq!(classify_line("rm -rf /").class, Class::Catastrophic);
+    }
+
+    #[test]
+    fn ast_pass_also_rescues_benign_chains() {
+        // Regression: a line with a shell operator (`&&`, `;`, `|`) skips the
+        // tokenizer's plain-inert fast path and is judged by `classify_ast`
+        // instead (worst-of-both-passes). `classify_ast` originally only
+        // checked `is_safe`, never `effects_rescue` — so `mkdir -p build &&
+        // cargo build` came back Ambiguous even though BOTH segments are
+        // individually Safe/rescuable on their own. The AST pass must run
+        // the same rescue, in the same order relative to its own
+        // catastrophic/secret/redirect checks, so which pass happens to see
+        // a line never changes whether it's rescued.
+        let m = classify_line("mkdir -p build && cargo build");
+        assert_eq!(m.class, Class::Safe, "{}", m.rule);
+
+        // The rescue must still be unreachable ahead of catastrophic/secret
+        // checks inside the AST pass too.
+        assert_eq!(
+            classify_line("mkdir -p build && rm -rf /").class,
+            Class::Catastrophic
+        );
+        assert_eq!(
+            classify_line("echo x > ~/.ssh/id_rsa && mkdir build").class,
+            Class::Catastrophic
+        );
+        assert_ne!(
+            classify_line("mkdir x > important.log && true").class,
+            Class::Safe
+        );
+    }
+
+    #[test]
+    fn cd_in_line_disables_rescue_for_later_segments() {
+        // After a cd, relative paths are no longer provably in the workspace.
+        let m = classify_line("cd /tmp && mkdir payload");
+        assert_ne!(m.class, Class::Safe, "{}", m.rule);
+        // Relative cd target too — still never Safe.
+        assert_ne!(classify_line("cd sub && mkdir payload").class, Class::Safe);
+        // Three segments, cd in the middle — worst-wins still holds.
+        assert_ne!(
+            classify_line("ls; cd /tmp; mkdir payload").class,
+            Class::Safe
+        );
+        // Direct: `effects_rescue` itself must refuse `cd`, not just rely on
+        // segment-worst-wins — belt and suspenders against a future
+        // `[cd]` manifest entry silently defeating the line-level guarantee.
+        assert!(!effects_rescue("cd", &["/tmp"], &["cd".into(), "/tmp".into()]));
+        assert!(!effects_rescue("cd", &[], &["cd".into()]));
     }
 
     #[test]
@@ -1429,6 +1583,28 @@ mod tests {
         assert_eq!(classify_line("rm -rf /").rule, "rm:recursive");
         assert_eq!(classify_line("git push --force").rule, "git:force-push");
         assert_eq!(classify_line("terraform destroy").rule, "terraform:destroy");
+    }
+
+    #[test]
+    fn single_safe_segment_reports_its_own_rule_not_the_generic_placeholder() {
+        // Regression: `classify_line_depth`'s per-segment "worst wins" fold
+        // used a strict `>` severity comparison, so a single segment tying
+        // the fold's initial Safe("safe:empty") accumulator never overwrote
+        // it — the command WAS correctly Safe, but the reported rule name
+        // was the meaningless "safe:empty" instead of e.g.
+        // "safe:effects:mv". The daemon/UI/bench key off this string, so a
+        // wrong name silently breaks anything that inspects *why* a command
+        // was allowed (audit logs, the effects-rescue hold-rate metric).
+        for (line, want_rule) in [
+            ("mv src dst", "safe:effects:mv"),
+            ("cp -r a b", "safe:effects:cp"),
+            ("chmod 755 script.sh", "safe:effects:chmod"),
+            ("ls -la", "safe:ls"),
+        ] {
+            let m = classify_line(line);
+            assert_eq!(m.class, Class::Safe, "{line}");
+            assert_eq!(m.rule, want_rule, "{line}");
+        }
     }
 
     // --- AST pass: evasions the tokenizer alone could not see ----------------

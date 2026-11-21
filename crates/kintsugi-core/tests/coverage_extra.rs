@@ -65,7 +65,9 @@ fn infra_and_container_branches() {
     cat("tofu destroy");
     amb("helm install rel chart");
     amb("docker run ubuntu");
-    amb("kubectl get pods");
+    // Rescued by the effects engine: `get` is a manifest-audited read-only
+    // kubectl subcommand (same footing as `docker ps`).
+    safe("kubectl get pods");
 }
 
 #[test]
@@ -85,8 +87,11 @@ fn disk_branches() {
 fn perms_branches() {
     cat("chmod -R 777 /");
     cat("chown -R root /etc");
-    amb("chmod -R 755 ./build");
-    amb("chmod 600 key");
+    // Rescued by the effects engine: workspace-confined metadata writes with
+    // manifest-audited flags. The catastrophic perms:recursive-root check
+    // (recursive + dangerous path) still runs first — see the two rows above.
+    safe("chmod -R 755 ./build");
+    safe("chmod 600 key");
 }
 
 #[test]

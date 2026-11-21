@@ -43,6 +43,9 @@ proc_exec = true               # runs project-declared recipes
 reads = "none"
 flags = ["-j", "-C", "-f", "-B", "-k", "-s", "--silent", "-n", "--dry-run"]
 value_flags = ["-j", "-C", "-f"]
+allow_zero_args = true         # bare `make [-jN]` runs the Makefile's default
+                                # target; the recipe's own commands are
+                                # themselves intercepted by the classifier.
 
 [awk]
 reads = "path-args"
