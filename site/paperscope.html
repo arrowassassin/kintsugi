@@ -1,0 +1,830 @@
+<!DOCTYPE html>
+<html lang="en" data-brand="paperscope">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Paperscope — Local-first document search with exact citations. Hybrid FTS5 + sqlite-vec search, extractive answers, 15+ formats, multilingual, MCP server. Runs entirely offline.">
+  <meta name="theme-color" content="#f3efe3">
+  <meta property="og:title" content="Paperscope — Local-First Document Search with Exact Citations">
+  <meta property="og:description" content="Hybrid FTS5 + sqlite-vec search, extractive answers with page references, 15+ formats, 100+ languages. Runs entirely offline.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://kintsugi.tools/paperscope.html">
+  <meta property="og:image" content="https://kintsugi.tools/og-paperscope.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Paperscope — Local-First Document Search with Exact Citations">
+  <meta name="twitter:description" content="Hybrid FTS5 + sqlite-vec search, extractive answers with page references, 15+ formats, 100+ languages. Runs entirely offline.">
+  <title>Paperscope — Local-First Document Search with Exact Citations</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Inter+Variable:wght@100..900&family=Berkeley+Mono:wght@400;600&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter+Variable:wght@100..900&family=Berkeley+Mono:wght@400;600&display=swap" media="print" onload="this.media='all'">
+  <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter+Variable:wght@100..900&family=Berkeley+Mono:wght@400;600&display=swap"></noscript>
+  <link rel="stylesheet" href="design-tokens.css">
+  <link rel="stylesheet" href="components.css">
+  <link rel="stylesheet" href="layout.css">
+  <link rel="icon" type="image/svg+xml" href="favicon-paperscope.svg">
+</head>
+<body>
+  <a href="#main" class="skip-link">Skip to main content</a>
+
+  <!-- Navigation -->
+  <nav class="nav" role="navigation" aria-label="Main navigation">
+    <div class="nav-inner">
+      <a href="/" class="nav-brand" aria-label="Kintsugi Tools — Home">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+          <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+        </svg>
+        <span>Kintsugi Tools</span>
+      </a>
+
+      <ul class="nav-links" id="navLinks" role="menubar">
+        <li role="none"><a href="/" class="nav-link" role="menuitem">Home</a></li>
+        <li role="none"><a href="/paperscope.html" class="nav-link active" role="menuitem" aria-current="page">Paperscope</a></li>
+        <li role="none"><a href="/about.html" class="nav-link" role="menuitem">About</a></li>
+      </ul>
+
+      <div class="nav-actions">
+        <a href="https://github.com/arrowassassin/paperscope" class="btn btn-ghost btn-sm" target="_blank" rel="noopener" aria-label="View on GitHub">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/>
+          </svg>
+          GitHub
+        </a>
+        <a href="https://crates.io/crates/paperscope" class="btn btn-accent-ghost btn-sm" target="_blank" rel="noopener">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+            <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+            <line x1="12" y1="22.08" x2="12" y2="12"></line>
+          </svg>
+          crates.io
+        </a>
+        <button class="nav-toggle" id="navToggle" aria-expanded="false" aria-controls="navLinks" aria-label="Toggle navigation menu">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <line x1="3" y1="6" x2="21" y2="6"></line>
+            <line x1="3" y1="12" x2="21" y2="12"></line>
+            <line x1="3" y1="18" x2="21" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </nav>
+
+  <main id="main">
+    <!-- Hero Section -->
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="hero-inner">
+        <div class="hero-content">
+          <span class="hero-badge" aria-label="Version">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+              <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+              <line x1="12" y1="22.08" x2="12" y2="12"></line>
+            </svg>
+            <span>v0.2.0 — Rust • MIT License</span>
+          </span>
+          <h1 id="hero-title" class="display-1 hero-title">Paperscope — Local-First Document Search with Exact Citations</h1>
+          <p class="lead hero-desc">Hybrid FTS5 + sqlite-vec search. Extractive answers with page-level citations. 15+ formats. 100+ languages. MCP server for LLM integration. Zero telemetry. Runs entirely offline.</p>
+          <div class="hero-cta">
+            <a href="https://github.com/arrowassassin/paperscope/releases" class="btn btn-primary btn-lg" target="_blank" rel="noopener">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="7 10 12 15 17 10"></polyline>
+                <line x1="12" y1="15" x2="12" y2="3"></line>
+              </svg>
+              Install via Cargo
+            </a>
+            <a href="https://github.com/arrowassassin/paperscope" class="btn btn-ghost btn-lg" target="_blank" rel="noopener">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/>
+              </svg>
+              View Source
+            </a>
+          </div>
+        </div>
+
+        <!-- Live Search Demo -->
+        <div class="hero-demo">
+          <div class="terminal" role="img" aria-label="Terminal demo showing Paperscope search with citations">
+            <div class="terminal-header">
+              <div class="terminal-dots" aria-hidden="true">
+                <span></span>
+                <span></span>
+                <span></span>
+              </div>
+              <span class="terminal-title">paperscope search — ~/docs/research</span>
+            </div>
+            <div class="terminal-body" id="searchDemo">
+              <div class="terminal-line">
+                <span class="terminal-prompt">$</span>
+                <span class="terminal-output"> paper index --root ~/docs</span>
+              </div>
+              <div class="terminal-line">
+                <span class="terminal-prompt">$</span>
+                <span class="terminal-output success"> ✓ Index complete</span>
+              </div>
+              <div class="terminal-line">
+                <span class="terminal-prompt">$</span>
+                <span class="terminal-output"> paper answer "What does the paper say about transformer attention mechanisms?"</span>
+              </div>
+              <div class="terminal-line">
+                <span class="terminal-prompt">💡</span>
+                <span class="terminal-output"> Answer: The paper describes multi-head attention as...</span>
+              </div>
+              <div class="terminal-line">
+                <span class="terminal-prompt">📄</span>
+                <span class="terminal-output dim"> Citation: vaswani2017attention.pdf, p. 3-4, §3.2</span>
+              </div>
+              <div class="terminal-line">
+                <span class="terminal-prompt">📄</span>
+                <span class="terminal-output dim"> Citation: devlin2019bert.pdf, p. 5, §2.1</span>
+              </div>
+              <div class="terminal-line">
+                <span class="terminal-prompt">$</span>
+                <span class="terminal-output"> paper search "attention is all you need" --limit 5</span>
+              </div>
+              <div class="terminal-line">
+                <span class="terminal-prompt">1.</span>
+                <span class="terminal-output"> vaswani2017attention.pdf — 0.94 relevance</span>
+              </div>
+              <div class="terminal-line">
+                <span class="terminal-prompt">2.</span>
+                <span class="terminal-output"> devlin2019bert.pdf — 0.87 relevance</span>
+              </div>
+              <div class="terminal-line">
+                <span class="terminal-prompt">3.</span>
+                <span class="terminal-output"> radford2019gpt2.pdf — 0.72 relevance</span>
+              </div>
+              <span class="terminal-cursor" aria-hidden="true"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Install Section -->
+    <section class="install-section" aria-labelledby="install-title">
+      <div class="install-wrapper">
+        <header class="section-header" style="margin-bottom: var(--space-8);">
+          <span class="eyebrow section-eyebrow">Installation</span>
+          <h2 id="install-title" class="h1 section-title">Get Running in Seconds</h2>
+          <p class="section-desc">Single binary, zero dependencies. Install via Cargo or download a release.</p>
+        </header>
+
+        <div class="install-card">
+          <div class="install-steps">
+            <div class="install-step animate-on-scroll">
+              <div class="install-step-number">1</div>
+              <div class="install-step-content">
+                <h3 class="install-step-title">Install Paperscope</h3>
+                <p class="install-step-desc">Requires Rust 1.75+. Installs the <code>paper</code> binary to ~/.cargo/bin.</p>
+                <div class="code-block install-code-block">
+                  <pre><code>$ cargo install paperscope</code></pre>
+                </div>
+              </div>
+            </div>
+
+            <div class="install-step animate-on-scroll">
+              <div class="install-step-number">2</div>
+              <div class="install-step-content">
+                <h3 class="install-step-title">Install an Embedding Model</h3>
+                <p class="install-step-desc">Download a local embedding model for vector search. <code>bge-small-en-v1.5</code> is the English default (134 MB).</p>
+                <div class="code-block install-code-block">
+                  <pre><code>$ paper models install bge-small-en-v1.5</code></pre>
+                </div>
+              </div>
+            </div>
+
+            <div class="install-step animate-on-scroll">
+              <div class="install-step-number">3</div>
+              <div class="install-step-content">
+                <h3 class="install-step-title">Index Your Documents</h3>
+                <p class="install-step-desc">Point Paperscope at a directory. It recursively indexes PDFs, EPUBs, Office docs, Markdown, HTML, and more.</p>
+                <div class="code-block install-code-block">
+                  <pre><code>$ paper index --root ~/Documents/research</code></pre>
+                </div>
+              </div>
+            </div>
+
+            <div class="install-step animate-on-scroll">
+              <div class="install-step-number">4</div>
+              <div class="install-step-content">
+                <h3 class="install-step-title">Search & Ask</h3>
+                <p class="install-step-desc">Natural language questions with exact citations, or keyword search with hybrid ranking.</p>
+                <div class="code-block install-code-block">
+                  <pre><code>$ paper answer "What method does the paper propose?"
+$ paper search "transformer architecture" --limit 10</code></pre>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Alternative Install Methods -->
+        <div class="card" style="margin-top: var(--space-8); padding: var(--space-6);">
+          <h3 class="h3" style="margin: 0 0 var(--space-4);">Alternative Installation</h3>
+          <div class="grid grid-2" style="gap: var(--space-4);">
+            <div>
+              <h4 class="h3" style="font-size: 1rem; margin: 0 0 var(--space-2);">Pre-built Binaries</h4>
+              <p class="body-sm" style="margin: 0 0 var(--space-3);">Download single-file binaries for Linux, macOS (Intel/Apple Silicon), Windows.</p>
+              <a href="https://github.com/arrowassassin/paperscope/releases" class="btn btn-ghost btn-sm" target="_blank" rel="noopener">
+                View Releases
+              </a>
+            </div>
+            <div>
+              <h4 class="h3" style="font-size: 1rem; margin: 0 0 var(--space-2);">From Source</h4>
+              <p class="body-sm" style="margin: 0 0 var(--space-3);">Clone and build with Cargo. Requires Rust 1.75+.</p>
+              <div class="code-block" style="margin: 0;">
+                <pre><code>$ git clone https://github.com/arrowassassin/paperscope
+$ cd paperscope
+$ cargo build --release</code></pre>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Features Section -->
+    <section class="feature-section" aria-labelledby="features-title">
+      <div class="container">
+        <header class="section-header">
+          <span class="eyebrow section-eyebrow">Capabilities</span>
+          <h2 id="features-title" class="h1 section-title">Search That Shows Its Work</h2>
+          <p class="section-desc">Every answer cites its source. Every result is traceable. Answers are extractive by default.</p>
+        </header>
+
+        <div class="feature-grid">
+          <article class="card feature-card animate-on-scroll">
+            <div class="feature-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+                <path d="M17.5 6.5A5 5 0 0 1 18 12 5 5 0 0 1 12 18 5 5 0 0 1 6.5 17.5"></path>
+              </svg>
+            </div>
+            <h3 class="feature-title">Hybrid FTS5 + Vector Search</h3>
+            <p class="feature-desc">Combines SQLite FTS5 (exact keyword matching) with sqlite-vec (semantic similarity). Best of both worlds: precision + recall.</p>
+          </article>
+
+          <article class="card feature-card animate-on-scroll">
+            <div class="feature-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                <polyline points="14 2 14 8 20 8"></polyline>
+                <line x1="16" y1="13" x2="8" y2="13"></line>
+                <line x1="16" y1="17" x2="8" y2="17"></line>
+                <polyline points="10 9 9 9 8 9"></polyline>
+              </svg>
+            </div>
+            <h3 class="feature-title">Extractive Answers with Citations</h3>
+            <p class="feature-desc">Answers quote the exact source text with document name, page number, and section. No generated text — only what's in your documents.</p>
+          </article>
+
+          <article class="card feature-card animate-on-scroll">
+            <div class="feature-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <rect x="2" y="3" width="20" height="14" rx="2"></rect>
+                <path d="M8 21h8M12 17v4"></path>
+              </svg>
+            </div>
+            <h3 class="feature-title">MCP Server for LLMs</h3>
+            <p class="feature-desc">Run <code>paper serve --mcp</code> to expose search as an MCP server. Claude, Cursor, and other agents can query your docs directly.</p>
+          </article>
+
+          <article class="card feature-card animate-on-scroll">
+            <div class="feature-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="2" y1="12" x2="22" y2="12"></line>
+                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+              </svg>
+            </div>
+            <h3 class="feature-title">100+ Languages</h3>
+            <p class="feature-desc">The optional <code>multilingual-e5-small</code> model supports 100 languages. Query in one language and find documents written in another.</p>
+          </article>
+
+          <article class="card feature-card animate-on-scroll">
+            <div class="feature-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+                <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+                <line x1="12" y1="22.08" x2="12" y2="12"></line>
+              </svg>
+            </div>
+            <h3 class="feature-title">15+ Document Formats</h3>
+            <p class="feature-desc">PDF, EPUB, DOCX, DOC, PPTX, XLSX, HTML, MD, TXT, RTF, ODT, ODP, ODS, CSV, JSON. More via pluggable extractors.</p>
+          </article>
+
+          <article class="card feature-card animate-on-scroll">
+            <div class="feature-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+              </svg>
+            </div>
+            <h3 class="feature-title">Local-First, Zero Telemetry</h3>
+            <p class="feature-desc">Your documents never leave your machine. No cloud, no analytics, no accounts. Full control over your data and search index.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- Formats Table Section -->
+    <section class="formats-section" aria-labelledby="formats-title">
+      <div class="formats-wrapper">
+        <header class="section-header">
+          <span class="eyebrow section-eyebrow">Compatibility</span>
+          <h2 id="formats-title" class="h1 section-title">Supported Document Formats</h2>
+          <p class="section-desc">Native extraction for major formats. Extensible via custom extractors.</p>
+        </header>
+
+        <div class="formats-table-container">
+          <table class="formats-table">
+            <thead>
+              <tr>
+                <th scope="col">Format</th>
+                <th scope="col">Extension(s)</th>
+                <th scope="col">Text Extraction</th>
+                <th scope="col">Metadata</th>
+                <th scope="col">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><span class="format-name">PDF</span></td>
+                <td><code>.pdf</code></td>
+                <td>Full text + page mapping</td>
+                <td>Title, author, pages, creation date</td>
+                <td><span class="format-status status-full">Full</span></td>
+              </tr>
+              <tr>
+                <td><span class="format-name">EPUB</span></td>
+                <td><code>.epub</code></td>
+                <td>Chapter-aware extraction</td>
+                <td>Title, author, chapters, ISBN</td>
+                <td><span class="format-status status-full">Full</span></td>
+              </tr>
+              <tr>
+                <td><span class="format-name">Word</span></td>
+                <td><code>.docx</code>, <code>.doc</code></td>
+                <td>Paragraphs, tables, headers</td>
+                <td>Author, revision, comments</td>
+                <td><span class="format-status status-full">Full</span></td>
+              </tr>
+              <tr>
+                <td><span class="format-name">PowerPoint</span></td>
+                <td><code>.pptx</code></td>
+                <td>Slide text + notes</td>
+                <td>Title, slide count, author</td>
+                <td><span class="format-status status-full">Full</span></td>
+              </tr>
+              <tr>
+                <td><span class="format-name">Excel</span></td>
+                <td><code>.xlsx</code></td>
+                <td>Cell values, formulas</td>
+                <td>Sheets, named ranges</td>
+                <td><span class="format-status status-full">Full</span></td>
+              </tr>
+              <tr>
+                <td><span class="format-name">OpenDocument</span></td>
+                <td><code>.odt</code>, <code>.ods</code>, <code>.odp</code></td>
+                <td>Full content extraction</td>
+                <td>Standard metadata</td>
+                <td><span class="format-status status-full">Full</span></td>
+              </tr>
+              <tr>
+                <td><span class="format-name">HTML</span></td>
+                <td><code>.html</code>, <code>.htm</code></td>
+                <td>Semantic structure preserved</td>
+                <td>Title, meta tags, headings</td>
+                <td><span class="format-status status-full">Full</span></td>
+              </tr>
+              <tr>
+                <td><span class="format-name">Markdown</span></td>
+                <td><code>.md</code>, <code>.markdown</code></td>
+                <td>AST-aware parsing</td>
+                <td>Frontmatter, headings</td>
+                <td><span class="format-status status-full">Full</span></td>
+              </tr>
+              <tr>
+                <td><span class="format-name">Plain Text</span></td>
+                <td><code>.txt</code>, <code>.text</code></td>
+                <td>UTF-8/16, encoding detection</td>
+                <td>Line count, encoding</td>
+                <td><span class="format-status status-full">Full</span></td>
+              </tr>
+              <tr>
+                <td><span class="format-name">RTF</span></td>
+                <td><code>.rtf</code></td>
+                <td>Formatted text extraction</td>
+                <td>Author, revision</td>
+                <td><span class="format-status status-partial">Partial</span></td>
+              </tr>
+              <tr>
+                <td><span class="format-name">CSV</span></td>
+                <td><code>.csv</code>, <code>.tsv</code></td>
+                <td>Row/column aware</td>
+                <td>Headers, delimiter, rows</td>
+                <td><span class="format-status status-full">Full</span></td>
+              </tr>
+              <tr>
+                <td><span class="format-name">JSON</span></td>
+                <td><code>.json</code>, <code>.jsonl</code></td>
+                <td>Structured value extraction</td>
+                <td>Schema inference</td>
+                <td><span class="format-status status-full">Full</span></td>
+              </tr>
+              <tr>
+                <td><span class="format-name">LaTeX</span></td>
+                <td><code>.tex</code></td>
+                <td>Source + compiled PDF fallback</td>
+                <td>Document class, packages</td>
+                <td><span class="format-status status-planned">Planned</span></td>
+              </tr>
+              <tr>
+                <td><span class="format-name">Notion</span></td>
+                <td><code>.zip</code> (export)</td>
+                <td>Page hierarchy + content</td>
+                <td>Properties, relations</td>
+                <td><span class="format-status status-planned">Planned</span></td>
+              </tr>
+              <tr>
+                <td><span class="format-name">Custom</span></td>
+                <td>Via extractor API</td>
+                <td>Pluggable Rust trait</td>
+                <td>User-defined</td>
+                <td><span class="format-status status-planned">Planned</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Multilingual Section -->
+    <section class="section section-lg" aria-labelledby="multilingual-title">
+      <div class="container">
+        <header class="section-header">
+          <span class="eyebrow section-eyebrow">Global</span>
+          <h2 id="multilingual-title" class="h1 section-title">Multilingual Search</h2>
+          <p class="section-desc">Query in one language, find answers in another. Cross-lingual embeddings bridge the gap.</p>
+        </header>
+
+        <div class="card" style="padding: var(--space-8);">
+          <div class="grid grid-3" style="gap: var(--space-6);">
+            <div class="text-center">
+              <div class="stat-value" style="font-size: 2.5rem; margin-bottom: var(--space-2); color: var(--color-accent);">100</div>
+              <p class="stat-label">Languages with Multilingual E5</p>
+            </div>
+            <div class="text-center">
+              <div class="stat-value" style="font-size: 2.5rem; margin-bottom: var(--space-2); color: var(--color-accent);">2</div>
+              <p class="stat-label">Embedding Models</p>
+            </div>
+            <div class="text-center">
+              <div class="stat-value" style="font-size: 2.5rem; margin-bottom: var(--space-2); color: var(--color-accent);">1</div>
+              <p class="stat-label">Optional Reranker</p>
+            </div>
+          </div>
+
+          <div style="margin-top: var(--space-8);">
+            <h3 class="h3" style="margin: 0 0 var(--space-4);">Available Models</h3>
+            <div class="grid grid-3" style="gap: var(--space-4);">
+              <div class="card" style="padding: var(--space-4);">
+                <h4 class="h3" style="font-size: 0.9375rem; margin: 0 0 var(--space-2);">BGE Small English (Default)</h4>
+                <p class="body-sm" style="margin: 0;">English semantic search with 384-dimensional embeddings. 134 MB.</p>
+                <div class="code-block" style="margin-top: var(--space-3);">
+                  <pre><code>$ paper models install bge-small-en-v1.5</code></pre>
+                </div>
+              </div>
+              <div class="card" style="padding: var(--space-4);">
+                <h4 class="h3" style="font-size: 0.9375rem; margin: 0 0 var(--space-2);">Multilingual E5 Small</h4>
+                <p class="body-sm" style="margin: 0;">Multilingual semantic search across 100 languages. 487 MB.</p>
+                <div class="code-block" style="margin-top: var(--space-3);">
+                  <pre><code>$ paper models install multilingual-e5-small</code></pre>
+                </div>
+              </div>
+              <div class="card" style="padding: var(--space-4);">
+                <h4 class="h3" style="font-size: 0.9375rem; margin: 0 0 var(--space-2);">BGE Reranker Base (Optional)</h4>
+                <p class="body-sm" style="margin: 0;">Cross-encoder reranking for search results. 1.13 GB.</p>
+                <div class="code-block" style="margin-top: var(--space-3);">
+                  <pre><code>$ paper models install bge-reranker-base</code></pre>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- MCP Integration Section -->
+    <section class="section section-lg" style="background: var(--color-bg-panel); border-top: 1px solid var(--color-border); border-bottom: 1px solid var(--color-border);" aria-labelledby="mcp-title">
+      <div class="container">
+        <header class="section-header">
+          <span class="eyebrow section-eyebrow">Integration</span>
+          <h2 id="mcp-title" class="h1 section-title">MCP Server for AI Agents</h2>
+          <p class="section-desc">Expose your document index to any MCP-compatible agent. Zero-config, secure, local.</p>
+        </header>
+
+        <div class="card" style="padding: var(--space-8); max-width: 800px; margin: 0 auto;">
+          <h3 class="h3" style="margin: 0 0 var(--space-4);">Quick Start</h3>
+          <p class="body" style="margin: 0 0 var(--space-4);">Add to your MCP client config (Claude Desktop, Cursor, etc.):</p>
+
+          <div class="code-block">
+            <div class="code-header">
+              <span>claude_desktop_config.json</span>
+              <div class="code-actions">
+                <button class="copy-btn" onclick="copyToClipboard(this)">Copy</button>
+              </div>
+            </div>
+            <pre><code>{
+  "mcpServers": {
+    "paperscope": {
+      "command": "paper",
+      "args": ["serve", "--mcp", "--root", "~/Documents"]
+    }
+  }
+}</code></pre>
+          </div>
+
+          <h3 class="h3" style="margin: var(--space-6) 0 var(--space-4);">Available Tools</h3>
+          <div class="grid grid-2" style="gap: var(--space-4); margin-top: var(--space-4);">
+            <div class="card" style="padding: var(--space-4);">
+              <h4 class="h3" style="font-size: 0.9375rem; margin: 0 0 var(--space-1);"><code>search_documents</code></h4>
+              <p class="body-sm" style="margin: 0;">Hybrid keyword + vector search with filters</p>
+            </div>
+            <div class="card" style="padding: var(--space-4);">
+              <h4 class="h3" style="font-size: 0.9375rem; margin: 0 0 var(--space-1);"><code>answer_documents</code></h4>
+              <p class="body-sm" style="margin: 0;">Extractive answers with exact citations</p>
+            </div>
+            <div class="card" style="padding: var(--space-4);">
+              <h4 class="h3" style="font-size: 0.9375rem; margin: 0 0 var(--space-1);"><code>read_source</code></h4>
+              <p class="body-sm" style="margin: 0;">Read cited source spans within configured roots</p>
+            </div>
+            <div class="card" style="padding: var(--space-4);">
+              <h4 class="h3" style="font-size: 0.9375rem; margin: 0 0 var(--space-1);"><code>list_sources</code></h4>
+              <p class="body-sm" style="margin: 0;">Browse indexed sources</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- CTA Section -->
+    <section class="cta-section" aria-labelledby="cta-title">
+      <div class="container">
+        <div class="cta-card">
+          <h2 id="cta-title" class="h1">Start Searching Your Documents Today</h2>
+          <p class="lead cta-desc">Install Paperscope in seconds. Search locally. Cite exactly. Zero cloud.</p>
+          <div class="cta-actions">
+            <a href="https://github.com/arrowassassin/paperscope/releases" class="btn btn-primary btn-lg" target="_blank" rel="noopener">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="7 10 12 15 17 10"></polyline>
+                <line x1="12" y1="15" x2="12" y2="3"></line>
+              </svg>
+              Download Latest Release
+            </a>
+            <a href="https://github.com/arrowassassin/paperscope/blob/main/README.md#install" class="btn btn-ghost btn-lg" target="_blank" rel="noopener">
+              Read Installation Guide
+            </a>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Footer -->
+  <footer class="footer" role="contentinfo">
+    <div class="footer-inner">
+      <div class="footer-brand">
+        <a href="/" class="footer-logo" aria-label="Kintsugi Tools — Home">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+          </svg>
+          <span>Kintsugi Tools</span>
+        </a>
+        <p class="footer-tagline">Safety infrastructure for AI coding agents. Local-first. Zero telemetry. Built for production.</p>
+        <div class="footer-social">
+          <a href="https://github.com/arrowassassin" target="_blank" rel="noopener" aria-label="GitHub">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/>
+            </svg>
+          </a>
+          <a href="https://twitter.com/arrowassassin" target="_blank" rel="noopener" aria-label="Twitter/X">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 9.24-3.308.763-7.849-8.379-8.502 9.24 3.308-.764 7.849 8.379-3.576-3.639L3.587 21.75H.279l8.056-9.023-7.849-8.379 3.308-.763 8.502 9.24 7.227-8.26z"/>
+            </svg>
+          </a>
+          <a href="https://discord.gg/arrowassassin" target="_blank" rel="noopener" aria-label="Discord">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.083.083 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.007-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01 10.003 10.003 0 0 0 .372.292.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.645.776 1.252 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.057c.418-4.481-.429-9.012-3.556-13.66a.061.061 0 0 0-.031-.027zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/>
+            </svg>
+          </a>
+        </div>
+      </div>
+
+      <div class="footer-column">
+        <h4>Kintsugi</h4>
+        <ul class="footer-links">
+          <li><a href="https://github.com/arrowassassin/kintsugi" target="_blank" rel="noopener">GitHub Repository</a></li>
+          <li><a href="https://github.com/arrowassassin/kintsugi/releases" target="_blank" rel="noopener">Releases</a></li>
+          <li><a href="https://github.com/arrowassassin/kintsugi#install" target="_blank" rel="noopener">Quickstart</a></li>
+          <li><a href="https://github.com/arrowassassin/kintsugi/blob/main/docs/policy.md" target="_blank" rel="noopener">Policy Reference</a></li>
+        </ul>
+      </div>
+
+      <div class="footer-column">
+        <h4>Paperscope</h4>
+        <ul class="footer-links">
+          <li><a href="https://github.com/arrowassassin/paperscope" target="_blank" rel="noopener">GitHub Repository</a></li>
+          <li><a href="https://crates.io/crates/paperscope" target="_blank" rel="noopener">crates.io</a></li>
+          <li><a href="https://github.com/arrowassassin/paperscope/blob/main/README.md#install" target="_blank" rel="noopener">Installation Guide</a></li>
+          <li><a href="https://github.com/arrowassassin/paperscope/blob/main/README.md#mcp-server" target="_blank" rel="noopener">MCP Integration</a></li>
+        </ul>
+      </div>
+
+      <div class="footer-column">
+        <h4>Company</h4>
+        <ul class="footer-links">
+          <li><a href="/about.html">About Arrowassassin</a></li>
+          <li><a href="https://github.com/arrowassassin" target="_blank" rel="noopener">All Projects</a></li>
+          <li><a href="https://github.com/arrowassassin/paperscope/blob/main/README.md#licence" target="_blank" rel="noopener">License (MIT OR Apache-2.0)</a></li>
+          <li><a href="mailto:security@arrowassassin.dev">Security Contact</a></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="footer-bottom">
+      <p class="footer-copyright">&copy; 2026 Arrowassassin. All rights reserved.</p>
+      <div class="footer-legal">
+        <a href="https://github.com/arrowassassin/paperscope/blob/main/README.md#licence" target="_blank" rel="noopener">MIT OR Apache-2.0</a>
+        <a href="mailto:security@arrowassassin.dev">Security</a>
+        <a href="mailto:security@arrowassassin.dev">Report Vulnerability</a>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    // Mobile Navigation Toggle
+    const navToggle = document.getElementById('navToggle');
+    const navLinks = document.getElementById('navLinks');
+
+    if (navToggle && navLinks) {
+      navToggle.addEventListener('click', () => {
+        const isOpen = navLinks.classList.toggle('open');
+        navToggle.setAttribute('aria-expanded', isOpen);
+      });
+
+      navLinks.querySelectorAll('.nav-link').forEach(link => {
+        link.addEventListener('click', () => {
+          navLinks.classList.remove('open');
+          navToggle.setAttribute('aria-expanded', 'false');
+        });
+      });
+
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && navLinks.classList.contains('open')) {
+          navLinks.classList.remove('open');
+          navToggle.setAttribute('aria-expanded', 'false');
+        }
+      });
+    }
+
+    // Intersection Observer for Scroll Animations
+    if ('IntersectionObserver' in window) {
+      const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+      if (!prefersReducedMotion) {
+        const observer = new IntersectionObserver((entries) => {
+          entries.forEach(entry => {
+            if (entry.isIntersecting) {
+              entry.target.classList.add('is-visible');
+              observer.unobserve(entry.target);
+            }
+          });
+        }, {
+          rootMargin: '0px 0px -50px 0px',
+          threshold: 0.1
+        });
+
+        document.querySelectorAll('.animate-on-scroll').forEach(el => {
+          observer.observe(el);
+        });
+      } else {
+        document.querySelectorAll('.animate-on-scroll').forEach(el => {
+          el.classList.add('is-visible');
+        });
+      }
+    }
+
+    // Search Demo Animation
+    const searchLines = [
+      { prompt: '$', text: ' paper index --root ~/docs', class: '' },
+      { prompt: '$', text: ' ✓ Index complete', class: 'success' },
+      { prompt: '$', text: ' paper answer "What does the paper say about transformer attention mechanisms?"', class: '' },
+      { prompt: '💡', text: ' Answer: The paper describes multi-head attention as...', class: '' },
+      { prompt: '📄', text: ' Citation: vaswani2017attention.pdf, p. 3-4, §3.2', class: 'dim' },
+      { prompt: '📄', text: ' Citation: devlin2019bert.pdf, p. 5, §2.1', class: 'dim' },
+      { prompt: '$', text: ' paper search "attention is all you need" --limit 5', class: '' },
+      { prompt: '1.', text: ' vaswani2017attention.pdf — 0.94 relevance', class: '' },
+      { prompt: '2.', text: ' devlin2019bert.pdf — 0.87 relevance', class: '' },
+      { prompt: '3.', text: ' radford2019gpt2.pdf — 0.72 relevance', class: '' }
+    ];
+
+    const searchBody = document.getElementById('searchDemo');
+    let searchLineIndex = 0;
+
+    function typeSearchLine(line, callback) {
+      const lineEl = document.createElement('div');
+      lineEl.className = 'terminal-line';
+      searchBody.appendChild(lineEl);
+
+      const promptEl = document.createElement('span');
+      promptEl.className = 'terminal-prompt';
+      promptEl.textContent = line.prompt + ' ';
+      lineEl.appendChild(promptEl);
+
+      const outputEl = document.createElement('span');
+      outputEl.className = 'terminal-output' + (line.class ? ' ' + line.class : '');
+      lineEl.appendChild(outputEl);
+
+      const cursorEl = document.createElement('span');
+      cursorEl.className = 'terminal-cursor';
+      cursorEl.setAttribute('aria-hidden', 'true');
+      lineEl.appendChild(cursorEl);
+
+      let charIndex = 0;
+      const text = line.text;
+
+      function typeChar() {
+        if (charIndex < text.length) {
+          outputEl.textContent += text[charIndex];
+          charIndex++;
+          searchBody.scrollTop = searchBody.scrollHeight;
+          setTimeout(typeChar, 12 + Math.random() * 25);
+        } else {
+          cursorEl.remove();
+          if (callback) callback();
+        }
+      }
+
+      typeChar();
+    }
+
+    function runSearchDemo() {
+      searchBody.innerHTML = '';
+      searchLineIndex = 0;
+
+      function nextLine() {
+        if (searchLineIndex < searchLines.length) {
+          typeSearchLine(searchLines[searchLineIndex], () => {
+            searchLineIndex++;
+            setTimeout(nextLine, 500 + Math.random() * 300);
+          });
+        } else {
+          const finalLine = document.createElement('div');
+          finalLine.className = 'terminal-line';
+          const cursor = document.createElement('span');
+          cursor.className = 'terminal-cursor';
+          cursor.setAttribute('aria-hidden', 'true');
+          finalLine.appendChild(cursor);
+          searchBody.appendChild(finalLine);
+
+          setTimeout(runSearchDemo, 5000);
+        }
+      }
+
+      nextLine();
+    }
+
+    const heroObserver = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          runSearchDemo();
+          heroObserver.unobserve(entry.target);
+        }
+      });
+    }, { threshold: 0.5 });
+
+    const heroSection = document.querySelector('.hero');
+    if (heroSection) {
+      heroObserver.observe(heroSection);
+    }
+
+    // Copy to clipboard
+    function copyToClipboard(btn) {
+      const codeBlock = btn.closest('.code-block');
+      const code = codeBlock.querySelector('code').textContent;
+
+      navigator.clipboard.writeText(code).then(() => {
+        btn.textContent = 'Copied!';
+        btn.classList.add('copied');
+        setTimeout(() => {
+          btn.textContent = 'Copy';
+          btn.classList.remove('copied');
+        }, 2000);
+      });
+    }
+  </script>
+</body>
+</html>
