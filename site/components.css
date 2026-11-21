@@ -260,23 +260,29 @@ a:focus-visible {
   bottom: 32px;
   left: 50%;
   transform: translateX(-50%) translateY(100px);
-  padding: var(--space-3) var(--space-6);
-  background: var(--color-bg-panel);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
+  padding: 12px 24px;
+  background: #121a2b;
+  border: 1px solid #283557;
+  border-radius: 8px;
   font-size: 0.875rem;
-  color: var(--color-text);
+  color: #e8ecf5;
   white-space: nowrap;
   pointer-events: none;
-  z-index: var(--z-toast);
-  box-shadow: var(--shadow-elevated);
+  z-index: 400;
+  box-shadow: 0 20px 40px -20px rgba(0, 0, 0, 0.5);
   opacity: 0;
-  transition: opacity var(--duration-fast), transform var(--duration-fast);
+  transition: opacity 0.15s ease, transform 0.15s ease;
 }
 
 .toast.show {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
+}
+
+.toast.error {
+  background: #b91c1c;
+  border-color: #ef4444;
+  color: #ffffff;
 }
 
 
