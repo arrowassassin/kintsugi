@@ -253,33 +253,32 @@ a:focus-visible {
   flex-shrink: 0;
 }
 
-/* Tooltip */
-.tooltip {
-  position: absolute;
-  top: -40px;
+/* Toast notification */
+.toast {
+  position: fixed;
+  top: auto;
+  bottom: 32px;
   left: 50%;
-  transform: translateX(-50%);
-  padding: var(--space-2) var(--space-4);
-  background: var(--color-bg-surface);
+  transform: translateX(-50%) translateY(100px);
+  padding: var(--space-3) var(--space-6);
+  background: var(--color-bg-panel);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  font-size: 0.8125rem;
+  border-radius: var(--radius-lg);
+  font-size: 0.875rem;
   color: var(--color-text);
   white-space: nowrap;
   pointer-events: none;
-  z-index: var(--z-tooltip);
-  box-shadow: var(--shadow-card);
+  z-index: var(--z-toast);
+  box-shadow: var(--shadow-elevated);
   opacity: 0;
-  transition: opacity var(--transition-fast);
+  transition: opacity var(--duration-fast), transform var(--duration-fast);
 }
 
-.tooltip.show {
+.toast.show {
   opacity: 1;
+  transform: translateX(-50%) translateY(0);
 }
 
-.btn-copy {
-  position: relative;
-}
 
 /* --------------------------------------------------------------------------
    Cards

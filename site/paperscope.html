@@ -85,7 +85,7 @@
           <h1 id="hero-title" class="display-1 hero-title">Paperscope — Local-First Document Search with Exact Citations</h1>
           <p class="lead hero-desc">Hybrid FTS5 + sqlite-vec search. Extractive answers with page-level citations. 15+ formats. 100+ languages. MCP server for LLM integration. Zero telemetry. Runs entirely offline.</p>
           <div class="hero-cta">
-            <button class="btn btn-primary btn-lg btn-copy" data-clipboard-text="$ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/arrowassassin/paperscope/releases/latest/download/paper-installer.sh | sh" onclick="copyToClipboard(this)" title="Copy install command to clipboard">
+            <button class="btn btn-primary btn-lg" data-clipboard-text="$ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/arrowassassin/paperscope/releases/latest/download/paper-installer.sh | sh" onclick="copyToClipboard(this)">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                 <polyline points="7 10 12 15 17 10"></polyline>
@@ -786,21 +786,33 @@ $ cargo build --release</code></pre>
       const text = btn.dataset.clipboardText;
 
       navigator.clipboard.writeText(text).then(() => {
-        // Show tooltip
-        let tooltip = btn.querySelector('.tooltip');
-        if (!tooltip) {
-          tooltip = document.createElement('div');
-          tooltip.className = 'tooltip';
-          tooltip.textContent = 'Copied!';
-          btn.appendChild(tooltip);
-        }
-        tooltip.classList.add('show');
-        setTimeout(() => {
-          tooltip.classList.remove('show');
-        }, 1500);
+        showToast('Copied!');
       }).catch(err => {
         console.error('Failed to copy: ', err);
+        showToast('Copy failed', true);
       });
+    }
+
+    // Show a temporary toast notification at the bottom center
+    function showToast(message, isError = false) {
+      // Remove any existing toast
+      const existing = document.querySelector('.toast');
+      if (existing) existing.remove();
+
+      const toast = document.createElement('div');
+      toast.className = 'toast';
+      toast.textContent = message;
+      if (isError) toast.style.background = '#b91c1c';
+      document.body.appendChild(toast);
+
+      // Trigger reflow then show
+      toast.offsetHeight;
+      toast.classList.add('show');
+
+      setTimeout(() => {
+        toast.classList.remove('show');
+        setTimeout(() => toast.remove(), 300);
+      }, 2000);
     }
   </script>
 </body>
