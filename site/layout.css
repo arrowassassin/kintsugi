@@ -1,0 +1,752 @@
+/* ==========================================================================
+   Naadi Layout — Grid, Container, Section Rhythm, Responsive Breakpoints
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   Container System
+   -------------------------------------------------------------------------- */
+.container {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 var(--space-6);
+}
+
+.container-narrow {
+  max-width: 800px;
+}
+
+.container-wide {
+  max-width: 1400px;
+}
+
+/* --------------------------------------------------------------------------
+   Section Vertical Rhythm
+   -------------------------------------------------------------------------- */
+.section {
+  padding: var(--space-16) var(--space-6);
+}
+
+.section-sm {
+  padding: var(--space-10) var(--space-6);
+}
+
+.section-lg {
+  padding: var(--space-20) var(--space-6);
+}
+
+.section-xl {
+  padding: var(--space-24) var(--space-6);
+}
+
+/* First/Last Section Adjustments */
+main > .section:first-child {
+  padding-top: var(--space-20);
+}
+
+main > .section:last-child {
+  padding-bottom: var(--space-24);
+}
+
+/* --------------------------------------------------------------------------
+   Grid System
+   -------------------------------------------------------------------------- */
+.grid {
+  display: grid;
+  gap: var(--space-6);
+}
+
+.grid-2 {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.grid-3 {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.grid-4 {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.grid-auto {
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.grid-auto-sm {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.grid-auto-lg {
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+}
+
+/* Flex Utilities */
+.flex {
+  display: flex;
+}
+
+.flex-col {
+  flex-direction: column;
+}
+
+.items-center {
+  align-items: center;
+}
+
+.justify-center {
+  justify-content: center;
+}
+
+.justify-between {
+  justify-content: space-between;
+}
+
+.gap-1 { gap: var(--space-1); }
+.gap-2 { gap: var(--space-2); }
+.gap-3 { gap: var(--space-3); }
+.gap-4 { gap: var(--space-4); }
+.gap-6 { gap: var(--space-6); }
+.gap-8 { gap: var(--space-8); }
+
+/* --------------------------------------------------------------------------
+   Hero Layout
+   -------------------------------------------------------------------------- */
+.hero {
+  position: relative;
+  padding: var(--space-24) var(--space-6) var(--space-20);
+  text-align: center;
+  overflow: hidden;
+}
+
+.hero::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--gradient-bg);
+  pointer-events: none;
+  z-index: -1;
+}
+
+.hero-inner {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.hero-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-6);
+}
+
+.hero-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-full);
+  background: var(--color-accent-bg);
+  border: 1px solid var(--color-accent-line);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--color-accent);
+  animation: fadeInUp var(--duration-moderate) var(--ease-out);
+}
+
+.hero-title {
+  margin: 0;
+  animation: fadeInUp var(--duration-moderate) var(--ease-out) 0.1s both;
+}
+
+.hero-desc {
+  margin: 0;
+  max-width: 65ch;
+  animation: fadeInUp var(--duration-moderate) var(--ease-out) 0.2s both;
+}
+
+.hero-cta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  margin-top: var(--space-4);
+  animation: fadeInUp var(--duration-moderate) var(--ease-out) 0.3s both;
+}
+
+.hero-demo {
+  max-width: 800px;
+  margin: var(--space-12) auto 0;
+  animation: fadeInUp var(--duration-slow) var(--ease-out) 0.4s both;
+}
+
+/* --------------------------------------------------------------------------
+   Feature Section Layout
+   -------------------------------------------------------------------------- */
+.feature-section {
+  padding: var(--space-20) var(--space-6);
+}
+
+.feature-header {
+  text-align: center;
+  max-width: 720px;
+  margin: 0 auto var(--space-12);
+}
+
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--space-6);
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.feature-card {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* --------------------------------------------------------------------------
+   Product Grid (Homepage - 2 Column)
+   -------------------------------------------------------------------------- */
+.product-section {
+  padding: var(--space-20) var(--space-6);
+}
+
+.product-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-6);
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+.product-card {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  height: 100%;
+  min-height: 420px;
+}
+
+/* --------------------------------------------------------------------------
+   Install Section Layout
+   -------------------------------------------------------------------------- */
+.install-section {
+  padding: var(--space-16) var(--space-6);
+}
+
+.install-wrapper {
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.install-card {
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2xl);
+  padding: var(--space-8);
+}
+
+.install-steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.install-step {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.install-step-number {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-full);
+  background: var(--color-accent-bg);
+  color: var(--color-accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-display);
+  font-size: 0.875rem;
+  font-weight: 700;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.install-step-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.install-step-title {
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0;
+}
+
+.install-step-desc {
+  font-size: 0.9375rem;
+  color: var(--color-text-secondary);
+  margin: 0;
+}
+
+.install-code-block {
+  margin-top: var(--space-2);
+}
+
+/* --------------------------------------------------------------------------
+   Formats Table Layout
+   -------------------------------------------------------------------------- */
+.formats-section {
+  padding: var(--space-16) var(--space-6);
+}
+
+.formats-wrapper {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.formats-table-container {
+  overflow-x: auto;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+}
+
+.formats-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.formats-table th,
+.formats-table td {
+  padding: var(--space-3) var(--space-4);
+  text-align: left;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.formats-table th {
+  background: var(--color-bg-panel);
+  font-weight: 600;
+  color: var(--color-text);
+  font-size: 0.75rem;
+  letter-spacing: var(--tracking-tag);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.formats-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.formats-table tbody tr:hover {
+  background: var(--color-bg-surface);
+}
+
+.format-name {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  color: var(--color-accent);
+}
+
+.format-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: 0.75rem;
+  font-weight: 500;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-full);
+}
+
+.status-full { background: var(--color-success); color: white; }
+.status-partial { background: var(--color-warning); color: white; }
+.status-planned { background: var(--color-info); color: white; }
+.status-no { background: var(--color-bg-surface); color: var(--color-text-muted); border: 1px solid var(--color-border); }
+
+/* --------------------------------------------------------------------------
+   Stats Bar Layout
+   -------------------------------------------------------------------------- */
+.stats-section {
+  padding: var(--space-12) var(--space-6);
+}
+
+.stats-bar {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--space-6);
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: var(--space-8) var(--space-6);
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2xl);
+}
+
+.stat-item {
+  text-align: center;
+  padding: var(--space-2);
+}
+
+.stat-value {
+  font-family: var(--font-display);
+  font-size: clamp(2rem, 5vw, 3rem);
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: var(--tracking-display);
+  color: var(--color-accent);
+  margin: 0 0 var(--space-1);
+}
+
+.stat-label {
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
+  margin: 0;
+}
+
+/* --------------------------------------------------------------------------
+   CTA Section Layout
+   -------------------------------------------------------------------------- */
+.cta-section {
+  padding: var(--space-20) var(--space-6);
+  text-align: center;
+}
+
+.cta-card {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: var(--space-12) var(--space-8);
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2xl);
+  position: relative;
+  overflow: hidden;
+}
+
+.cta-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--gradient-card);
+  pointer-events: none;
+}
+
+.cta-title {
+  margin: 0 0 var(--space-3);
+  position: relative;
+}
+
+.cta-desc {
+  margin: 0 0 var(--space-8);
+  position: relative;
+}
+
+.cta-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  position: relative;
+}
+
+/* --------------------------------------------------------------------------
+   Responsive Breakpoints
+   -------------------------------------------------------------------------- */
+
+/* Large Desktop (1200px+) */
+@media (min-width: 1200px) {
+  .hero {
+    padding: var(--space-28) var(--space-8) var(--space-24);
+  }
+
+  .section {
+    padding: var(--space-20) var(--space-8);
+  }
+
+  .section-lg {
+    padding: var(--space-24) var(--space-8);
+  }
+
+  .feature-grid {
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--space-8);
+  }
+
+  .product-grid {
+    gap: var(--space-8);
+  }
+}
+
+/* Desktop (900px - 1199px) */
+@media (max-width: 1199px) and (min-width: 900px) {
+  .hero {
+    padding: var(--space-22) var(--space-6) var(--space-18);
+  }
+
+  .feature-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* Tablet (768px - 899px) */
+@media (max-width: 899px) and (min-width: 768px) {
+  .hero {
+    padding: var(--space-20) var(--space-6) var(--space-16);
+  }
+
+  .display-1 {
+    font-size: clamp(2.25rem, 5vw, 3.5rem);
+  }
+
+  .feature-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .product-grid {
+    grid-template-columns: 1fr;
+    max-width: 480px;
+  }
+}
+
+/* Mobile (480px - 767px) */
+@media (max-width: 767px) {
+  :root {
+    --space-16: 48px;
+    --space-20: 64px;
+    --space-24: 72px;
+  }
+
+  .hero {
+    padding: var(--space-16) var(--space-4) var(--space-12);
+  }
+
+  .section {
+    padding: var(--space-12) var(--space-4);
+  }
+
+  .section-lg {
+    padding: var(--space-16) var(--space-4);
+  }
+
+  .display-1 {
+    font-size: clamp(2rem, 8vw, 2.75rem);
+  }
+
+  .lead {
+    font-size: 1rem;
+  }
+
+  .feature-grid {
+    grid-template-columns: 1fr;
+    gap: var(--space-4);
+  }
+
+  .product-grid {
+    grid-template-columns: 1fr;
+    gap: var(--space-4);
+  }
+
+  .product-card {
+    min-height: auto;
+  }
+
+  .install-step {
+    grid-template-columns: 1fr;
+    gap: var(--space-2);
+  }
+
+  .install-step-number {
+    width: 28px;
+    height: 28px;
+    font-size: 0.8125rem;
+  }
+
+  .stats-bar {
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--space-4);
+    padding: var(--space-6) var(--space-4);
+  }
+
+  .stat-value {
+    font-size: clamp(1.5rem, 6vw, 2rem);
+  }
+
+  .footer-inner {
+    grid-template-columns: 1fr;
+    gap: var(--space-6);
+  }
+
+  .nav-inner {
+    padding: 0 var(--space-4);
+    height: 56px;
+  }
+
+  .nav-links {
+    top: 56px;
+    padding: var(--space-4);
+  }
+
+  .terminal-body {
+    padding: var(--space-3) var(--space-4);
+    font-size: 0.75rem;
+  }
+
+  .code-block pre {
+    padding: var(--space-3) var(--space-4);
+    font-size: 0.75rem;
+  }
+}
+
+/* Small Mobile (< 480px) */
+@media (max-width: 479px) {
+  .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .hero-cta {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .hero-cta .btn {
+    width: 100%;
+  }
+
+  .stats-bar {
+    grid-template-columns: 1fr;
+  }
+
+  .cta-card {
+    padding: var(--space-8) var(--space-6);
+  }
+
+  .formats-table th,
+  .formats-table td {
+    padding: var(--space-2) var(--space-3);
+    font-size: 0.8125rem;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Animations
+   -------------------------------------------------------------------------- */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideInFromBottom {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* Staggered Animation Delays */
+.stagger-1 { animation-delay: 0.05s; }
+.stagger-2 { animation-delay: 0.1s; }
+.stagger-3 { animation-delay: 0.15s; }
+.stagger-4 { animation-delay: 0.2s; }
+.stagger-5 { animation-delay: 0.25s; }
+.stagger-6 { animation-delay: 0.3s; }
+.stagger-7 { animation-delay: 0.35s; }
+.stagger-8 { animation-delay: 0.4s; }
+
+/* Intersection Observer Animation Classes */
+.animate-on-scroll {
+  opacity: 0;
+  transform: translateY(20px);
+  transition: opacity var(--duration-moderate) var(--ease-out),
+              transform var(--duration-moderate) var(--ease-out);
+}
+
+.animate-on-scroll.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-on-scroll {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+
+  .hero-badge,
+  .hero-title,
+  .hero-desc,
+  .hero-cta,
+  .hero-demo {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Print Layout
+   -------------------------------------------------------------------------- */
+@media print {
+  .hero::before,
+  .cta-card::before {
+    display: none;
+  }
+
+  .nav,
+  .footer,
+  .hero-cta,
+  .btn {
+    display: none !important;
+  }
+
+  .section {
+    padding: 0;
+    page-break-inside: avoid;
+  }
+
+  .hero {
+    padding: var(--space-8) 0;
+  }
+
+  .product-grid,
+  .feature-grid {
+    display: block;
+  }
+
+  .product-card,
+  .feature-card {
+    break-inside: avoid;
+    box-shadow: none;
+    border: 1px solid #ccc;
+    margin-bottom: var(--space-4);
+  }
+}

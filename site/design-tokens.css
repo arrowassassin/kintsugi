@@ -1,0 +1,290 @@
+/* ==========================================================================
+   Naadi Design Tokens — Apple-level design system
+   Two brand themes: kintsugi (dark-native, gold) + paperscope (light-native, teal)
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   Base Tokens (brand-agnostic)
+   -------------------------------------------------------------------------- */
+:root {
+  /* Spacing (4px base unit) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-20: 80px;
+  --space-24: 96px;
+
+  /* Border Radius */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
+  --radius-full: 9999px;
+
+  /* Typography */
+  --font-sans: 'Inter Variable', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'Berkeley Mono', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+  --font-display: 'Inter Variable', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+
+  /* Tracking (negative at display sizes for optical balance) */
+  --tracking-display: -0.022em;
+  --tracking-h1: -0.015em;
+  --tracking-h2: -0.009em;
+  --tracking-tag: 0.1em;
+
+  /* Motion */
+  --duration-instant: 100ms;
+  --duration-fast: 150ms;
+  --duration-standard: 200ms;
+  --duration-moderate: 300ms;
+  --duration-slow: 450ms;
+  --ease-standard: cubic-bezier(0.33, 1, 0.68, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* Shadows (light default — overridden per brand) */
+  --shadow-ring: 0 0 0 1px rgba(0, 0, 0, 0.08);
+  --shadow-card: var(--shadow-ring), 0 2px 2px rgba(0, 0, 0, 0.04), 0 8px 8px -8px rgba(0, 0, 0, 0.04);
+  --shadow-elevated: rgba(50, 50, 93, 0.25) 0 30px 45px -30px, rgba(0, 0, 0, 0.1) 0 18px 36px -18px;
+
+  /* Z-index Scale */
+  --z-dropdown: 100;
+  --z-sticky: 200;
+  --z-modal: 300;
+  --z-toast: 400;
+  --z-tooltip: 500;
+
+  /* Focus Ring */
+  --focus-ring: 0 0 0 3px var(--color-accent-line);
+  --focus-ring-offset: 2px;
+
+  /* Transitions */
+  --transition-fast: var(--duration-fast) var(--ease-standard);
+  --transition-standard: var(--duration-standard) var(--ease-standard);
+  --transition-moderate: var(--duration-moderate) var(--ease-standard);
+}
+
+/* --------------------------------------------------------------------------
+   Kintsugi Brand (Dark-native, Gold Accent)
+   Used on kintsugi.tools homepage and kintsugi-branded pages
+   -------------------------------------------------------------------------- */
+[data-brand="kintsugi"] {
+  /* Core Surfaces */
+  --color-bg: #0b0e16;
+  --color-bg-panel: #121a2b;
+  --color-bg-surface: #0e1626;
+  --color-bg-elevated: #162036;
+
+  /* Text */
+  --color-text: #e8ecf5;
+  --color-text-secondary: #8b95ad;
+  --color-text-muted: #6a7488;
+  --color-text-inverse: #0b0e16;
+
+  /* Borders (luminance-based for dark) */
+  --color-border: #283557;
+  --color-border-subtle: rgba(40, 53, 87, 0.5);
+  --color-border-strong: #3a4a7a;
+
+  /* Accent (Gold) */
+  --color-accent: #D4AF37;
+  --color-accent-hover: #EBC65A;
+  --color-accent-active: #C49A2E;
+  --color-accent-line: rgba(212, 175, 55, 0.35);
+  --color-accent-bg: rgba(212, 175, 55, 0.12);
+  --color-accent-bg-hover: rgba(212, 175, 55, 0.2);
+
+  /* Semantic */
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+  --color-error: #ef4444;
+  --color-info: #3b82f6;
+
+  /* Shadows (Dark mode — elevation via luminance) */
+  --shadow-ring: 0 0 0 1px rgba(255, 255, 255, 0.06);
+  --shadow-card: var(--shadow-ring), 0 2px 8px -2px rgba(0, 0, 0, 0.3), 0 16px 32px -16px rgba(0, 0, 0, 0.4);
+  --shadow-elevated: 0 0 0 1px rgba(255, 255, 255, 0.05), 0 20px 40px -20px rgba(0, 0, 0, 0.5), 0 40px 80px -40px rgba(0, 0, 0, 0.6);
+
+  /* Focus */
+  --focus-ring: 0 0 0 3px var(--color-accent-line);
+
+  /* Gradients */
+  --gradient-accent: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-hover) 100%);
+  --gradient-bg: radial-gradient(ellipse 80% 50% at 50% 0%, rgba(212, 175, 55, 0.08) 0%, transparent 70%),
+                  radial-gradient(ellipse 60% 40% at 100% 100%, rgba(26, 138, 106, 0.06) 0%, transparent 60%);
+  --gradient-card: linear-gradient(180deg, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0) 100%);
+}
+
+/* --------------------------------------------------------------------------
+   Paperscope Brand (Light-native, Teal/Green Accent)
+   Used on paperscope landing page and paperscope-branded pages
+   -------------------------------------------------------------------------- */
+[data-brand="paperscope"] {
+  /* Core Surfaces (Light) */
+  --color-bg: #f3efe3;
+  --color-bg-panel: #fbf8ef;
+  --color-bg-surface: #f6f1e4;
+  --color-bg-elevated: #ffffff;
+
+  /* Text */
+  --color-text: #1b2230;
+  --color-text-secondary: #6a7488;
+  --color-text-muted: #8b95ad;
+  --color-text-inverse: #f3efe3;
+
+  /* Borders (subtle, warm) */
+  --color-border: #d8cfb6;
+  --color-border-subtle: rgba(201, 192, 166, 0.55);
+  --color-border-strong: #c4b99a;
+
+  /* Accent (Teal/Green) */
+  --color-accent: #1a8a6a;
+  --color-accent-hover: #16a37a;
+  --color-accent-active: #14785e;
+  --color-accent-line: rgba(26, 138, 106, 0.35);
+  --color-accent-bg: rgba(26, 138, 106, 0.1);
+  --color-accent-bg-hover: rgba(26, 138, 106, 0.15);
+
+  /* Semantic */
+  --color-success: #16a34a;
+  --color-warning: #d97706;
+  --color-error: #dc2626;
+  --color-info: #2563eb;
+
+  /* Shadows (Light mode — shadow-as-border) */
+  --shadow-ring: 0 0 0 1px rgba(0, 0, 0, 0.06);
+  --shadow-card: var(--shadow-ring), 0 1px 2px rgba(0, 0, 0, 0.04), 0 4px 8px -4px rgba(0, 0, 0, 0.04);
+  --shadow-elevated: 0 0 0 1px rgba(0, 0, 0, 0.05), 0 10px 20px -10px rgba(0, 0, 0, 0.08), 0 20px 40px -20px rgba(0, 0, 0, 0.1);
+
+  /* Focus */
+  --focus-ring: 0 0 0 3px var(--color-accent-line);
+
+  /* Gradients */
+  --gradient-accent: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-hover) 100%);
+  --gradient-bg: radial-gradient(ellipse 80% 50% at 50% 0%, rgba(26, 138, 106, 0.08) 0%, transparent 70%),
+                  radial-gradient(ellipse 60% 40% at 0% 100%, rgba(212, 175, 55, 0.06) 0%, transparent 60%);
+  --gradient-card: linear-gradient(180deg, rgba(0, 0, 0, 0.02) 0%, rgba(0, 0, 0, 0) 100%);
+}
+
+/* --------------------------------------------------------------------------
+   Paperscope Dark Mode (Auto via prefers-color-scheme)
+   -------------------------------------------------------------------------- */
+@media (prefers-color-scheme: dark) {
+  [data-brand="paperscope"] {
+    /* Core Surfaces (Dark) */
+    --color-bg: #08090a;
+    --color-bg-panel: #0f1011;
+    --color-bg-surface: #191a1b;
+    --color-bg-elevated: #1f2022;
+
+    /* Text */
+    --color-text: #f7f8f8;
+    --color-text-secondary: #d0d6e0;
+    --color-text-muted: #8a8f98;
+    --color-text-inverse: #08090a;
+
+    /* Borders */
+    --color-border: rgba(255, 255, 255, 0.08);
+    --color-border-subtle: rgba(255, 255, 255, 0.05);
+    --color-border-strong: rgba(255, 255, 255, 0.12);
+
+    /* Accent (Brighter for dark) */
+    --color-accent: #2dd4a3;
+    --color-accent-hover: #5eead4;
+    --color-accent-active: #14b896;
+    --color-accent-line: rgba(45, 212, 163, 0.35);
+    --color-accent-bg: rgba(45, 212, 163, 0.12);
+    --color-accent-bg-hover: rgba(45, 212, 163, 0.2);
+
+    /* Shadows (Dark) */
+    --shadow-ring: 0 0 0 1px rgba(255, 255, 255, 0.06);
+    --shadow-card: var(--shadow-ring), 0 2px 8px -2px rgba(0, 0, 0, 0.3), 0 16px 32px -16px rgba(0, 0, 0, 0.4);
+    --shadow-elevated: 0 0 0 1px rgba(255, 255, 255, 0.05), 0 20px 40px -20px rgba(0, 0, 0, 0.5), 0 40px 80px -40px rgba(0, 0, 0, 0.6);
+
+    /* Gradients (Dark) */
+    --gradient-bg: radial-gradient(ellipse 80% 50% at 50% 0%, rgba(45, 212, 163, 0.08) 0%, transparent 70%),
+                    radial-gradient(ellipse 60% 40% at 0% 100%, rgba(212, 175, 55, 0.06) 0%, transparent 60%);
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Reduced Motion
+   -------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-instant: 0ms;
+    --duration-fast: 0ms;
+    --duration-standard: 0ms;
+    --duration-moderate: 0ms;
+    --duration-slow: 0ms;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   High Contrast Mode Support
+   -------------------------------------------------------------------------- */
+@media (prefers-contrast: high) {
+  [data-brand="kintsugi"] {
+    --color-border: #D4AF37;
+    --color-border-subtle: #D4AF37;
+    --color-text-secondary: #c8d0e8;
+    --color-text-muted: #a8b4d0;
+  }
+
+  [data-brand="paperscope"] {
+    --color-border: #1a8a6a;
+    --color-border-subtle: #1a8a6a;
+    --color-text-secondary: #4a5468;
+    --color-text-muted: #6a7488;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    [data-brand="paperscope"] {
+      --color-border: #2dd4a3;
+      --color-border-subtle: #2dd4a3;
+      --color-text-secondary: #e0e6f0;
+      --color-text-muted: #a8aeb8;
+    }
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Print Styles
+   -------------------------------------------------------------------------- */
+@media print {
+  :root {
+    --color-bg: #ffffff;
+    --color-text: #000000;
+    --color-text-secondary: #333333;
+    --color-border: #cccccc;
+    --shadow-ring: none;
+    --shadow-card: none;
+    --shadow-elevated: none;
+  }
+
+  [data-brand="kintsugi"] {
+    --color-bg: #ffffff;
+    --color-text: #000000;
+    --color-bg-panel: #f5f5f5;
+    --color-bg-surface: #eeeeee;
+    --color-accent: #b8962e;
+  }
+}
