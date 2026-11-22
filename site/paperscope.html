@@ -799,14 +799,44 @@ $ cargo build --release</code></pre>
 
     // Copy to clipboard
     function copyToClipboard(btn) {
-      const text = btn.dataset.clipboardText;
+      // Strip the cosmetic "$ " prompt so pasting into a shell just works.
+      const text = (btn.dataset.clipboardText || '').replace(/^\$\s+/, '');
 
-      navigator.clipboard.writeText(text).then(() => {
-        showToast('Copied!');
-      }).catch(err => {
-        console.error('Failed to copy: ', err);
-        showToast('Copy failed', true);
-      });
+      // Preferred path: async Clipboard API (needs HTTPS + permission).
+      // Some browsers/contexts reject it, so always fall back below.
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          navigator.clipboard.writeText(text).then(() => {
+            showToast('Copied!');
+          }).catch(() => fallbackCopy(text));
+          return;
+        }
+      } catch (err) {
+        console.error('Clipboard API unavailable: ', err);
+      }
+
+      fallbackCopy(text);
+    }
+
+    // Legacy fallback that works without the Clipboard API.
+    function fallbackCopy(text) {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.top = '-1000px';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      ta.setSelectionRange(0, ta.value.length);
+      let ok = false;
+      try {
+        ok = document.execCommand('copy');
+      } catch (err) {
+        console.error('execCommand copy failed: ', err);
+      }
+      ta.remove();
+      showToast(ok ? 'Copied!' : 'Copy failed', !ok);
     }
 
     // Show a temporary toast notification at the bottom center
