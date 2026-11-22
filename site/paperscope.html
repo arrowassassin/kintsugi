@@ -372,7 +372,7 @@
       <a href="#install">Install</a>
     </div>
     <div class="nav-right">
-      <span class="ver">v0.2.5 · MIT</span>
+      <span class="ver">v0.2.6 · MIT</span>
       <a class="nav-ghost" href="https://github.com/arrowassassin/paperscope" rel="noopener">GitHub</a>
       <a class="nav-cta" href="#install">Install</a>
     </div>
@@ -469,7 +469,7 @@
         <div class="step">
           <div class="idx">2</div>
           <h3>It configures itself</h3>
-          <p>A launchd or systemd service starts in the background and downloads <code>bge-small</code> (134 MB) automatically.</p>
+          <p>A launchd or systemd service starts in the background and fetches both models: <code>bge-small</code> (134 MB), then the reranker (1.13 GB).</p>
         </div>
         <div class="step">
           <div class="idx">3</div>
@@ -656,7 +656,7 @@
           <thead><tr><th>Model</th><th>Size</th></tr></thead>
           <tbody>
             <tr><td><strong>bge-small-en-v1.5</strong><br><span style="font-size:11.5px;color:var(--muted)">default embedder, installed automatically</span></td><td>134 MB</td></tr>
-            <tr><td><strong>bge-reranker-base</strong><br><span style="font-size:11.5px;color:var(--muted)">optional reranker</span></td><td>1.13 GB</td></tr>
+            <tr><td><strong>bge-reranker-base</strong><br><span style="font-size:11.5px;color:var(--muted)">reranks top hits · installed automatically</span></td><td>1.13 GB</td></tr>
           </tbody>
         </table>
         <p style="font-size:13px;color:var(--muted);margin-top:10px">Models are fetched from this project's GitHub release assets, never from a third-party API.</p>
@@ -678,7 +678,7 @@
 
 <footer>
   <div class="wrap foot">
-    <span>Paper v0.2.5</span><span class="sep"></span>
+    <span>Paper v0.2.6</span><span class="sep"></span>
     <span>MIT OR Apache-2.0</span><span class="sep"></span>
     <a href="https://github.com/arrowassassin/paperscope" rel="noopener">GitHub</a>
     <a href="https://github.com/arrowassassin/paperscope/blob/main/CHANGELOG.md" rel="noopener">Changelog</a>
