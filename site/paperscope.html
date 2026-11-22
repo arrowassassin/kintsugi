@@ -186,6 +186,19 @@
   .hit mark{background:#fff0b8;color:var(--ink);padding:0 2px;border-radius:2px}
   .scores{display:flex;gap:12px;margin-top:9px;font-family:var(--mono);font-size:10px;color:var(--muted)}
 
+  .quick{
+    margin-top:18px;border-top:1px solid var(--line);padding-top:14px;
+    font-family:var(--mono);font-size:11.5px;
+  }
+  .quick-title{
+    font-family:var(--sans);font-size:11px;font-weight:600;letter-spacing:.06em;
+    text-transform:uppercase;color:var(--muted);margin-bottom:8px;
+  }
+  .quick ul{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+  .quick li{display:flex;align-items:baseline;gap:10px;min-width:0}
+  .quick code{color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .quick li span{margin-left:auto;color:var(--muted);font-family:var(--sans);font-size:11.5px;flex:none}
+
   /* ---------- stats strip ---------- */
   .stats{border-bottom:1px solid var(--line);background:var(--surface)}
   .stats-in{display:grid;grid-template-columns:repeat(4,1fr)}
@@ -332,9 +345,9 @@
   .toast.show{opacity:1;transform:translate(-50%,0)}
 
   /* ---------- responsive ---------- */
-  @media (max-width:980px){
-    .hero-grid{grid-template-columns:1fr;gap:40px;padding:44px 0 48px}
-    .mock{max-width:560px}
+  @media (max-width:900px){
+    .hero-grid{grid-template-columns:1fr;gap:36px;padding:44px 0 48px;max-width:720px}
+    .mock{max-width:none}
     .split,.mcp-grid,.two-col{grid-template-columns:1fr;gap:28px}
     .feature-grid{grid-template-columns:1fr 1fr}
     .steps{grid-template-columns:1fr}
@@ -411,6 +424,7 @@
         </div>
       </div>
 
+      <div class="hero-side">
       <div class="mock" role="img" aria-label="Paper answering a question with a cited source">
         <div class="mock-bar">
           <span class="dot"></span><span class="dot"></span><span class="dot"></span>
@@ -440,6 +454,16 @@
             </div>
           </div>
         </div>
+      </div>
+
+      <div class="quick" aria-label="Other common commands">
+        <div class="quick-title">Also in the CLI</div>
+        <ul>
+          <li><code>paper answer "notice period?"</code><span>cited answer</span></li>
+          <li><code>paper serve --mcp</code><span>Claude, Cursor, Zed</span></li>
+          <li><code>paper index --root ~/papers</code><span>add a folder</span></li>
+        </ul>
+      </div>
       </div>
     </div>
   </header>
