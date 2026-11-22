@@ -385,7 +385,7 @@
       <a href="#install">Install</a>
     </div>
     <div class="nav-right">
-      <span class="ver">v0.2.6 · MIT</span>
+      <span class="ver">v0.2.7 · MIT</span>
       <a class="nav-ghost" href="https://github.com/arrowassassin/paperscope" rel="noopener">GitHub</a>
       <a class="nav-cta" href="#install">Install</a>
     </div>
@@ -493,7 +493,7 @@
         <div class="step">
           <div class="idx">2</div>
           <h3>It configures itself</h3>
-          <p>A launchd or systemd service starts in the background and fetches both models: <code>bge-small</code> (134 MB), then the reranker (1.13 GB).</p>
+          <p>A launchd or systemd service starts in the background and fetches the models: <code>bge-small</code> (134 MB), the reranker (1.13 GB) and PP-OCRv4 (16 MB).</p>
         </div>
         <div class="step">
           <div class="idx">3</div>
@@ -543,8 +543,8 @@
       <div class="feature-grid">
         <div class="feature">
           <div class="ic"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 4h10l6 6v10H4z"/><path d="M14 4v6h6"/></svg></div>
-          <h3>15+ formats</h3>
-          <p>PDF, DOCX, PPTX, XLSX, EPUB, Markdown, HTML, RTF, ODT, CSV, EML, plain text and more.</p>
+          <h3>Scans and images</h3>
+          <p>OCR runs automatically on textless PDF pages and on photos, screenshots and scans — no Tesseract, no setup. Cited as <code style="font-family:var(--mono);font-size:11.5px">page 12 (OCR)</code>.</p>
         </div>
         <div class="feature">
           <div class="ic"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18"/></svg></div>
@@ -669,9 +669,10 @@
           <span class="chip">HTML</span><span class="chip">RTF</span><span class="chip">ODT</span>
           <span class="chip">ODS</span><span class="chip">CSV</span><span class="chip">EML</span>
           <span class="chip">MSG</span><span class="chip">TXT</span><span class="chip">JSON</span>
-          <span class="chip">YAML</span><span class="chip">+ more</span>
+          <span class="chip">YAML</span><span class="chip">PNG</span><span class="chip">JPEG</span>
+          <span class="chip">TIFF</span><span class="chip">WebP</span><span class="chip">+ more</span>
         </div>
-        <p style="font-size:13px;color:var(--muted);margin-top:14px">Scanned PDFs are OCR'd locally when the <code style="font-family:var(--mono);font-size:11.5px">ocr</code> feature is built in. Tables and page numbers are preserved for citations.</p>
+        <p style="font-size:13px;color:var(--muted);margin-top:14px">Scanned PDFs and images are OCR'd locally with PP-OCRv4 — on by default, models downloaded on first run. Tables and page numbers are preserved for citations.</p>
       </div>
       <div>
         <div class="kicker">Models</div>
@@ -681,6 +682,7 @@
           <tbody>
             <tr><td><strong>bge-small-en-v1.5</strong><br><span style="font-size:11.5px;color:var(--muted)">default embedder, installed automatically</span></td><td>134 MB</td></tr>
             <tr><td><strong>bge-reranker-base</strong><br><span style="font-size:11.5px;color:var(--muted)">reranks top hits · installed automatically</span></td><td>1.13 GB</td></tr>
+            <tr><td><strong>PP-OCRv4 det + rec</strong><br><span style="font-size:11.5px;color:var(--muted)">reads scans and images · installed automatically</span></td><td>16 MB</td></tr>
           </tbody>
         </table>
         <p style="font-size:13px;color:var(--muted);margin-top:10px">Models are fetched from this project's GitHub release assets, never from a third-party API.</p>
@@ -702,7 +704,7 @@
 
 <footer>
   <div class="wrap foot">
-    <span>Paper v0.2.6</span><span class="sep"></span>
+    <span>Paper v0.2.7</span><span class="sep"></span>
     <span>MIT OR Apache-2.0</span><span class="sep"></span>
     <a href="https://github.com/arrowassassin/paperscope" rel="noopener">GitHub</a>
     <a href="https://github.com/arrowassassin/paperscope/blob/main/CHANGELOG.md" rel="noopener">Changelog</a>
