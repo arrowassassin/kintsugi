@@ -5,7 +5,7 @@
   "version": "0.1.0",
   "description": "Local-first safety layer for AI coding agents: intercepts commands before they run, holds the dangerous ones for one-key approval, makes destructive actions reversible, and keeps a tamper-evident audit log. Wires Claude Code to the Kintsugi binaries (install separately via `cargo install kintsugi` or Homebrew).",
   "author": {
-    "name": "arrowassassin",
+    "name": "kintsugi-tools",
     "email": "kintsugi.tools@gmail.com"
   },
   "homepage": "https://github.com/kintsugi-tools/kintsugi",

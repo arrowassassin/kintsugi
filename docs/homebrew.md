@@ -7,7 +7,7 @@ to **homebrew-core** (`brew install kintsugi`) once the project is notable enoug
 
 A tap is just a GitHub repo named `homebrew-<name>` with formulae under `Formula/`.
 
-1. Create a repo **`arrowassassin/homebrew-kintsugi`**.
+1. Create a repo **`kintsugi-tools/homebrew-tap`**.
 2. Copy [`packaging/homebrew/kintsugi.rb`](../packaging/homebrew/kintsugi.rb) to
    `Formula/kintsugi.rb` in that repo.
 3. Cut a release here (the repo's release workflow tags `vX.Y.Z` and builds
