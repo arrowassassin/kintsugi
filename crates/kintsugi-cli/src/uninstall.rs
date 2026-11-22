@@ -121,6 +121,9 @@ fn strip_hooks(home: &Path) -> Vec<String> {
 /// uninstall` left the app in `/Applications` (macOS), the app launcher (Linux),
 /// or the Programs folder (Windows) — where it could still be opened and, if data
 /// was kept, unlock and show it. Returns the paths actually removed.
+// The pushes are cfg-gated per platform, so a `vec![]` literal cannot express
+// them and the lint's suggestion does not apply.
+#[allow(clippy::vec_init_then_push)]
 fn remove_desktop_app(home: &Path) -> Vec<String> {
     // (path, is_dir)
     let mut targets: Vec<(PathBuf, bool)> = Vec::new();
