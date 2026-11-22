@@ -605,7 +605,7 @@
   <span class="key">}</span>
 <span class="key">}</span>
           </div>
-          <p class="json-note">Claude Code plugin bundles the binary and this config. No separate install step.</p>
+          <p class="json-note">The Claude Code plugin adds a skill and starts this server for you. Install the CLI first, then <code style="font-family:var(--mono);font-size:11.5px">/plugin install paperscope@paperscope</code>.</p>
         </div>
       </div>
     </div>
@@ -644,12 +644,12 @@
           <p>Builds from source. No C++ compiler required since 0.2.5.</p>
         </div>
         <div class="opt">
-          <div class="top"><h3>Claude plugin</h3><span class="tag">agent</span></div>
+          <div class="top"><h3>Claude Code plugin</h3><span class="tag">agent</span></div>
           <div class="row">
-            <code>paperscope-plugin.zip</code>
-            <button type="button" data-copy="https://github.com/arrowassassin/paperscope/releases/latest">Copy link</button>
+            <code>/plugin marketplace add arrowassassin/paperscope</code>
+            <button type="button" data-copy="/plugin marketplace add arrowassassin/paperscope">Copy</button>
           </div>
-          <p>Bundles the binary, the MCP server and the skill. <a href="https://github.com/arrowassassin/paperscope/releases/latest" rel="noopener" style="color:var(--teal-dark)">Download</a>.</p>
+          <p>then <code>/plugin install paperscope@paperscope</code>. Adds the skill and the MCP server; needs the CLI installed. On claude.ai, upload the <a href="https://github.com/arrowassassin/paperscope/releases/latest/download/paperscope-plugin.zip" rel="noopener" style="color:var(--teal-dark)">plugin zip</a>.</p>
         </div>
       </div>
       <p style="margin:14px 0 0;font-size:12.5px;color:var(--muted)">
