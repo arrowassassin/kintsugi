@@ -13,14 +13,14 @@ A tap is just a GitHub repo named `homebrew-<name>` with formulae under `Formula
 3. Cut a release here (the repo's release workflow tags `vX.Y.Z` and builds
    artifacts). Set the formula's `url` to the tag tarball and its `sha256`:
    ```sh
-   curl -L https://github.com/arrowassassin/kintsugi/archive/refs/tags/v0.1.0.tar.gz \
+   curl -L https://github.com/kintsugi-tools/kintsugi/archive/refs/tags/v0.1.0.tar.gz \
      | shasum -a 256
    ```
 4. Users install with:
    ```sh
-   brew install arrowassassin/kintsugi/kintsugi
+   brew install kintsugi-tools/kintsugi/kintsugi
    # or
-   brew tap arrowassassin/kintsugi && brew install kintsugi
+   brew tap kintsugi-tools/kintsugi && brew install kintsugi
    ```
 
 The formula builds the whole Rust workspace and installs all five binaries

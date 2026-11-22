@@ -220,7 +220,7 @@ the desktop Control Room app, offering to build it if it isn't installed yet**
 kintsugi init` gets you everything, GUI included.
 
 **Prefer a packaged installer?** Grab one for your platform from the
-[latest release](https://github.com/arrowassassin/kintsugi/releases/latest):
+[latest release](https://github.com/kintsugi-tools/kintsugi/releases/latest):
 **`.dmg`** (macOS), **`.msi`** (Windows), **`.deb` / `.AppImage`** (Linux) — it
 registers like any other app and first launch runs the setup wizard (password →
 optional model → initialize). To (re)register a desktop build by hand,
@@ -321,7 +321,7 @@ This repo doubles as a Claude Code plugin marketplace. Install the binaries (see
 above), then enable the plugin (which wires the hook + MCP server):
 
 ```sh
-/plugin marketplace add arrowassassin/kintsugi
+/plugin marketplace add kintsugi-tools/kintsugi
 /plugin install kintsugi@kintsugi
 ```
 

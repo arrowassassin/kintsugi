@@ -635,7 +635,7 @@ fn cmd_install_desktop() -> Result<()> {
          Install it first, then re-run this:\n  \
          cargo install kintsugi-control-room\n  \
          kintsugi install-desktop\n\n\
-         Or download a prebuilt build from https://github.com/arrowassassin/kintsugi/releases."
+         Or download a prebuilt build from https://github.com/kintsugi-tools/kintsugi/releases."
         )
     })?;
     println!("kintsugi: running {} --install", bin.display());
@@ -1106,7 +1106,7 @@ fn cmd_limits() -> Result<()> {
     println!("    reversibly — not a privileged adversary.\n");
 
     println!("If a catastrophic command ever slips through to \"safe,\" that's a bug we treat");
-    println!("as critical — please report it: https://github.com/arrowassassin/kintsugi/issues");
+    println!("as critical — please report it: https://github.com/kintsugi-tools/kintsugi/issues");
     Ok(())
 }
 
@@ -1976,7 +1976,7 @@ fn stop_via_daemon() -> Result<()> {
 /// The installer scripts are served from the product site (kintsugi.tools, a
 /// GitHub Pages custom domain) and mirrored as release assets; the site URL is the
 /// stable, human-facing one we point users at.
-const UPDATE_REPO: &str = "arrowassassin/kintsugi";
+const UPDATE_REPO: &str = "kintsugi-tools/kintsugi";
 pub(crate) const INSTALL_URL: &str = "https://kintsugi.tools/install.sh";
 pub(crate) const PICKER_URL: &str = "https://kintsugi.tools/pick-model.sh";
 
