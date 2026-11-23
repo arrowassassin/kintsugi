@@ -5,6 +5,27 @@ All notable changes to Kintsugi are documented here. The format loosely follows
 
 ## [Unreleased]
 
+### Gate — fewer prompts, same floor
+- **Widened confident-safe recognizer.** The Tier-1 rules now recognize more
+  strictly read-only commands as SAFE, so they run without a prompt: additional
+  `git` read verbs (`ls-tree`, `rev-list`, `merge-base`, `show-ref`, `name-rev`,
+  `cherry`, `count-objects`, `diff-tree`/`-files`/`-index`, `var`, `version`,
+  `--version`), infra query verbs (`kubectl get/describe/logs/explain/top/…`,
+  `docker|podman ps/images/logs/inspect/…`, `helm list/status/history/show/get`,
+  `terraform|tofu plan/validate/show/output/providers/graph`), read-only `gh`
+  forms (`pr|issue|run|release|repo|workflow|gist|label` × `view|list|status|
+  diff|checks`, `search *`, `auth status`), package-manager query verbs
+  (`npm view/info/explain/why/list`, `cargo locate-project/verify-project/pkgid`,
+  `go env`/`go mod graph|why|verify`), and pure text filters/checksums (`tr`,
+  `comm`, `join`, `tac`, `nl`, `paste`, `sha*sum`, `uptime`, `lsof`, …).
+  Two invariants hold for every addition: the global secret-path guard still
+  applies (a read-only program pointed at `~/.ssh`/`.env` is never silently
+  safe), and subcommand-gated tools match the verb at **position 0 only** — a
+  value-taking flag can't smuggle a dangerous subcommand past the check
+  (`kubectl -n get delete …` stays flagged; `go env -w` stays flagged). The
+  catastrophic floor is untouched and test-pinned. Rationale + research record:
+  `docs/classifier-research.md`.
+
 ### Security fixes
 - **Taint `source_id` is redacted before it can reach a log row or the model.**
   A provenance source identifier is meant to be an identifier only, but a URL is

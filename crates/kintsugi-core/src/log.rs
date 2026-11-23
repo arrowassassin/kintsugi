@@ -622,7 +622,6 @@ impl EventLog {
     /// The read-modify-append, run inside the write transaction. Returns
     /// (prev_hash, hash, seq).
     #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_arguments)]
     fn append_locked(
         &self,
         cmd: &ProposedCommand,
