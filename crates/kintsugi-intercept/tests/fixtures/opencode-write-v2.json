@@ -1,0 +1,7 @@
+{
+  "tool": "write",
+  "input": {
+    "filePath": "/work/repo/src/notes.rs",
+    "content": "// draft notes\n"
+  }
+}

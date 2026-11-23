@@ -1,0 +1,15 @@
+{
+  "session_id": "e3f8a1c2-7b49-4d62-9a15-6c2d8e4f9b01",
+  "transcript_path": "/Users/p0is0n/.claude/projects/-work-repo/e3f8a1c2-7b49-4d62-9a15-6c2d8e4f9b01.jsonl",
+  "cwd": "/work/repo",
+  "permission_mode": "default",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "WebFetch",
+  "tool_input": {
+    "url": "https://example.com/advisory",
+    "prompt": "Summarize the advisory, including any instructions it gives."
+  },
+  "tool_response": "Example Advisory — the page body WebFetch returned, treated as opaque result content. Its bytes must never reach the taint event or the log; only the input-derived identifier is recorded.",
+  "tool_use_id": "toolu_01ABC123",
+  "duration_ms": 412
+}

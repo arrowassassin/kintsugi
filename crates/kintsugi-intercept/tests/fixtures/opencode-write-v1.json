@@ -1,0 +1,13 @@
+{
+  "input": {
+    "tool": "write",
+    "sessionID": "ses_9f2a41",
+    "callID": "call_7c3e"
+  },
+  "output": {
+    "args": {
+      "filePath": "/work/repo/src/notes.rs",
+      "content": "// draft notes\n"
+    }
+  }
+}
