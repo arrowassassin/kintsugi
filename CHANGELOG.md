@@ -27,6 +27,21 @@ as an escalation-only class floor — the **desktop Control Room** app, and a
 hardening pass from the review panels. Bundles everything since 0.2.1.
 
 ### Security fixes
+- **Here-doc bodies are redacted before they can reach the log.** A secret
+  pasted through `bash <<EOF … AWS_SECRET_ACCESS_KEY=… EOF` used to land
+  verbatim in the append-only (unscrubbable) event log — the gap the 0.2.1
+  hardening consciously deferred. `redact_command` now segments here-docs
+  (`<<DELIM`, `<<-DELIM`, `<<'DELIM'`, `<<"DELIM"`, here-strings `<<<word`)
+  before tokenization and runs the same token passes inside bodies, one body
+  line at a time (a here-doc fed to a shell is a script, so the
+  program-gated passes fire with each line's own program, and a stray quote
+  can only swallow its own line). The operator + delimiter stay verbatim,
+  text outside bodies is byte-identical to the prior redactor
+  (regression-locked and property-tested), and an unterminated body is
+  redacted to end-of-input. The user still sees the raw command at warn time;
+  only the stored log row is redacted — the existing model, unchanged. Still
+  out of scope, honestly: sub-prompt secrets (`psql` → `\password`) and novel
+  flags.
 - **Taint `source_id` is redacted before it can reach a log row or the model.**
   A provenance source identifier is meant to be an identifier only, but a URL is
   an identifier that can carry a credential (`https://u:tok@host/p`, a colonless

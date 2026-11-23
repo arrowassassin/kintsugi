@@ -214,6 +214,17 @@ internal review, not a third-party audit (same honesty note as above applies).
 
 ## Residual / deployment notes (honest scope)
 
+- **Redaction — here-docs (updated, T4.1):** here-doc bodies are now covered,
+  best-effort: `<<DELIM` / `<<-DELIM` / `<<'DELIM'` / `<<"DELIM"` and
+  here-strings (`<<<word`) are segmented out before tokenization and run
+  through the same secret passes (env assignments, headers, URI
+  userinfo/query, credential flags, `pass:`), one body line at a time, so
+  `bash <<EOF … AWS_SECRET_ACCESS_KEY=… EOF` lands in the log as
+  `[redacted]`. The operator + delimiter stay verbatim; text outside bodies
+  is byte-identical to the pre-heredoc redactor (regression-locked); an
+  unterminated body is redacted to end-of-input. Still out of scope, honestly:
+  secrets typed at a sub-prompt (`psql` → `\password`), novel flags, and a
+  bare opaque secret word with no recognizable shape.
 - **DBA — SQL vs shell:** Kintsugi classifies the *shell* command, not SQL inside
   it. `psql -c '…destructive SQL…'` is recorded verbatim but may classify as Safe,
   so in-database DML/DDL auditing (pgAudit, MySQL audit plugin) remains the system

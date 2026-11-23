@@ -512,3 +512,72 @@ fn anchor_writes_never_touch_the_events_table() {
     assert_eq!(log.chain_head().unwrap(), (seq, head));
     assert!(log.verify_chain().unwrap().is_intact());
 }
+
+#[test]
+fn heredoc_smuggled_secret_never_reaches_the_log_db() {
+    // T4.1, spine #6: a secret pasted through `bash <<EOF … EOF` must land
+    // in the stored row as `[redacted]` — inside the here-doc body — and be
+    // unrecoverable from the db. Redaction happens before the row hash is
+    // computed (log.rs), so the chain never sees the secret either.
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("events.db");
+    let secret = "sk-live-abc123def456";
+    let raw = format!("bash <<EOF\nexport AWS_SECRET_ACCESS_KEY={secret}\nEOF\n");
+    {
+        let log = EventLog::open(&db).unwrap();
+        log.log_event(&sample(&raw), &allow(), None).unwrap();
+    }
+
+    // The stored row shows the marker INSIDE the body; the structure around
+    // it (operator, delimiter) is preserved.
+    {
+        let log = EventLog::open(&db).unwrap();
+        let rows = log.tail(1).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(
+            rows[0].command.contains("[redacted]"),
+            "{}",
+            rows[0].command
+        );
+        assert!(!rows[0].command.contains(secret));
+        assert!(rows[0].command.starts_with("bash <<EOF\n"));
+        assert!(rows[0].command.ends_with("\nEOF\n"));
+        // argv is re-derived from the redacted command — no leak there either.
+        assert!(
+            !rows[0].argv.iter().any(|a| a.contains(secret)),
+            "argv leaked: {:?}",
+            rows[0].argv
+        );
+        assert!(log.verify_chain().unwrap().is_intact());
+    }
+
+    // The strong form: open the db file itself and prove the secret appears
+    // in NO column of the row — command, argv, reason, summary, even the
+    // hash input that was frozen pre-redaction.
+    {
+        let conn = rusqlite::Connection::open(&db).unwrap();
+        {
+            let mut stmt = conn.prepare("SELECT * FROM events").unwrap();
+            let n = stmt.column_count();
+            let mut rows = stmt.query([]).unwrap();
+            while let Some(row) = rows.next().unwrap() {
+                let mut all = String::new();
+                for c in 0..n {
+                    all.push_str(
+                        &row.get::<usize, Option<String>>(c)
+                            .ok()
+                            .flatten()
+                            .unwrap_or_default(),
+                    );
+                    all.push(' ');
+                }
+                assert!(!all.contains(secret), "secret recoverable from db: {all}");
+            }
+        }
+        // And the marker is present, so this is a redacted row, not a gap.
+        let cmd: String = conn
+            .query_row("SELECT command FROM events", [], |r| r.get(0))
+            .unwrap();
+        assert!(cmd.contains("[redacted]"));
+    }
+}
