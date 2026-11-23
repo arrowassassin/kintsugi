@@ -1733,7 +1733,6 @@ dependencies = [
 name = "kintsugi-core"
 version = "0.3.1"
 dependencies = [
- "anyhow",
  "argon2",
  "brush-parser",
  "chacha20poly1305",
