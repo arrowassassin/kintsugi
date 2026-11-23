@@ -11,6 +11,7 @@
 #![forbid(unsafe_code)]
 
 pub mod admin;
+pub mod anchor;
 pub mod log;
 pub mod memory;
 pub mod negotiate;
@@ -23,6 +24,9 @@ pub mod snapshot;
 pub mod taint;
 pub mod types;
 
+pub use anchor::{
+    anchor_key_id, checkpoint_bytes, sign_checkpoint, verify_checkpoint_signature, ANCHOR_CONTEXT,
+};
 pub use log::{
     Anchor, ChainStatus, EventLog, Filter, LogError, LoggedEvent, PendingItem, GENESIS_HASH,
 };
