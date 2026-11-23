@@ -628,3 +628,11 @@ the locked product decisions this build implements.
   which CI/headless can't build — same honest "not-CI-compiled" posture as the
   llama backend. GPUI was considered and declined: immature, macOS-first, and a
   weaker cross-platform story than the hard mac/Linux/Windows requirement allows.
+- Phase 6 V1.1 · MCP ingest parity: an ALLOWED fetch-shaped `kintsugi-exec` call
+  (curl/wget GET, `git clone`) now emits the same `ObservedIngest` as the hook
+  path, after the exec and before the output is returned to the calling agent.
+  The fetched stdout/stderr stays agent-only — never stored or logged (spine #6);
+  the URL identifier is redacted at the daemon's single ingest boundary
+  (`with_redacted_source_id`) as before. Denied, held, and upload-shaped (`curl
+  -d`) calls label nothing; observation remains best-effort and never blocks.
+
