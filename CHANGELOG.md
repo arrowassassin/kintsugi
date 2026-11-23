@@ -105,6 +105,15 @@ hardening pass from the review panels. Bundles everything since 0.2.1.
   rail lists only sessions where a trifecta rule actually fired — a clean session
   shows the calm empty state instead of one falsely labeled "carries a label".
 
+- **TUI: provenance trail on Detail (Phase 6 V1.1).** Opening a held trifecta's
+  detail view now fetches the live trail from the daemon and renders it below the
+  event's own facts — the same grammar as `kintsugi provenance`: glyph + word per
+  step (`↓ untrusted read`, `• sensitive read`, `→ egress sink`, `⛔ rule fired`),
+  the tainted/clean state as words, the one danger accent reserved for the rule
+  that fired, `NO_COLOR` honored, and a designed empty state ("nothing to trace
+  for this session") for clean sessions. A down daemon degrades honestly: a
+  one-line notice, with the event itself still rendered from the log.
+
 ### Desktop Control Room (new app)
 - **A native desktop app, all Rust, engine in-process (Dioxus-desktop).** The
   Control Room runs the engine in-process — same live log, no extra daemon. It

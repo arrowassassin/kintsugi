@@ -731,4 +731,15 @@ the locked product decisions this build implements.
   defaulted `score_with_hint` trait method, so the workstation-only llama
   backend (not CI-built) inherits today's exact behavior until its prompt
   extension lands; policy allowlist / decision memory keep the final human say.
+- TUI provenance trail (Phase 6 V1.1, Task 6): the Detail view now fetches the
+  live trail over `Client::provenance` when it opens — a new `Action::LoadTrail`
+  handled in the event loop exactly like Approve/Deny, so the pure state machine
+  stays terminal-free and testable — and renders it below the row facts with the
+  CLI formatter's exact step grammar: glyph+word per step, tainted/clean as
+  words, the single danger accent on the rule leg only, NO_COLOR honored, a
+  designed empty state for clean sessions, and an honest degrade line ("provenance
+  unavailable (daemon not running)") when the fetch fails — Detail still renders
+  the event from the log. The cache is session-keyed and dropped when Detail
+  closes, so no stale trail can render against another row. This closes the TUI
+  half of the P6.5 note above; the demo GIF remains human-workstation work.
 
