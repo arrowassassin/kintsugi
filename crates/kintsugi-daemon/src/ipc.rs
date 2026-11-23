@@ -37,6 +37,16 @@ pub enum Request {
     /// (P6.2): the daemon labels the session; it never blocks on this — observation
     /// only labels, the trifecta rule decides later.
     Ingest(kintsugi_core::ObservedIngest),
+    /// "An agent session wrote this file." Provenance propagation input (V1.1):
+    /// a tainted session taints the path it writes, so a later reader inherits the
+    /// taint. `path` is an identifier — the write content never leaves the agent.
+    /// Observation only (never blocks), gated on the cwd's `[provenance]` policy
+    /// exactly like the trifecta floor.
+    WriteObserved {
+        session: String,
+        path: String,
+        cwd: PathBuf,
+    },
     /// "Show me the provenance trail for this command" (P6.4). A read-only query for
     /// the CLI/TUI: the daemon returns the session's untrusted reads plus this
     /// command's sensitive-read → egress-sink → rule chain. Identifiers only.
@@ -272,6 +282,15 @@ impl Client {
     /// Report an observed untrusted-content ingestion (provenance taint input).
     pub fn ingest(observed: &kintsugi_core::ObservedIngest) -> Result<()> {
         expect_ack(round_trip(&Request::Ingest(observed.clone()))?)
+    }
+
+    /// Report a file write by an agent session (provenance write propagation).
+    pub fn write_observed(session: &str, path: &str, cwd: &std::path::Path) -> Result<()> {
+        expect_ack(round_trip(&Request::WriteObserved {
+            session: session.to_string(),
+            path: path.to_string(),
+            cwd: cwd.to_path_buf(),
+        })?)
     }
 
     /// Fetch the provenance trail for a command: `(tainted, trail)`.

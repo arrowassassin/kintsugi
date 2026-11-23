@@ -13,7 +13,9 @@
 //!   the content bytes it returned (spine #6). We never read a fetched body here.
 //!   V1.1's post-tool path ([`classify_result_ingest`]) keeps that rule: it
 //!   consults the tool *result* only for presence (did content come back at
-//!   all?), and still records identifiers from the call's input.
+//!   all?), and still records identifiers from the call's input. The file-write
+//!   path ([`classify_tool_write`]) returns the resolved path only — never the
+//!   written bytes.
 //! - **Sound, over-approximate.** When unsure, taint (a false positive is a UX
 //!   cost the provenance trail + one-key approve absorb; a missed taint is a hole).
 //! - **Trusted by default: the repo's own files.** A read *inside* the workspace
@@ -124,6 +126,57 @@ fn is_content_bearing(response: &serde_json::Value) -> bool {
         // A bare number/boolean is a status or flag, not content.
         serde_json::Value::Bool(_) | serde_json::Value::Number(_) => false,
     }
+}
+
+/// Extract the target path of a file-write tool call, for provenance
+/// propagation (a tainted session writes a file → the path inherits the taint,
+/// so a later reader is tainted too).
+///
+/// Identifier-only (spine #6): the return value is the resolved PATH and nothing
+/// else. The call's `content` / `old_string` / `new_string` bytes are never read.
+///
+/// The trust boundary is the same one the read classifier applies: a path inside
+/// the workspace is eligible; a path outside it — or a relative path that climbs
+/// out with `..` — is skipped. Resolution is lexical against `workspace` (the
+/// writing session's cwd); a `preToolUse` write target often does not exist yet,
+/// so the filesystem is never touched on this path.
+///
+/// `tool` is validated for identity only (a missing/blank identity is a
+/// malformed event). The exact content-tool name sets are a live-verification
+/// gap (fixtures README), so this does not gate on a guessed name list: the
+/// `--event write` route is the gate, and a name mismatch is a silent miss
+/// (fail-open), never a wrong taint.
+pub fn classify_tool_write(
+    tool: &str,
+    input: &serde_json::Value,
+    workspace: &Path,
+) -> Option<String> {
+    if tool.trim().is_empty() {
+        return None;
+    }
+    // Cursor pins `file_path` (snake_case); OpenCode pins `filePath` (camelCase).
+    // The remaining aliases mirror the read classifier's tolerated spellings.
+    let raw = first_str(
+        input,
+        &[
+            "file_path",
+            "filePath",
+            "path",
+            "absolute_path",
+            "filename",
+            "file",
+        ],
+    )?;
+    let path = Path::new(&raw);
+    let resolved = if path.is_absolute() {
+        lexical_normalize(path)
+    } else {
+        lexical_normalize(&workspace.join(path))
+    };
+    if !is_within(&resolved, workspace) {
+        return None; // outside the workspace trust boundary
+    }
+    Some(resolved.to_string_lossy().into_owned())
 }
 
 /// Classify a shell command's argv into a taint source if it *ingests* remote
@@ -672,5 +725,121 @@ mod tests {
         // A content tool whose input carries no identifier: never invent one
         // from the response bytes — a miss, not a guess (spine #6).
         assert_eq!(result_call("WebFetch", "{}", content), None);
+    }
+
+    // ---- File-WRITE propagation (V1.1 Task 3) --------------------------------
+
+    #[test]
+    fn write_paths_resolve_against_the_workspace() {
+        // Cursor's snake_case arg and OpenCode's camelCase arg are both pinned.
+        for body in [
+            r#"{"file_path":"src/notes.rs"}"#,
+            r#"{"filePath":"src/notes.rs"}"#,
+        ] {
+            let got = classify_tool_write("write", &json(body), &ws()).expect("write path");
+            assert!(
+                got.ends_with("src/notes.rs"),
+                "must resolve the relative path against the workspace: {got}"
+            );
+            assert!(
+                Path::new(&got).is_absolute(),
+                "the taint key must be an absolute path: {got}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_absolute_path_inside_the_workspace_is_kept_as_is() {
+        assert_eq!(
+            classify_tool_write(
+                "Write",
+                &json(r#"{"file_path":"/work/repo/src/notes.rs"}"#),
+                &ws()
+            ),
+            Some("/work/repo/src/notes.rs".to_string())
+        );
+        // The afterFileEdit surface carries the path at the top level.
+        assert_eq!(
+            classify_tool_write(
+                "afterFileEdit",
+                &json(r#"{"file_path":"/work/repo/src/notes.rs","edits":[]}"#),
+                &ws()
+            ),
+            Some("/work/repo/src/notes.rs".to_string())
+        );
+    }
+
+    #[test]
+    fn writes_outside_the_trust_boundary_are_skipped() {
+        // A relative path climbing out of the workspace is not ours to label.
+        assert_eq!(
+            classify_tool_write("Write", &json(r#"{"file_path":"../../etc/passwd"}"#), &ws()),
+            None
+        );
+        // A sibling directory that merely shares a prefix is not inside.
+        assert_eq!(
+            classify_tool_write("Write", &json(r#"{"file_path":"../repo-other/x"}"#), &ws()),
+            None
+        );
+    }
+
+    // Unix-only: the input is a Unix-absolute path (see the note on
+    // `out_of_workspace_reads_are_untrusted` for the Windows path model).
+    #[cfg(unix)]
+    #[test]
+    fn an_absolute_write_outside_the_workspace_is_skipped() {
+        assert_eq!(
+            classify_tool_write("Write", &json(r#"{"file_path":"/etc/passwd"}"#), &ws()),
+            None
+        );
+        assert_eq!(
+            classify_tool_write("Write", &json(r#"{"file_path":"/tmp/x"}"#), &ws()),
+            None
+        );
+    }
+
+    #[test]
+    fn write_classification_returns_the_path_only_never_the_content() {
+        // The edit body (old/new strings, or a whole `content`) must never ride
+        // along: the classifier's return value is the identifier and nothing else
+        // (spine #6). This is the write-side twin of the post-result test.
+        let got = classify_tool_write(
+            "StrReplace",
+            &json(
+                r#"{"file_path":"src/lib.rs","old_string":"TOKEN-AAAA","new_string":"TOKEN-BBBB"}"#,
+            ),
+            &ws(),
+        )
+        .expect("write path");
+        assert!(got.ends_with("src/lib.rs"), "{got}");
+        assert!(!got.contains("TOKEN"), "content leaked into the identifier");
+    }
+
+    #[test]
+    fn a_write_without_an_identity_or_a_path_is_skipped() {
+        // No tool identity: a malformed write event, not a guess.
+        assert_eq!(
+            classify_tool_write("", &json(r#"{"file_path":"src/x.rs"}"#), &ws()),
+            None
+        );
+        assert_eq!(
+            classify_tool_write("   ", &json(r#"{"file_path":"src/x.rs"}"#), &ws()),
+            None
+        );
+        // No path / blank path / wrong type.
+        for body in [
+            "{}",
+            r#"{"file_path":""}"#,
+            r#"{"file_path":"   "}"#,
+            r#"{"file_path":7}"#,
+            r#"{"filePath":null}"#,
+        ] {
+            assert_eq!(
+                classify_tool_write("write", &json(body), &ws()),
+                None,
+                "body {body}"
+            );
+        }
     }
 }

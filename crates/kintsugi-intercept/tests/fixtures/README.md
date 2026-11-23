@@ -196,9 +196,14 @@ example values. Workspace paths reuse the repo's existing test convention
   object entrypoints are supported in OpenCode 1.18.29+ (npm `latest` was still V1
   1.19.4 on 2026-10-25, third-party observed).
 - **Expected normalized assertion (Task 3):** the generated dual-entrypoint plugin
-  forwards `{tool, args.filePath, sessionID}` to `kintsugi-hook --agent opencode
+  forwards `{tool, args:{filePath}, session, cwd}` to `kintsugi-hook --agent opencode
   --event write` → `WriteObserved { session: "ses_9f2a41", path:
   "/work/repo/src/notes.rs" }`; the taint session key is `input.sessionID`.
+  `cwd` is added by the bridge (the plugin's `process.cwd()`) because the daemon
+  resolves/validates the path against the writing session's workspace trust
+  boundary. The raw two-argument V1 callback shape above is also accepted by
+  `Dialect::parse_write` (fixture-driven test), so a direct test can feed this file
+  unchanged.
 
 - [ ] **Needs live-CLI verification:** pin the exact `write`/`edit` arg field names
       against OpenCode source (confirm `filePath` + `content`; establish `edit`'s
@@ -228,6 +233,18 @@ example values. Workspace paths reuse the repo's existing test convention
 - [ ] **Needs live-CLI verification:** pin the V2 event's session identifier (or the
       sanctioned way a plugin obtains it), and confirm V2 field names on a live
       OpenCode install.
+
+- **Task 3 decision on the V2 session gap (2026-11-22):** V2 ships the
+  `ctx.tool.hook("execute.before")` registration *and* honours the existing
+  convention that **sessionless observations are skipped**. The V2 handler forwards
+  `{tool, args:{filePath}, cwd}` with no session, so `kintsugi-hook` parses and
+  classifies it but sends nothing (exactly like a sessionless PreToolUse content
+  call). Consequences, stated honestly: V2 write taint is inert until an honest
+  session identifier is pinned; the V1 write path and the V1 shell gate are
+  unaffected; and no invented session key (callID, per-call id, or a process-global
+  placeholder) is ever used as one — a fabricated key would fragment or merge taint
+  silently. The alternative (derive a session from V1-only fields) is not available
+  on a V2 host, because V1 plugin implementations do not run under V2.
 
 ---
 
