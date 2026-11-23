@@ -242,7 +242,10 @@ fn auth_message(nonce: &[u8], op: &[u8]) -> Vec<u8> {
 
 /// Derive the ed25519 signing key from the password and the vault's auth_salt.
 /// The 32-byte argon2id output is the seed; the private key is never written.
-fn auth_signing_key(
+/// Crate-visible: the anchor checkpoint signer (`anchor.rs`) reuses this exact
+/// derivation so anchor signatures and admin proofs share one key discipline
+/// (and one `key_id` identity) with no new secret at rest.
+pub(crate) fn auth_signing_key(
     params: KdfParams,
     password: &str,
     auth_salt_hex: &str,

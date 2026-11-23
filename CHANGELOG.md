@@ -102,6 +102,24 @@ All notable changes to Kintsugi are documented here. The format loosely follows
   rewritten log, which is refused loudly. Existing databases migrate in place
   (`CREATE TABLE IF NOT EXISTS`, the session-column-migration style), and anchor
   code never touches the events table.
+- **Checkpoint signing (T1.3).** `kintsugi_core::anchor` signs the exported
+  checkpoint without adding any new secret at rest: the signing key is
+  derived per operation from the admin vault's (password, `auth_salt`, KDF
+  params) — the exact derivation the admin proof uses — and only the
+  verifying public key travels, as the checkpoint's `key_id` (hex), making
+  checkpoints self-certifying: anyone holding the vault file, or the
+  checkpoint itself, can verify. Signatures cover a new protocol-separation
+  label (`kintsugi.log.anchor.v1`, distinct from the admin proof's context),
+  so an anchor signature can never be replayed as a "password to stop" proof
+  and vice versa. The signed bytes are a tiny canonical JSON body
+  (RFC 8785-ordered keys, no whitespace, `seq` as a decimal string so no
+  IEEE-754 precision loss is possible), byte-for-byte pinned by test and
+  cross-checked against `serde_json` on hostile input. A changed `key_id`
+  means the vault was re-keyed; older checkpoints keep verifying under their
+  recorded `key_id` (the rotation story: a new anchor series, never a
+  break). A wrong password derives a different key, so a mistyped export can
+  never attribute an anchor to the real key — and the export path verifies
+  the password against the vault before recording (T1.4).
 
 ## [0.2.1] — 2026-06-17
 

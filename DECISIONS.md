@@ -662,3 +662,22 @@ the locked product decisions this build implements.
   pre-anchor-schema DB and migrates it. Anchor code never mutates the events
   table (spine #4: anchors are a NEW stream, not an edit stream) — asserted by
   test against row count, seqs, and hashes.
+- T1.3 (checkpoint signing): reuse, don't add — the anchor signer derives its
+  ed25519 key per operation from the SAME vault inputs the admin proof uses
+  (password, `auth_salt`, KDF params; `auth_signing_key` made crate-visible for
+  exactly this), so no new secret exists at rest and the vault keeps storing
+  only the public key. `key_id` = that verifying pubkey in hex, embedded in each
+  checkpoint: self-certifying (the checkpoint verifies against a key it carries,
+  pinned by the vault file a user already trusts), and rotation falls out — a
+  password change re-keys the vault, the next export starts a new `key_id`
+  series, and older checkpoints keep verifying under their recorded `key_id`
+  (appended-series rotation, nothing invalidated). Signatures cover a NEW
+  context label `kintsugi.log.anchor.v1` so admin proofs and anchor signatures
+  are non-replayable across each other (tested both directions, including
+  against real `compute_proof` output). Canonical bytes: hand-rolled JSON for
+  the FIXED five-string shape only (RFC 8785 key order, no whitespace), with
+  `seq` as a decimal STRING on purpose — JCS numbers are IEEE-754 doubles, and
+  a string sidesteps i64 precision loss while keeping the serializer trivially
+  auditable; the escaping is cross-checked against `serde_json` on hostile
+  input and the full body is pinned byte-for-byte, so the hand-rolling is
+  locked, not trusted.
