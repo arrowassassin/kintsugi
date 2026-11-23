@@ -993,6 +993,32 @@ impl EventLog {
             .query_row("SELECT COALESCE(MAX(seq), 0) FROM events", [], |r| r.get(0))?)
     }
 
+    /// The logical chain head — `(latest_seq, head_hash)` — for export and
+    /// anchoring (Phase 7).
+    ///
+    /// Returns `(0, [`GENESIS_HASH`])` on an empty log. Both values come from a
+    /// single SQL statement, so the pair is always consistent. The read goes
+    /// **through the connection**, never over the database file: under WAL a
+    /// recently committed row can live only in the `-wal` sidecar (and the
+    /// sidecar is checkpointed and reused in place), so a file hash could lag or
+    /// miss the true head entirely.
+    ///
+    /// This is the export point for anchored trust: a user-held checkpoint
+    /// records the *logical* head, and later verification confirms the chain
+    /// still extends it. Taint events are deliberately outside the hash chain
+    /// (see the `taint_events` schema note) and never move the head — that
+    /// boundary is a preserved design decision, not an oversight.
+    pub fn chain_head(&self) -> Result<(i64, String), LogError> {
+        let (seq, head): (i64, Option<String>) = self.conn.query_row(
+            "SELECT COALESCE(MAX(seq), 0),
+                    (SELECT hash FROM events ORDER BY seq DESC LIMIT 1)
+             FROM events",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        Ok((seq, head.unwrap_or_else(|| GENESIS_HASH.to_string())))
+    }
+
     /// Walk the chain from genesis and confirm every link.
     ///
     /// Recomputes each row's hash from its stored fields and verifies it both

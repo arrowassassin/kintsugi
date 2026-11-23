@@ -79,6 +79,16 @@ All notable changes to Kintsugi are documented here. The format loosely follows
   that fired). Built with Trunk + `cargo tauri` on a workstation (detached from the
   CI workspace; needs the platform webview + wasm target).
 
+### Anchored trust (Phase 7)
+- **Public chain-head export (T1.1).** `EventLog::chain_head()` exposes the
+  logical head — `(latest_seq, head_hash)` — as a single atomic read through the
+  SQLite connection; `(0, GENESIS_HASH)` when the log is empty. This is the
+  primitive the upcoming `kintsugi anchor export` will checkpoint. The read is
+  deliberately never a hash of the database file: under WAL a recently committed
+  row can live only in the `-wal` sidecar, so the file bytes can lag (or entirely
+  miss) the logical head. Taint events remain deliberately outside the hash chain
+  and never move the head.
+
 ## [0.2.1] — 2026-06-17
 
 Pre-rollout security & robustness hardening from an audit. No new features —

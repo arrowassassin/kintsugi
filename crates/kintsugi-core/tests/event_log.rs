@@ -1,6 +1,6 @@
 //! P0.2 acceptance: write events, verify hash-chain links and tamper detection.
 
-use kintsugi_core::{Class, Decision, EventLog, ProposedCommand, Verdict, GENESIS_HASH};
+use kintsugi_core::{Class, Decision, EventLog, Filter, ProposedCommand, Verdict, GENESIS_HASH};
 
 fn sample(raw: &str) -> ProposedCommand {
     ProposedCommand::new(
@@ -213,5 +213,111 @@ fn taint_events_persist_in_order_across_a_reopen() {
     assert!(
         state.is_path_tainted(std::path::Path::new("/repo/out.txt")),
         "WriteFile propagation replays too"
+    );
+}
+
+#[test]
+fn chain_head_is_genesis_on_an_empty_log() {
+    let log = EventLog::open_in_memory().unwrap();
+    let (seq, head) = log.chain_head().unwrap();
+    assert_eq!(seq, 0);
+    assert_eq!(head, GENESIS_HASH);
+    // The genesis head is a valid chain state, not a placeholder error.
+    assert!(log.verify_chain().unwrap().is_intact());
+}
+
+#[test]
+fn chain_head_tracks_the_latest_event_and_agrees_with_the_chain() {
+    let log = EventLog::open_in_memory().unwrap();
+    let e1 = log.log_event(&sample("ls -la"), &allow(), None).unwrap();
+    let (seq, head) = log.chain_head().unwrap();
+    assert_eq!(seq, 1);
+    assert_eq!(head, e1.hash);
+
+    // The head follows each append, one row at a time.
+    let e2 = log
+        .log_event(&sample("git status"), &allow(), None)
+        .unwrap();
+    let (seq, head) = log.chain_head().unwrap();
+    assert_eq!(seq, 2);
+    assert_eq!(head, e2.hash);
+
+    // What chain_head reports is exactly what verify_chain walks to.
+    assert!(log.verify_chain().unwrap().is_intact());
+}
+
+#[test]
+fn chain_head_follows_the_rebuilt_chain_after_a_purge() {
+    let log = EventLog::open_in_memory().unwrap();
+    log.log_event(&sample("git status"), &allow(), None)
+        .unwrap();
+    log.log_event(&sample("rm -rf build"), &allow(), None)
+        .unwrap();
+    log.log_event(&sample("npm test"), &allow(), None).unwrap();
+    let (before_seq, before_head) = log.chain_head().unwrap();
+    assert_eq!(before_seq, 3);
+
+    let removed = log
+        .purge_matching(
+            &Filter {
+                grep: Some("npm test".into()),
+                ..Filter::default()
+            },
+            "privacy",
+        )
+        .unwrap();
+    assert_eq!(removed, 1);
+
+    // The head is the NEW head of the rebuilt chain: the purge marker now ends
+    // it, and chain_head agrees with the row verify_chain actually verifies.
+    let (seq, head) = log.chain_head().unwrap();
+    let all = log
+        .query(&Filter {
+            include_redacted: true,
+            ..Filter::default()
+        })
+        .unwrap();
+    let last = all.last().unwrap();
+    assert_eq!(seq, last.seq);
+    assert_eq!(head, last.hash);
+    assert_eq!(last.reason, "audit:purge");
+    assert_ne!(head, before_head);
+    assert!(
+        log.verify_chain().unwrap().is_intact(),
+        "purge must rebuild a valid chain and the head must be that chain's"
+    );
+}
+
+#[test]
+fn chain_head_ignores_taint_events_outside_the_chain() {
+    // Taint transitions are durable operational state, deliberately outside the
+    // hash chain (the `taint_events` schema decision). Recording one must not
+    // move the head the way an event append does.
+    use kintsugi_core::{SourceKind, TaintEvent, TaintLabel};
+    use time::OffsetDateTime;
+
+    let log = EventLog::open_in_memory().unwrap();
+    let e = log.log_event(&sample("ls"), &allow(), None).unwrap();
+    let (seq, head) = log.chain_head().unwrap();
+    assert_eq!(seq, 1);
+    assert_eq!(head, e.hash);
+
+    log.record_taint_event(&TaintEvent::Ingest {
+        label: TaintLabel {
+            source_kind: SourceKind::Web,
+            source_id: "https://evil.test".to_string(),
+            ts: OffsetDateTime::UNIX_EPOCH,
+            agent: "claude-code".to_string(),
+            session: "s1".to_string(),
+        },
+    })
+    .unwrap();
+
+    let (seq2, head2) = log.chain_head().unwrap();
+    assert_eq!(seq2, seq);
+    assert_eq!(head2, head);
+    assert!(
+        log.verify_chain().unwrap().is_intact(),
+        "a taint append is not a chain append"
     );
 }
