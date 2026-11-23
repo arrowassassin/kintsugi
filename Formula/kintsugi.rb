@@ -10,9 +10,9 @@
 class Kintsugi < Formula
   desc "Local-first safety layer for AI coding agents"
   homepage "https://github.com/kintsugi-tools/kintsugi"
-  url "https://github.com/kintsugi-tools/kintsugi/archive/refs/tags/v0.3.1.tar.gz"
-  # sha256 of the GitHub auto-generated source archive for the v0.3.1 tag.
-  sha256 "ce0a4efb9a3a805ed6ecac7fcf74b13c5bac047c785a77e8aec921f0dab618c4"
+  url "https://github.com/kintsugi-tools/kintsugi/archive/refs/tags/v0.4.0.tar.gz"
+  # sha256 of the GitHub auto-generated source archive for the v0.4.0 tag.
+  sha256 "e78bf8476228c8b65c304011dc300322ded87ad1ef47ad942a240691d39e2029"
   license "MIT"
   head "https://github.com/kintsugi-tools/kintsugi.git", branch: "main"
 
