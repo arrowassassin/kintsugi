@@ -290,6 +290,27 @@ since 0.3.0. No feature changes.
   break). A wrong password derives a different key, so a mistyped export can
   never attribute an anchor to the real key — and the export path verifies
   the password against the vault before recording (T1.4).
+- **Anchor export/verify/status (T1.4).** Users get the other half of the
+  guarantee: `kintsugi anchor export [--out FILE] [--origin ID] [--no-sign]
+  [--password-file FILE]` writes a signed checkpoint of the current chain head
+  and records it, and `kintsugi anchor verify [--checkpoint FILE]` checks the log
+  against it with five distinct verdicts and exit codes — `0` INTACT, `1` STALE,
+  `2` TAMPERED, `3` does-not-verify, `4` UNVERIFIABLE — so a script can tell a
+  normal append from a rewrite without parsing prose. Verification reads only the
+  log file (never the daemon) and makes no network call: the export holds the
+  receipt, the user decides where it lives. An export is refused outright (nothing
+  written, nothing exported) when its head falls behind the last recorded anchor;
+  an unprovisioned or unreadable vault yields an honestly UNSIGNED checkpoint
+  rather than a silently weaker one. A purge rechains, so the next anchor records
+  the new head with the `audit:purge` row preserving the why — `verify` reports
+  that honestly as TAMPERED (the anchored head is no longer at its seq) rather
+  than as a pass. `kintsugi status` grows `anchored: <ts> (N events ago)` once any
+  anchor exists. The signed-bytes fixed point is a whole-second RFC3339 timestamp,
+  so a recorded anchor row rebuilds exactly the bytes that were signed instead of
+  storing a second copy of the file. What this buys and what it does not is
+  documented in [`docs/anchoring.md`](docs/anchoring.md): evident tampering to
+  whoever holds a copy, never tamper-proofness, and no claim about a machine you
+  never verify on.
 
 ## [0.2.1] — 2026-06-17
 

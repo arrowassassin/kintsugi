@@ -17,6 +17,7 @@ use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
+use crate::anchor::Checkpoint;
 use crate::taint::TaintEvent;
 use crate::types::{Class, Decision, ProposedCommand, Verdict};
 
@@ -1068,21 +1069,26 @@ impl EventLog {
         Ok((seq, head.unwrap_or_else(|| GENESIS_HASH.to_string())))
     }
 
-    /// Record one chain-head checkpoint anchor (Phase 7 anchored trust).
+    /// Record one exported chain-head checkpoint (Phase 7 anchored trust).
     ///
-    /// The caller supplies the checkpoint values — in practice from
-    /// [`chain_head`](Self::chain_head) — plus a free-form `origin` (the log
-    /// identity the user anchored under) and a `key_id` (empty while anchors
-    /// are unsigned). The row is appended to the `anchors` table only: the
-    /// `events` table is never touched by anchor code (spine #4 — anchors are
-    /// a NEW stream, not an edit stream).
+    /// The caller supplies the full checkpoint — in practice built from
+    /// [`chain_head`](Self::chain_head) plus an `origin`, a whole-second
+    /// RFC3339 `ts`, and (when signed) the detached `sig` over
+    /// [`Checkpoint::bytes`](crate::anchor::Checkpoint::bytes). The row is
+    /// appended to the `anchors` table only: the `events` table is never
+    /// touched by anchor code (spine #4 — anchors are a NEW stream, not an
+    /// edit stream). The stored `created_ts` is the checkpoint's `ts` string
+    /// verbatim, so the recorded row rebuilds the exact bytes that were
+    /// signed (verification from the log itself, not just the exported file).
     ///
     /// **No-fork guard** (the C2SP transparency-log invariant: never record a
     /// checkpoint inconsistent with one previously recorded):
     /// - a `seq` **below** the last recorded anchor's seq is refused
     ///   ([`LogError::Fork`]);
     /// - the same seq with a **different** head is refused;
-    /// - an identical `(seq, head)` is idempotent and returns the existing row.
+    /// - an identical `(seq, head)` is idempotent and returns the existing row
+    ///   (a later re-export at an unchanged head re-uses the recorded row —
+    ///   the exported FILE still carries the fresh signature).
     ///
     /// **Purge interaction** (design decision): [`purge_matching`](Self::purge_matching)
     /// rebuilds the events chain, but the `audit:purge` marker it appends
@@ -1098,15 +1104,13 @@ impl EventLog {
     /// The read-decide-append runs inside `BEGIN IMMEDIATE`, the same
     /// serialization the event append uses, so concurrent recorders cannot
     /// both admit a first anchor.
-    pub fn record_anchor(
-        &self,
-        origin: &str,
-        seq: i64,
-        head: &str,
-        key_id: &str,
-    ) -> Result<Anchor, LogError> {
-        let created_ts = OffsetDateTime::now_utc();
-        let now = created_ts.format(&Rfc3339)?;
+    pub fn record_anchor(&self, checkpoint: &Checkpoint) -> Result<Anchor, LogError> {
+        let created_ts = OffsetDateTime::parse(&checkpoint.ts, &Rfc3339)?;
+        let now = checkpoint.ts.as_str();
+        let origin = checkpoint.origin.as_str();
+        let seq = checkpoint.seq;
+        let head = checkpoint.head.as_str();
+        let key_id = checkpoint.key_id.as_str();
 
         self.conn.execute_batch("BEGIN IMMEDIATE")?;
         let decision = (|| -> Result<Anchor, LogError> {
@@ -1131,9 +1135,9 @@ impl EventLog {
                 }
             }
             self.conn.execute(
-                "INSERT INTO anchors (created_ts, origin, seq, head, key_id)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
-                rusqlite::params![now, origin, seq, head, key_id],
+                "INSERT INTO anchors (created_ts, origin, seq, head, key_id, sig)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![now, origin, seq, head, key_id, checkpoint.sig],
             )?;
             Ok(Anchor {
                 id: self.conn.last_insert_rowid(),
@@ -1142,7 +1146,7 @@ impl EventLog {
                 seq,
                 head: head.to_string(),
                 key_id: key_id.to_string(),
-                sig: None,
+                sig: checkpoint.sig.clone(),
             })
         })();
         match decision {
@@ -1155,6 +1159,22 @@ impl EventLog {
                 Err(e)
             }
         }
+    }
+
+    /// The head hash recorded at `seq`, if that row exists.
+    ///
+    /// Checkpoint verification uses this to prove an anchored head is still
+    /// *reachable at its own seq*: an intact chain whose row at the anchor's
+    /// seq hashes differently (or is gone) has diverged from the checkpoint —
+    /// a surpassing seq alone proves nothing after a purge/rechain.
+    pub fn hash_at_seq(&self, seq: i64) -> Result<Option<String>, LogError> {
+        let hash: Option<String> = self
+            .conn
+            .query_row("SELECT hash FROM events WHERE seq = ?1", [seq], |r| {
+                r.get(0)
+            })
+            .optional()?;
+        Ok(hash)
     }
 
     /// The most recently recorded anchor, if any.
@@ -1455,9 +1475,15 @@ mod tests {
 
         // The new table is immediately functional.
         let (seq, head) = log.chain_head().unwrap();
-        let anchor = log
-            .record_anchor("test-origin", seq, &head, "test-key")
-            .unwrap();
+        let checkpoint = Checkpoint {
+            origin: "test-origin".into(),
+            seq,
+            head: head.clone(),
+            key_id: "test-key".into(),
+            ts: "2026-11-22T12:34:56Z".into(),
+            sig: None,
+        };
+        let anchor = log.record_anchor(&checkpoint).unwrap();
         assert_eq!(anchor.seq, seq);
         assert_eq!(anchor.head, head);
         assert_eq!(log.latest_anchor().unwrap(), Some(anchor));

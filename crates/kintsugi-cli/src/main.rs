@@ -5,6 +5,7 @@
 //! later phases.
 
 mod admin_cmd;
+mod anchor_cmd;
 mod dryrun;
 mod init;
 mod logview;
@@ -155,6 +156,17 @@ enum Command {
         /// An optional command to evaluate against the session's taint (verbatim).
         #[arg(trailing_var_arg = true)]
         command: Vec<String>,
+    },
+    /// Export or verify a chain-head checkpoint — your tamper-evidence
+    /// receipt for everything agents did. `export` writes a small signed
+    /// checkpoint of the current log head; keep the copy where the log
+    /// cannot reach (a private repo, a second device, removable media).
+    /// `verify` checks the log against a checkpoint (or the last recorded
+    /// anchor). The daemon never pushes anything; Kintsugi makes no network
+    /// call — anchoring is yours to run.
+    Anchor {
+        #[command(subcommand)]
+        cmd: AnchorCmd,
     },
     /// "What would Kintsugi have caught?" — classify a batch of commands you've
     /// already run (your shell history by default, a `--file`, or piped stdin)
@@ -405,6 +417,44 @@ enum ServiceCmd {
     Status,
 }
 
+/// `kintsugi anchor` subcommands (Phase 7 anchored trust).
+#[derive(Debug, Subcommand)]
+enum AnchorCmd {
+    /// Write the current chain-head checkpoint and record it in the log's
+    /// anchors table. Signed with the admin vault's key when a vault exists
+    /// (prompts for the admin password; `--password-file` for non-interactive
+    /// use). Without a vault — or with `--no-sign` — the checkpoint is
+    /// UNSIGNED, which `anchor verify` honestly reports as UNVERIFIABLE.
+    /// Without `--out` the checkpoint prints to stdout.
+    Export {
+        /// Write the checkpoint to this file instead of printing it.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Override the log identity recorded in the checkpoint
+        /// (default: user@hostname).
+        #[arg(long)]
+        origin: Option<String>,
+        /// Export without signing, even if a vault exists.
+        #[arg(long)]
+        no_sign: bool,
+        /// Read the admin password from a file instead of prompting
+        /// (non-interactive / automation use).
+        #[arg(long)]
+        password_file: Option<PathBuf>,
+    },
+    /// Check the log against a checkpoint file — or, with no `--checkpoint`,
+    /// the most recently recorded anchor. Exit codes tell the outcomes
+    /// apart: 0 INTACT · 1 STALE · 2 TAMPERED · 3 INVALID signature ·
+    /// 4 UNVERIFIABLE. The daemon is not involved; nothing leaves the
+    /// machine.
+    Verify {
+        /// The checkpoint file to verify against (default: the last anchor
+        /// recorded in the log).
+        #[arg(long)]
+        checkpoint: Option<PathBuf>,
+    },
+}
+
 #[derive(Debug, Subcommand)]
 enum HookCmd {
     /// List detected agents + whether the Kintsugi hook is installed. With
@@ -586,6 +636,15 @@ fn main() -> Result<()> {
         Some(Command::Tui) => kintsugi_tui::run(&default_db_path(), &snapshot_dir()),
         Some(Command::Test { command }) => cmd_test(&command),
         Some(Command::Provenance { session, command }) => cmd_provenance(&session, &command),
+        Some(Command::Anchor { cmd }) => match cmd {
+            AnchorCmd::Export {
+                out,
+                origin,
+                no_sign,
+                password_file,
+            } => anchor_cmd::export(out, origin, no_sign, password_file),
+            AnchorCmd::Verify { checkpoint } => anchor_cmd::verify(checkpoint),
+        },
         Some(Command::DryRun { file, number }) => dryrun::run(file, number),
         Some(Command::Limits) => cmd_limits(),
         Some(Command::Guard { command }) => cmd_guard(&command),
@@ -2422,6 +2481,9 @@ fn cmd_status() -> Result<()> {
                         format!("BROKEN ({chain:?})")
                     }
                 );
+                if let Some(line) = anchor_cmd::anchored_status_line(&log) {
+                    println!("{line}");
+                }
             }
             Err(e) => println!("  events:  (could not open log: {e})"),
         }

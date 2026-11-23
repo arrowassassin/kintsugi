@@ -276,7 +276,9 @@ pub fn read_admin_password(prompt: &str) -> Result<String> {
 }
 
 /// Read a password from a file (trailing newline trimmed) or interactively.
-fn read_password(prompt: &str, file: &Option<PathBuf>) -> Result<String> {
+/// Crate-visible: the anchor export (T1.4) uses the identical entry for its
+/// signing password, so both privileged paths share one discipline.
+pub(crate) fn read_password(prompt: &str, file: &Option<PathBuf>) -> Result<String> {
     if let Some(f) = file {
         let s = std::fs::read_to_string(f)
             .with_context(|| format!("read password file {}", f.display()))?;

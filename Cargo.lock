@@ -1699,6 +1699,7 @@ dependencies = [
  "kintsugi-intercept",
  "kintsugi-model",
  "kintsugi-tui",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",
