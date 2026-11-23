@@ -665,3 +665,15 @@ the locked product decisions this build implements.
   app is built locally. `Formula/kintsugi.rb` added tap-ready at v0.3.1 with the
   real source-tarball sha256 (`packaging/homebrew/kintsugi.rb` mirrors it);
   publishing the tap remains a human step, per the STOP list.
+- Stop honesty + CHANGELOG 0.3.x (T0.4): `kintsugi stop` no longer reports
+  silent success. The old flow exited 0 in every no-daemon branch — including
+  a refused password gate (locked vault, no TTY) and the plain nothing-to-stop
+  case — so a scripted stop "succeeded" while stopping nothing. Now every
+  refused or nothing-to-stop path explains on stderr and exits non-zero
+  (`bail!`), while real work keeps exit 0 (live-daemon shutdown, watcher/stale-
+  PID cleanup); the daemon-side wrong-password refusal was fixed the same way.
+  The stop tests are hermetic against the host vault (`KINTSUGI_VAULT` →
+  absent), closing the dogfooding-machine suite failure. The CHANGELOG gained
+  its missing `0.3.0`/`0.3.1` sections written from the git tags (the stale
+  Tauri+Trunk desktop description was superseded by the shipped Dioxus-desktop
+  `desktop-dx/` reality), and `[Unreleased]` carries only this fix.

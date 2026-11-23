@@ -5,6 +5,27 @@ All notable changes to Kintsugi are documented here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+- **`kintsugi stop` fails loudly instead of silently succeeding.** With no
+  daemon running (and nothing else to stop) it printed "the daemon is not
+  running." and exited 0, so a scripted `kintsugi stop` reported success while
+  stopping nothing — and with a locked vault but no terminal it exited 0 over a
+  refused password gate. Every refused or nothing-to-stop path now explains on
+  stderr and exits non-zero: `no daemon is running — nothing to stop`,
+  `stop refused — nothing was stopped`, and the daemon-side wrong-password
+  refusal too. The paths that do real work keep their exit-0 success: a
+  running daemon → authenticated shutdown, and the backstop-watcher /
+  stale-PID cleanup. The stop tests are now hermetic against the host's real
+  vault (`KINTSUGI_VAULT` → absent), so a provisioned dogfooding machine no
+  longer fails the suite.
+
+## [0.3.0] — 2026-06-22
+
+Phase 6: **provenance** — a pure taint model with the "lethal trifecta"
+(untrusted content → sensitive read → egress sink) wired into the decision loop
+as an escalation-only class floor — the **desktop Control Room** app, and a
+hardening pass from the review panels. Bundles everything since 0.2.1.
+
 ### Security fixes
 - **Taint `source_id` is redacted before it can reach a log row or the model.**
   A provenance source identifier is meant to be an identifier only, but a URL is
@@ -20,6 +41,17 @@ All notable changes to Kintsugi are documented here. The format loosely follows
   log replay).
 
 ### Provenance (Phase 6)
+- **A pure taint/provenance model with the trifecta truth table (P6.1).** New
+  `kintsugi-core::taint`: `SourceKind`, `TaintLabel`, `TaintSet`, `TaintStore` —
+  an event-sourced model of what a session has ingested (web fetches, downloads,
+  MCP output, out-of-workspace reads, the clipboard, search results) and a truth
+  table for the lethal trifecta: a tainted session + a sensitive read + an
+  egress sink. Pure, no I/O, unit-tested.
+- **The trifecta is a class floor in the decision loop (P6.3).** Taint state
+  composes with the leg predicates under `decide()`: a command from a tainted
+  session that reads something sensitive and reaches an egress sink escalates —
+  it can raise a class, never lower one. The same escalation-only rule as every
+  other overlay.
 - **Durable taint (item D).** Information-flow taint now survives a daemon restart.
   Each taint transition is persisted to an append-only `taint_events` stream and
   replayed on `Daemon::open` to reconstruct `TaintState`, closing the
@@ -66,18 +98,120 @@ All notable changes to Kintsugi are documented here. The format loosely follows
   [`docs/policy.md`](docs/policy.md).
 - **TUI: trifecta tag.** The detail pane names a taint-driven block ("lethal-trifecta
   block — untrusted content reached a sink"), so a provenance hold reads as such.
-- **Desktop app (Tauri + Dioxus, all-Rust, no npm).** New `kintsugi-app`
-  data-binding engine (reads the daemon over IPC + the event log into UI
-  view-models: timeline, audit search, metrics, hash-chain verify, queue, the P6.4
-  provenance trail, status) and `kintsugi-app-types` (the wasm-safe, compiler-checked
-  data contract shared by the engine and the frontend). The `desktop/` tree adds the
-  Tauri host (`#[tauri::command]`s over the engine) and a Dioxus/WASM **Control Room**
-  with a left-nav and five screens — Dashboard (metric cards + held alert + recent
-  activity), Live feed (filter + select → detail), Held queue (one-key allow/deny),
-  Audit log (search + tamper-evidence verify badge), Settings — plus the
-  provenance-trail hero (gold seam threading the steps, danger accent on the rule
-  that fired). Built with Trunk + `cargo tauri` on a workstation (detached from the
-  CI workspace; needs the platform webview + wasm target).
+- **The engine catalogs its own watch-lists.** The Rules view shows exactly which
+  ingest channels taint a session and which egress programs are watched, sourced
+  from the engine itself (`egress_channels()` / `untrusted_sources()`, locked by
+  tests) so the displayed lists can never drift from what fires. The provenance
+  rail lists only sessions where a trifecta rule actually fired — a clean session
+  shows the calm empty state instead of one falsely labeled "carries a label".
+
+### Desktop Control Room (new app)
+- **A native desktop app, all Rust, engine in-process (Dioxus-desktop).** The
+  Control Room runs the engine in-process — same live log, no extra daemon. It
+  began this release as a Tauri host with a Dioxus/WASM frontend and was rebuilt
+  mid-release as a pure Dioxus-desktop app (`desktop-dx/`, its own workspace:
+  no web bundler, no npm, no Trunk step). Screens: **Dashboard** (metric cards +
+  held alert + recent activity), **Live feed** (filter + select → details
+  drawer), **Held queue** (one-key allow/deny; held catastrophic commands are
+  runnable from the app), **Audit log** (search + hash-chain verify badge),
+  **Settings** (real toggles), plus toast notifications and a system-tray
+  status indicator. A first-run **setup wizard** (password → optional model →
+  initialize) with an always-available help cheatsheet.
+- **`kintsugi-app` + `kintsugi-app-types`** — the data-binding engine that
+  shapes the daemon's IPC replies and the read-only event log into small,
+  `serde`-serializable view-models (timeline, audit search, metrics, hash-chain
+  verify, queue, the P6.4 provenance trail, status), and the wasm-safe,
+  compiler-checked data contract shared by the engine and the frontend. It
+  performs no decisions and adds no egress; identifiers only, never secret
+  contents.
+- **Live model management in the app:** Hugging Face model search + in-app
+  download, real local-model selection with an honest scorer state, and picking
+  a model auto-restarts the daemon to load it. `kintsugi model rm <name>`
+  deletes a downloaded GGUF from disk.
+- **A hook panel** showing exactly which agent CLIs are wired (per-agent
+  enable/disable + refresh), a recorder summary in the UI, and a gated shell
+  hook.
+- **Self-install + `kintsugi install-desktop`.** The app registers itself at the
+  OS level (macOS `.app` bundle with Info.plist + `.icns`, Linux `.desktop`
+  entry + hicolor icons, Windows Start-menu shortcut); `kintsugi
+  install-desktop` drives it from the CLI; and `cargo install kintsugi` +
+  `kintsugi init` completes the desktop app too (offered, built if absent,
+  skipped on headless hosts or with `--no-desktop`). A tag-triggered desktop
+  release workflow (`release-desktop.yml`) packages `.dmg` / `.deb` / `.msi`
+  beside SHA256SUMS.
+- **New `kintsugi uninstall`** — cleanly remove Kintsugi: stop the daemon,
+  strip the agent hooks (Antigravity's whole plugins subtree included), remove
+  the shim dir. Password-gated when provisioned; the audit log is kept.
+
+### CLI & daemon hardening (review-panel fixes)
+- **CodeQL critical resolved: no hard-coded nonce sentinel.** The desktop's
+  no-vault shutdown call passed `""` as nonce/proof; absence is now modeled as
+  `Option` (never an empty string), so no placeholder ever reaches the crypto
+  path. The release workflows were hardened for the audit.
+- **Ambiguous holds are never orphaned.** Holds enqueue only when the surface
+  genuinely needs a human: catastrophic always, ambiguous only for agents with
+  **no** native ask — the predicate was inverted so an unknown agent defaults
+  to enqueued rather than silently dropped. A new `PrunePending` IPC clears the
+  acknowledged-orphan backlog in one step. The audit log keeps the full record
+  either way.
+- **`kintsugi ingest --gate`** — a pre-exec gate for the recorder: classifies
+  the command synchronously, describes it (with the local model's summary), and
+  for the ambiguous band asks y/N via `/dev/tty` before it runs (exit 0 =
+  allow, 1 = deny; catastrophic always declined — re-run via `kintsugi run`).
+  On a daemon outage or with no TTY it falls back to passive recording, so the
+  gate never breaks a normal shell.
+- **Self-protection floor:** `cargo`/`brew`/`npm`/`pip` `uninstall kintsugi`
+  (and friends) are classified as dangerous — an agent can't talk the rules
+  into uninstalling the safety layer.
+- **The admin vault is read fresh per privileged op** — no more stale-cache
+  lockout after `admin change-password`.
+- **Recorder scoring is DoS-bounded.** Model-scoring of risky recorder events
+  runs under a token bucket (burst 8, steady 4/s); under a flooded socket the
+  row is recorded without its prose instead of starving the serve loop — the
+  audit record and the danger class always land, and the hold/approve path is
+  untouched.
+- **Zero-byte liveness probes are no longer logged as connection errors.**
+- Fixes: the model no longer "vanishes" after a restart (the installed daemon
+  is preferred over a repo build), wrong/stale metrics, a stuck chain-verify
+  state, and the Antigravity uninstall path (the live hook was left behind).
+
+### CI
+- Coverage excludes CI-unexercisable desktop/teardown paths from the line floor
+  (documented in the job, not silent), and a Unix-absolute-path observe test is
+  gated `cfg(unix)` so Windows stays green.
+
+## [0.3.1] — 2026-11-22
+
+The org move reaches every public surface — this project now lives at
+`kintsugi-tools/kintsugi` — plus the desktop/release fixes that accumulated
+since 0.3.0. No feature changes.
+
+### Changed
+- **Repository, homepage, and package metadata moved to the `kintsugi-tools`
+  org.** Repository and homepage URLs (now https://kintsugi.tools), the CLI's
+  `UPDATE_REPO` constant and its printed release/issues URLs, crate README
+  links, tap references, and the plugin manifests' contact email; the version
+  bump to 0.3.1 is what publishes the new metadata to the package index.
+- **The website moved out of this repo** (it now lives in
+  `kintsugi-tools/website`); the tree here is code + docs again.
+
+### Fixed
+- **The desktop release workflow was fixed for real runs:** the publish job no
+  longer trips `sha256sum` on per-target directories; Windows builds stop
+  dying on Defender locking a just-linked `.exe` (workspace excluded from
+  real-time scanning); Linux desktop builds install `libxdo-dev`; macOS-Intel
+  `.dmg`s are cross-built on the arm64 runner; the `.app` bundle is ad-hoc
+  signed, so a quarantined download prompts "unidentified developer" instead of
+  reading as "damaged"; and a duplicate `kintsugi-daemon` bin that broke Windows
+  release links (LNK1104) was dropped.
+- **Installer coherence:** `cargo install` and `install.sh` now target the
+  same bin dir — an existing install is updated in place, and a second copy in
+  another standard dir is flagged, so the two install methods never leave
+  shadowing suites on `PATH`.
+- **Desktop fixes:** the setup wizard's final step enables Kintsugi on all
+  detected agent CLIs; the unlock screen is skipped when no vault is
+  provisioned; `kintsugi uninstall` removes the desktop app too and resets the
+  admin password + settings (audit data kept).
 
 ### Security fixes (release hygiene)
 - **The audit log's storage engine no longer carries a known CVE.**
