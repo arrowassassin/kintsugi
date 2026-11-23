@@ -258,6 +258,20 @@ since 0.3.0. No feature changes.
   row can live only in the `-wal` sidecar, so the file bytes can lag (or entirely
   miss) the logical head. Taint events remain deliberately outside the hash chain
   and never move the head.
+- **Anchors table + no-fork guard (T1.2).** A new append-only `anchors` table
+  records exported chain-head checkpoints (`EventLog::record_anchor` /
+  `latest_anchor`, new `Anchor` type; the `sig` column exists but stays NULL until
+  checkpoint signing lands, so the schema does not churn twice). The C2SP
+  transparency-log invariant — never record a checkpoint inconsistent with one
+  previously recorded — is enforced with no exceptions: a lower seq or a
+  same-seq-different-head is refused with `LogError::Fork`; an identical
+  `(seq, head)` is idempotent. Purges rebuild the events chain, but the
+  `audit:purge` marker is appended above every seq ever used (AUTOINCREMENT never
+  renumbers or reuses), so an honest post-purge re-anchor always passes the guard
+  — continuity is never faked, and a lower seq can only mean a restored or
+  rewritten log, which is refused loudly. Existing databases migrate in place
+  (`CREATE TABLE IF NOT EXISTS`, the session-column-migration style), and anchor
+  code never touches the events table.
 
 ## [0.2.1] — 2026-06-17
 

@@ -755,3 +755,25 @@ the locked product decisions this build implements.
   changes no write behavior. Taint events stay deliberately outside the chain (the
   Phase 6 `taint_events` decision): `chain_head` preserves that boundary and its
   doc-comment records it as a preserved decision, not an oversight.
+- T1.2 (anchors table + no-fork guard): new append-only `anchors` rows record
+  exported checkpoints `(seq, head)`; `record_anchor` enforces the C2SP
+  invariant (never record a checkpoint inconsistent with one previously
+  recorded) with NO exceptions — lower seq or same-seq-different-head is refused
+  (`LogError::Fork`), identical `(seq, head)` is idempotent. Purge-baseline
+  decision: neither of the two sketched options (marker comparison /
+  baseline-reset) was needed or sound here — `purge_matching` appends its
+  `audit:purge` marker AFTER the rechain, and `seq` is an AUTOINCREMENT rowid,
+  so deletes never renumber or reuse: the marker always lands ABOVE every seq
+  ever used, an honest post-purge anchor therefore always carries a HIGHER seq
+  and passes the strict guard naturally, the discontinuity stays visible in the
+  anchor series (never faked continuity), and a marker-presence exception would
+  only have weakened restored-backup detection (any old backup containing a
+  purge marker would pass as a "reset"). A lower seq can only mean a restored or
+  rewritten events table — refused loudly, guard stays total. Migration:
+  `CREATE TABLE IF NOT EXISTS anchors` inside the init batch — a whole-table
+  add is idempotent, so an existing 0.3.x DB upgrades in place on next open
+  (same forward-compatible style as the session-column ALTER migration; no
+  conditional needed) — locked by an in-file test that builds a genuine
+  pre-anchor-schema DB and migrates it. Anchor code never mutates the events
+  table (spine #4: anchors are a NEW stream, not an edit stream) — asserted by
+  test against row count, seqs, and hashes.

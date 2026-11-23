@@ -34,6 +34,8 @@ pub enum LogError {
     TimeParse(#[from] time::error::Parse),
     #[error("stored value is not valid: {0}")]
     Corrupt(String),
+    #[error("anchor would fork the recorded series: {0}")]
+    Fork(String),
 }
 
 /// A single immutable row of the event log.
@@ -178,6 +180,34 @@ pub struct PendingItem {
     pub ts: OffsetDateTime,
 }
 
+/// One recorded chain-head checkpoint (Phase 7 anchored trust).
+///
+/// The row records that the logical head `(seq, head)` was exported and
+/// anchored at `created_ts` under `origin`. Anchors are append-only
+/// bookkeeping — a NEW stream, never an edit stream: recording one never
+/// touches the `events` table. `key_id` names the signing key once
+/// checkpoint signing lands; `sig` is the detached signature over the
+/// checkpoint (NULL in this wave — the column exists so the schema does not
+/// churn twice).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Anchor {
+    /// Row id — insertion order (anchors are append-only).
+    pub id: i64,
+    /// When the checkpoint was recorded.
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_ts: OffsetDateTime,
+    /// Caller-supplied log identity for the checkpoint (e.g. a hostname).
+    pub origin: String,
+    /// The anchored sequence number.
+    pub seq: i64,
+    /// The anchored head hash.
+    pub head: String,
+    /// Signing-key fingerprint (empty while anchors are unsigned).
+    pub key_id: String,
+    /// Detached checkpoint signature (unset until signing lands).
+    pub sig: Option<String>,
+}
+
 /// The result of verifying the hash chain.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChainStatus {
@@ -298,6 +328,26 @@ impl EventLog {
                 seq        INTEGER PRIMARY KEY AUTOINCREMENT,
                 ts         TEXT NOT NULL,
                 event      TEXT NOT NULL
+            );
+
+            -- Anchored trust (Phase 7): user-exported checkpoints of the
+            -- logical chain head. Append-only bookkeeping — a NEW stream, never
+            -- an edit stream: anchor code never touches `events`. `sig` stays
+            -- NULL until checkpoint signing lands (the column exists so the
+            -- schema does not churn twice).
+            --
+            -- Forward-compatible migration, session-column style: a fresh DB
+            -- creates this table here, and an existing pre-anchor DB upgrades
+            -- in place on its next open — a whole-table add is idempotent, so
+            -- unlike the ALTER-based session migration it needs no conditional.
+            CREATE TABLE IF NOT EXISTS anchors (
+                id         INTEGER PRIMARY KEY,
+                created_ts TEXT NOT NULL,
+                origin     TEXT NOT NULL,
+                seq        INTEGER NOT NULL,
+                head       TEXT NOT NULL,
+                key_id     TEXT NOT NULL DEFAULT '',
+                sig        TEXT NULL
             );
             "#,
         )?;
@@ -1018,6 +1068,132 @@ impl EventLog {
         Ok((seq, head.unwrap_or_else(|| GENESIS_HASH.to_string())))
     }
 
+    /// Record one chain-head checkpoint anchor (Phase 7 anchored trust).
+    ///
+    /// The caller supplies the checkpoint values — in practice from
+    /// [`chain_head`](Self::chain_head) — plus a free-form `origin` (the log
+    /// identity the user anchored under) and a `key_id` (empty while anchors
+    /// are unsigned). The row is appended to the `anchors` table only: the
+    /// `events` table is never touched by anchor code (spine #4 — anchors are
+    /// a NEW stream, not an edit stream).
+    ///
+    /// **No-fork guard** (the C2SP transparency-log invariant: never record a
+    /// checkpoint inconsistent with one previously recorded):
+    /// - a `seq` **below** the last recorded anchor's seq is refused
+    ///   ([`LogError::Fork`]);
+    /// - the same seq with a **different** head is refused;
+    /// - an identical `(seq, head)` is idempotent and returns the existing row.
+    ///
+    /// **Purge interaction** (design decision): [`purge_matching`](Self::purge_matching)
+    /// rebuilds the events chain, but the `audit:purge` marker it appends
+    /// lands **above** every seq ever used — `seq` is an AUTOINCREMENT rowid,
+    /// so deletes never renumber or reuse — so an honest post-purge anchor
+    /// always carries a *higher* seq and passes this guard naturally. The
+    /// discontinuity is never faked: it stays visible in the anchor series
+    /// itself, and the marker event preserves the why. A *lower* seq than the
+    /// last anchor can therefore only come from a restored or rewritten
+    /// events table (e.g. a backup restored over a newer log), and it is
+    /// refused with no exceptions — that totality is the point of the guard.
+    ///
+    /// The read-decide-append runs inside `BEGIN IMMEDIATE`, the same
+    /// serialization the event append uses, so concurrent recorders cannot
+    /// both admit a first anchor.
+    pub fn record_anchor(
+        &self,
+        origin: &str,
+        seq: i64,
+        head: &str,
+        key_id: &str,
+    ) -> Result<Anchor, LogError> {
+        let created_ts = OffsetDateTime::now_utc();
+        let now = created_ts.format(&Rfc3339)?;
+
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        let decision = (|| -> Result<Anchor, LogError> {
+            if let Some(prev) = self.latest_anchor()? {
+                if prev.seq == seq && prev.head == head {
+                    return Ok(prev); // Idempotent: the checkpoint is already on record.
+                }
+                if prev.seq == seq {
+                    return Err(LogError::Fork(format!(
+                        "seq {seq} was already anchored with head {}",
+                        short(&prev.head)
+                    )));
+                }
+                if seq < prev.seq {
+                    return Err(LogError::Fork(format!(
+                        "seq {seq} is below the last recorded anchor seq {} — \
+                         the events table no longer extends the anchor series \
+                         (a restored or rewritten log; a purge never lowers the \
+                         head, its audit:purge marker lands above every prior seq)",
+                        prev.seq
+                    )));
+                }
+            }
+            self.conn.execute(
+                "INSERT INTO anchors (created_ts, origin, seq, head, key_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![now, origin, seq, head, key_id],
+            )?;
+            Ok(Anchor {
+                id: self.conn.last_insert_rowid(),
+                created_ts,
+                origin: origin.to_string(),
+                seq,
+                head: head.to_string(),
+                key_id: key_id.to_string(),
+                sig: None,
+            })
+        })();
+        match decision {
+            Ok(anchor) => {
+                self.conn.execute_batch("COMMIT")?;
+                Ok(anchor)
+            }
+            Err(e) => {
+                let _ = self.conn.execute_batch("ROLLBACK");
+                Err(e)
+            }
+        }
+    }
+
+    /// The most recently recorded anchor, if any.
+    pub fn latest_anchor(&self) -> Result<Option<Anchor>, LogError> {
+        // Raw columns of one `anchors` row: (id, ts, origin, seq, head, key_id, sig).
+        type AnchorRow = (i64, String, String, i64, String, String, Option<String>);
+        let row: Option<AnchorRow> = self
+            .conn
+            .query_row(
+                "SELECT id, created_ts, origin, seq, head, key_id, sig
+                 FROM anchors ORDER BY id DESC LIMIT 1",
+                [],
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                        r.get(6)?,
+                    ))
+                },
+            )
+            .optional()?;
+        Ok(match row {
+            None => None,
+            Some((id, ts_s, origin, seq, head, key_id, sig)) => Some(Anchor {
+                id,
+                created_ts: OffsetDateTime::parse(&ts_s, &Rfc3339)?,
+                origin,
+                seq,
+                head,
+                key_id,
+                sig,
+            }),
+        })
+    }
+
     /// Walk the chain from genesis and confirm every link.
     ///
     /// Recomputes each row's hash from its stored fields and verifies it both
@@ -1165,4 +1341,125 @@ fn parse_decision(s: &str) -> Result<Decision, LogError> {
 
 fn short(hash: &str) -> String {
     hash.chars().take(12).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The schema as of 0.3.1 (pre-anchor), verbatim minus the `anchors`
+    /// table — exactly what a database written by an older binary holds.
+    const PRE_ANCHOR_SCHEMA: &str = r#"
+        CREATE TABLE IF NOT EXISTS events (
+            seq        INTEGER PRIMARY KEY AUTOINCREMENT,
+            id         TEXT NOT NULL,
+            ts         TEXT NOT NULL,
+            agent      TEXT NOT NULL,
+            cwd        TEXT NOT NULL,
+            command    TEXT NOT NULL,
+            argv       TEXT NOT NULL,
+            class      TEXT NOT NULL,
+            decision   TEXT NOT NULL,
+            reason     TEXT NOT NULL,
+            tier       INTEGER NOT NULL,
+            risk       INTEGER,
+            summary    TEXT,
+            snapshot_id TEXT,
+            prev_hash  TEXT NOT NULL,
+            hash       TEXT NOT NULL,
+            session    TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS redactions (
+            event_id   TEXT PRIMARY KEY,
+            ts         TEXT NOT NULL,
+            reason     TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS memory (
+            repo         TEXT NOT NULL,
+            command_hash TEXT NOT NULL,
+            action       TEXT NOT NULL,
+            updated_at   TEXT NOT NULL,
+            PRIMARY KEY (repo, command_hash)
+        );
+
+        CREATE TABLE IF NOT EXISTS snapshots (
+            id         TEXT PRIMARY KEY,
+            seq        INTEGER,
+            ts         TEXT NOT NULL,
+            command    TEXT NOT NULL,
+            manifest   TEXT NOT NULL,
+            reverted   INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS pending (
+            id          TEXT PRIMARY KEY,
+            ts          TEXT NOT NULL,
+            command     TEXT NOT NULL,
+            class       TEXT NOT NULL,
+            reason      TEXT NOT NULL,
+            status      TEXT NOT NULL DEFAULT 'pending',
+            updated_at  TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS taint_events (
+            seq        INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts         TEXT NOT NULL,
+            event      TEXT NOT NULL
+        );
+        "#;
+
+    fn cmd(raw: &str) -> ProposedCommand {
+        ProposedCommand::new(
+            "shim",
+            "/tmp/project",
+            raw.split_whitespace().map(str::to_string).collect(),
+            raw,
+        )
+    }
+
+    fn allow() -> Verdict {
+        Verdict::rules(Class::Safe, Decision::Allow, "test")
+    }
+
+    #[test]
+    fn migration_adds_anchors_to_a_pre_anchor_db() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("events.db");
+
+        // Create a database in the PRE-anchor shape: the old DDL, no
+        // `anchors` table, with real chained events logged under it (the
+        // private-field construction wraps the raw connection so `log_event`
+        // runs against the old schema, like the old binary did).
+        {
+            let conn = Connection::open(&db).unwrap();
+            conn.pragma_update(None, "journal_mode", "WAL").unwrap();
+            conn.pragma_update(None, "synchronous", "NORMAL").unwrap();
+            conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+            conn.busy_timeout(std::time::Duration::from_secs(5))
+                .unwrap();
+            conn.execute_batch(PRE_ANCHOR_SCHEMA).unwrap();
+            let log = EventLog { conn };
+            log.log_event(&cmd("one"), &allow(), None).unwrap();
+            log.log_event(&cmd("two"), &allow(), None).unwrap();
+        }
+
+        // Reopen with the current code: the migration must add `anchors` in
+        // place (CREATE TABLE IF NOT EXISTS — the session-column-migration
+        // style; a whole-table add needs no conditional) and leave the
+        // pre-existing events untouched and still verifiable.
+        let log = EventLog::open(&db).unwrap();
+        assert_eq!(log.count().unwrap(), 2, "pre-existing events survive");
+        assert!(log.verify_chain().unwrap().is_intact());
+
+        // The new table is immediately functional.
+        let (seq, head) = log.chain_head().unwrap();
+        let anchor = log
+            .record_anchor("test-origin", seq, &head, "test-key")
+            .unwrap();
+        assert_eq!(anchor.seq, seq);
+        assert_eq!(anchor.head, head);
+        assert_eq!(log.latest_anchor().unwrap(), Some(anchor));
+    }
 }
