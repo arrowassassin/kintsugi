@@ -2969,7 +2969,7 @@ dependencies = [
 
 [[package]]
 name = "kintsugi-app"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "kintsugi-app-types",
@@ -2982,14 +2982,14 @@ dependencies = [
 
 [[package]]
 name = "kintsugi-app-types"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "kintsugi-control-room"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3014,7 +3014,7 @@ dependencies = [
 
 [[package]]
 name = "kintsugi-core"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "argon2",
  "brush-parser",
@@ -3037,7 +3037,7 @@ dependencies = [
 
 [[package]]
 name = "kintsugi-daemon"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "directories",
@@ -3055,7 +3055,7 @@ dependencies = [
 
 [[package]]
 name = "kintsugi-model"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "directories",

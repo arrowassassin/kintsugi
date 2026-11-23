@@ -5,26 +5,14 @@ All notable changes to Kintsugi are documented here. The format loosely follows
 
 ## [Unreleased]
 
-### Fixed
-- **`kintsugi stop` fails loudly instead of silently succeeding.** With no
-  daemon running (and nothing else to stop) it printed "the daemon is not
-  running." and exited 0, so a scripted `kintsugi stop` reported success while
-  stopping nothing — and with a locked vault but no terminal it exited 0 over a
-  refused password gate. Every refused or nothing-to-stop path now explains on
-  stderr and exits non-zero: `no daemon is running — nothing to stop`,
-  `stop refused — nothing was stopped`, and the daemon-side wrong-password
-  refusal too. The paths that do real work keep their exit-0 success: a
-  running daemon → authenticated shutdown, and the backstop-watcher /
-  stale-PID cleanup. The stop tests are now hermetic against the host's real
-  vault (`KINTSUGI_VAULT` → absent), so a provisioned dogfooding machine no
-  longer fails the suite.
+Nothing yet — the next cycle's notes collect here.
 
-## [0.3.0] — 2026-06-22
+## [0.4.0] — 2026-11-22
 
-Phase 6: **provenance** — a pure taint model with the "lethal trifecta"
-(untrusted content → sensitive read → egress sink) wired into the decision loop
-as an escalation-only class floor — the **desktop Control Room** app, and a
-hardening pass from the review panels. Bundles everything since 0.2.1.
+Phase 7: **anchored trust** — a checkpointed, signed, externally verifiable log head, and
+proof-of-human approval over IPC — on top of Phase 6 **V1.1 provenance** (the taint model
+now watches what agents read *and* write) and the release hygiene that makes this
+version shippable. Bundles everything since 0.3.1.
 
 ### Security fixes
 - **The dependency advisory backlog is cleared, and the audit gate is strict
@@ -39,6 +27,15 @@ hardening pass from the review panels. Bundles everything since 0.2.1.
   remain listed as open Dependabot alerts: clearing them needs an upstream major
   bump that CI cannot build, and both are unreachable-API unsoundness
   advisories, so they stay visible rather than being silently dismissed.
+- **The audit log's storage engine no longer carries a known CVE.**
+  `rusqlite` 0.40.1 → 0.41.1 pulls `libsqlite3-sys` 0.38.1 → 0.39.1, whose
+  bundled SQLite 3.54.1 clears **RUSTSEC-2026-0459** (opening a database
+  beside a crafted sibling WAL file of differing page size could return
+  uninitialized page-cache memory; CVSS 4.0 Medium 6.8). The hash chain is
+  app-level SHA-256 and unaffected — verified by re-running the full chain,
+  corpus, daemon, and latency suites, which recompute every row hash under
+  the new engine.
+
 - **Here-doc bodies are redacted before they can reach the log.** A secret
   pasted through `bash <<EOF … AWS_SECRET_ACCESS_KEY=… EOF` used to land
   verbatim in the append-only (unscrubbable) event log — the gap the 0.2.1
@@ -72,6 +69,155 @@ hardening pass from the review panels. Bundles everything since 0.2.1.
   never pinned its op string, so a challenge minted for another op could
   authorise a shutdown and an unprovisioned daemon accepted any op with no proof
   at all — now pinned to `"shutdown"`.
+
+### Anchored trust (Phase 7)
+- **Public chain-head export (T1.1).** `EventLog::chain_head()` exposes the
+  logical head — `(latest_seq, head_hash)` — as a single atomic read through the
+  SQLite connection; `(0, GENESIS_HASH)` when the log is empty. This is the
+  primitive the upcoming `kintsugi anchor export` will checkpoint. The read is
+  deliberately never a hash of the database file: under WAL a recently committed
+  row can live only in the `-wal` sidecar, so the file bytes can lag (or entirely
+  miss) the logical head. Taint events remain deliberately outside the hash chain
+  and never move the head.
+- **Anchors table + no-fork guard (T1.2).** A new append-only `anchors` table
+  records exported chain-head checkpoints (`EventLog::record_anchor` /
+  `latest_anchor`, new `Anchor` type; the `sig` column exists but stays NULL until
+  checkpoint signing lands, so the schema does not churn twice). The C2SP
+  transparency-log invariant — never record a checkpoint inconsistent with one
+  previously recorded — is enforced with no exceptions: a lower seq or a
+  same-seq-different-head is refused with `LogError::Fork`; an identical
+  `(seq, head)` is idempotent. Purges rebuild the events chain, but the
+  `audit:purge` marker is appended above every seq ever used (AUTOINCREMENT never
+  renumbers or reuses), so an honest post-purge re-anchor always passes the guard
+  — continuity is never faked, and a lower seq can only mean a restored or
+  rewritten log, which is refused loudly. Existing databases migrate in place
+  (`CREATE TABLE IF NOT EXISTS`, the session-column-migration style), and anchor
+  code never touches the events table.
+- **Checkpoint signing (T1.3).** `kintsugi_core::anchor` signs the exported
+  checkpoint without adding any new secret at rest: the signing key is
+  derived per operation from the admin vault's (password, `auth_salt`, KDF
+  params) — the exact derivation the admin proof uses — and only the
+  verifying public key travels, as the checkpoint's `key_id` (hex), making
+  checkpoints self-certifying: anyone holding the vault file, or the
+  checkpoint itself, can verify. Signatures cover a new protocol-separation
+  label (`kintsugi.log.anchor.v1`, distinct from the admin proof's context),
+  so an anchor signature can never be replayed as a "password to stop" proof
+  and vice versa. The signed bytes are a tiny canonical JSON body
+  (RFC 8785-ordered keys, no whitespace, `seq` as a decimal string so no
+  IEEE-754 precision loss is possible), byte-for-byte pinned by test and
+  cross-checked against `serde_json` on hostile input. A changed `key_id`
+  means the vault was re-keyed; older checkpoints keep verifying under their
+  recorded `key_id` (the rotation story: a new anchor series, never a
+  break). A wrong password derives a different key, so a mistyped export can
+  never attribute an anchor to the real key — and the export path verifies
+  the password against the vault before recording (T1.4).
+- **Anchor export/verify/status (T1.4).** Users get the other half of the
+  guarantee: `kintsugi anchor export [--out FILE] [--origin ID] [--no-sign]
+  [--password-file FILE]` writes a signed checkpoint of the current chain head
+  and records it, and `kintsugi anchor verify [--checkpoint FILE]` checks the log
+  against it with five distinct verdicts and exit codes — `0` INTACT, `1` STALE,
+  `2` TAMPERED, `3` does-not-verify, `4` UNVERIFIABLE — so a script can tell a
+  normal append from a rewrite without parsing prose. Verification reads only the
+  log file (never the daemon) and makes no network call: the export holds the
+  receipt, the user decides where it lives. An export is refused outright (nothing
+  written, nothing exported) when its head falls behind the last recorded anchor;
+  an unprovisioned or unreadable vault yields an honestly UNSIGNED checkpoint
+  rather than a silently weaker one. A purge rechains, so the next anchor records
+  the new head with the `audit:purge` row preserving the why — `verify` reports
+  that honestly as TAMPERED (the anchored head is no longer at its seq) rather
+  than as a pass. `kintsugi status` grows `anchored: <ts> (N events ago)` once any
+  anchor exists. The signed-bytes fixed point is a whole-second RFC3339 timestamp,
+  so a recorded anchor row rebuilds exactly the bytes that were signed instead of
+  storing a second copy of the file. What this buys and what it does not is
+  documented in [`docs/anchoring.md`](docs/anchoring.md): evident tampering to
+  whoever holds a copy, never tamper-proofness, and no claim about a machine you
+  never verify on.
+
+### Provenance (Phase 6 V1.1)
+- **Payload fixtures pinned before the code (T1).** Every supported agent now has a checked-in pre-tool command, post-tool result, file-write and MCP frame, each with the agent, minimum version, source link and a `verified` / `provisional` flag in the fixtures README — so "we think Codex sends this shape" is a labelled state instead of an assumption, and the 0.2.1 deferred upstream-verification item is closed.
+- **Post-tool result observation (T2).** The hook layer now sees the moment an agent *reads* untrusted content: web fetches, search results, MCP resource reads. The taint label stays identifier-only (the URL or query, never the response bytes — spine #6) and Antigravity is parse-only by design, because its documented payload carries no result bytes. A session that reads malicious content is now tainted for its whole lifetime, not just the command that fetched it.
+- **File-write taint propagation (T3).** The other half of the boundary: a tainted session that writes a workspace file labels that path, so a later (clean) session reading it inherits the taint and its egress sink trips the trifecta. Paths resolve lexically against the session cwd and nothing outside the workspace is labelled; the classifier returns the path and nothing else, so written content never reaches the log. Two honest gaps, both in DECISIONS: OpenCode's V2 plugin payload has no session id, so V2 write taint is off until one is pinned on a live CLI, and Cursor's write-hook registration waits on the same live verification.
+- **MCP `run_command` ingest parity (T4).** An MCP command that is *allowed* now also records what it read: a permitted `curl`/fetch through `kintsugi-exec` taints the session exactly like the shell-hook path, so the trifecta guard cannot be side-stepped by driving the agent through MCP instead of the shell.
+- **Advisory dependency hint (T5).** When a command installs something, the gate adds an advisory line — escalation only, never a downgrade, and never a new block.
+- **TUI: provenance trail on Detail (Phase 6 V1.1).** Opening a held trifecta's
+  detail view now fetches the live trail from the daemon and renders it below the
+  event's own facts — the same grammar as `kintsugi provenance`: glyph + word per
+  step (`↓ untrusted read`, `• sensitive read`, `→ egress sink`, `⛔ rule fired`),
+  the tainted/clean state as words, the one danger accent reserved for the rule
+  that fired, `NO_COLOR` honored, and a designed empty state ("nothing to trace
+  for this session") for clean sessions. A down daemon degrades honestly: a
+  one-line notice, with the event itself still rendered from the log.
+
+### Release hygiene
+- **`kintsugi stop` fails loudly instead of silently succeeding.** With no
+  daemon running (and nothing else to stop) it printed "the daemon is not
+  running." and exited 0, so a scripted `kintsugi stop` reported success while
+  stopping nothing — and with a locked vault but no terminal it exited 0 over a
+  refused password gate. Every refused or nothing-to-stop path now explains on
+  stderr and exits non-zero: `no daemon is running — nothing to stop`,
+  `stop refused — nothing was stopped`, and the daemon-side wrong-password
+  refusal too. The paths that do real work keep their exit-0 success: a
+  running daemon → authenticated shutdown, and the backstop-watcher /
+  stale-PID cleanup. The stop tests are now hermetic against the host's real
+  vault (`KINTSUGI_VAULT` → absent), so a provisioned dogfooding machine no
+  longer fails the suite.
+
+- **CI runs the declared MSRV, not a floating stable.** All three CI jobs are
+  pinned to the workspace `rust-version` (1.96.0) so CI, local dev, and the
+  declared minimum all run the same compiler. The pin that previously failed
+  purely on toolchain drift (CI run #205: a `duplicated_attributes` lint newer
+  clippy emits and 1.96 does not) reproduces green, and the drift findings were
+  root-caused in code, not suppressed: one duplicated `#[allow]` and two dead
+  manifest entries (unused workspace dep `kintsugi-app`; unused direct dep
+  `anyhow` in `kintsugi-core`) were removed.
+- **CI now gates on `cargo audit`.** A failing RustSec advisory step reads
+  `Cargo.lock` on every run. Advisories confined to the opt-in
+  `llama`/`download` backends — compiled neither by CI nor by the release
+  binaries — are individually recorded in `.cargo/audit.toml` with that
+  scoping rationale; any NEW advisory anywhere fails the build until a
+  human decides. Unsound advisories (upstream code properties) print but
+  do not fail.
+
+- **Channel truthfulness (T0.3).** `plugin/aegis` → `plugin/kintsugi` so the marketplace manifest's `source: ./plugin/kintsugi` resolves; `install.sh` downloads from the real org (`kintsugi-tools/kintsugi`, derived from `git remote -v`); the README documents the artifacts `release.yml` actually produces (three per-OS tarballs + `SHA256SUMS`) instead of the cancelled `.dmg`/`.msi`/`.deb`/`.AppImage` installers, and says plainly that the desktop app is built locally; `Formula/kintsugi.rb` is tap-ready at v0.3.1 (publishing the tap stays a human step).
+
+## [0.3.1] — 2026-11-22
+
+The org move reaches every public surface — this project now lives at
+`kintsugi-tools/kintsugi` — plus the desktop/release fixes that accumulated
+since 0.3.0. No feature changes.
+
+### Changed
+- **Repository, homepage, and package metadata moved to the `kintsugi-tools`
+  org.** Repository and homepage URLs (now https://kintsugi.tools), the CLI's
+  `UPDATE_REPO` constant and its printed release/issues URLs, crate README
+  links, tap references, and the plugin manifests' contact email; the version
+  bump to 0.3.1 is what publishes the new metadata to the package index.
+- **The website moved out of this repo** (it now lives in
+  `kintsugi-tools/website`); the tree here is code + docs again.
+
+### Fixed
+- **The desktop release workflow was fixed for real runs:** the publish job no
+  longer trips `sha256sum` on per-target directories; Windows builds stop
+  dying on Defender locking a just-linked `.exe` (workspace excluded from
+  real-time scanning); Linux desktop builds install `libxdo-dev`; macOS-Intel
+  `.dmg`s are cross-built on the arm64 runner; the `.app` bundle is ad-hoc
+  signed, so a quarantined download prompts "unidentified developer" instead of
+  reading as "damaged"; and a duplicate `kintsugi-daemon` bin that broke Windows
+  release links (LNK1104) was dropped.
+- **Installer coherence:** `cargo install` and `install.sh` now target the
+  same bin dir — an existing install is updated in place, and a second copy in
+  another standard dir is flagged, so the two install methods never leave
+  shadowing suites on `PATH`.
+- **Desktop fixes:** the setup wizard's final step enables Kintsugi on all
+  detected agent CLIs; the unlock screen is skipped when no vault is
+  provisioned; `kintsugi uninstall` removes the desktop app too and resets the
+  admin password + settings (audit data kept).
+
+## [0.3.0] — 2026-06-22
+
+Phase 6: **provenance** — a pure taint model with the "lethal trifecta" (untrusted content → sensitive read → egress sink) wired into the decision loop as an escalation-only class floor — the **desktop Control Room** app, and a hardening pass from the review panels. Bundles everything since 0.2.1.
+
+### Security fixes
 - **Taint `source_id` is redacted before it can reach a log row or the model.**
   A provenance source identifier is meant to be an identifier only, but a URL is
   an identifier that can carry a credential (`https://u:tok@host/p`, a colonless
@@ -150,15 +296,6 @@ hardening pass from the review panels. Bundles everything since 0.2.1.
   rail lists only sessions where a trifecta rule actually fired — a clean session
   shows the calm empty state instead of one falsely labeled "carries a label".
 
-- **TUI: provenance trail on Detail (Phase 6 V1.1).** Opening a held trifecta's
-  detail view now fetches the live trail from the daemon and renders it below the
-  event's own facts — the same grammar as `kintsugi provenance`: glyph + word per
-  step (`↓ untrusted read`, `• sensitive read`, `→ egress sink`, `⛔ rule fired`),
-  the tainted/clean state as words, the one danger accent reserved for the rule
-  that fired, `NO_COLOR` honored, and a designed empty state ("nothing to trace
-  for this session") for clean sessions. A down daemon degrades honestly: a
-  one-line notice, with the event itself still rendered from the log.
-
 ### Desktop Control Room (new app)
 - **A native desktop app, all Rust, engine in-process (Dioxus-desktop).** The
   Control Room runs the engine in-process — same live log, no extra daemon. It
@@ -233,129 +370,6 @@ hardening pass from the review panels. Bundles everything since 0.2.1.
 - Coverage excludes CI-unexercisable desktop/teardown paths from the line floor
   (documented in the job, not silent), and a Unix-absolute-path observe test is
   gated `cfg(unix)` so Windows stays green.
-
-## [0.3.1] — 2026-11-22
-
-The org move reaches every public surface — this project now lives at
-`kintsugi-tools/kintsugi` — plus the desktop/release fixes that accumulated
-since 0.3.0. No feature changes.
-
-### Changed
-- **Repository, homepage, and package metadata moved to the `kintsugi-tools`
-  org.** Repository and homepage URLs (now https://kintsugi.tools), the CLI's
-  `UPDATE_REPO` constant and its printed release/issues URLs, crate README
-  links, tap references, and the plugin manifests' contact email; the version
-  bump to 0.3.1 is what publishes the new metadata to the package index.
-- **The website moved out of this repo** (it now lives in
-  `kintsugi-tools/website`); the tree here is code + docs again.
-
-### Fixed
-- **The desktop release workflow was fixed for real runs:** the publish job no
-  longer trips `sha256sum` on per-target directories; Windows builds stop
-  dying on Defender locking a just-linked `.exe` (workspace excluded from
-  real-time scanning); Linux desktop builds install `libxdo-dev`; macOS-Intel
-  `.dmg`s are cross-built on the arm64 runner; the `.app` bundle is ad-hoc
-  signed, so a quarantined download prompts "unidentified developer" instead of
-  reading as "damaged"; and a duplicate `kintsugi-daemon` bin that broke Windows
-  release links (LNK1104) was dropped.
-- **Installer coherence:** `cargo install` and `install.sh` now target the
-  same bin dir — an existing install is updated in place, and a second copy in
-  another standard dir is flagged, so the two install methods never leave
-  shadowing suites on `PATH`.
-- **Desktop fixes:** the setup wizard's final step enables Kintsugi on all
-  detected agent CLIs; the unlock screen is skipped when no vault is
-  provisioned; `kintsugi uninstall` removes the desktop app too and resets the
-  admin password + settings (audit data kept).
-
-### Security fixes (release hygiene)
-- **The audit log's storage engine no longer carries a known CVE.**
-  `rusqlite` 0.40.1 → 0.41.1 pulls `libsqlite3-sys` 0.38.1 → 0.39.1, whose
-  bundled SQLite 3.54.1 clears **RUSTSEC-2026-0459** (opening a database
-  beside a crafted sibling WAL file of differing page size could return
-  uninitialized page-cache memory; CVSS 4.0 Medium 6.8). The hash chain is
-  app-level SHA-256 and unaffected — verified by re-running the full chain,
-  corpus, daemon, and latency suites, which recompute every row hash under
-  the new engine.
-
-### Build & CI hygiene
-- **CI runs the declared MSRV, not a floating stable.** All three CI jobs are
-  pinned to the workspace `rust-version` (1.96.0) so CI, local dev, and the
-  declared minimum all run the same compiler. The pin that previously failed
-  purely on toolchain drift (CI run #205: a `duplicated_attributes` lint newer
-  clippy emits and 1.96 does not) reproduces green, and the drift findings were
-  root-caused in code, not suppressed: one duplicated `#[allow]` and two dead
-  manifest entries (unused workspace dep `kintsugi-app`; unused direct dep
-  `anyhow` in `kintsugi-core`) were removed.
-- **CI now gates on `cargo audit`.** A failing RustSec advisory step reads
-  `Cargo.lock` on every run. Advisories confined to the opt-in
-  `llama`/`download` backends — compiled neither by CI nor by the release
-  binaries — are individually recorded in `.cargo/audit.toml` with that
-  scoping rationale; any NEW advisory anywhere fails the build until a
-  human decides. Unsound advisories (upstream code properties) print but
-  do not fail.
-
-### Anchored trust (Phase 7)
-- **Public chain-head export (T1.1).** `EventLog::chain_head()` exposes the
-  logical head — `(latest_seq, head_hash)` — as a single atomic read through the
-  SQLite connection; `(0, GENESIS_HASH)` when the log is empty. This is the
-  primitive the upcoming `kintsugi anchor export` will checkpoint. The read is
-  deliberately never a hash of the database file: under WAL a recently committed
-  row can live only in the `-wal` sidecar, so the file bytes can lag (or entirely
-  miss) the logical head. Taint events remain deliberately outside the hash chain
-  and never move the head.
-- **Anchors table + no-fork guard (T1.2).** A new append-only `anchors` table
-  records exported chain-head checkpoints (`EventLog::record_anchor` /
-  `latest_anchor`, new `Anchor` type; the `sig` column exists but stays NULL until
-  checkpoint signing lands, so the schema does not churn twice). The C2SP
-  transparency-log invariant — never record a checkpoint inconsistent with one
-  previously recorded — is enforced with no exceptions: a lower seq or a
-  same-seq-different-head is refused with `LogError::Fork`; an identical
-  `(seq, head)` is idempotent. Purges rebuild the events chain, but the
-  `audit:purge` marker is appended above every seq ever used (AUTOINCREMENT never
-  renumbers or reuses), so an honest post-purge re-anchor always passes the guard
-  — continuity is never faked, and a lower seq can only mean a restored or
-  rewritten log, which is refused loudly. Existing databases migrate in place
-  (`CREATE TABLE IF NOT EXISTS`, the session-column-migration style), and anchor
-  code never touches the events table.
-- **Checkpoint signing (T1.3).** `kintsugi_core::anchor` signs the exported
-  checkpoint without adding any new secret at rest: the signing key is
-  derived per operation from the admin vault's (password, `auth_salt`, KDF
-  params) — the exact derivation the admin proof uses — and only the
-  verifying public key travels, as the checkpoint's `key_id` (hex), making
-  checkpoints self-certifying: anyone holding the vault file, or the
-  checkpoint itself, can verify. Signatures cover a new protocol-separation
-  label (`kintsugi.log.anchor.v1`, distinct from the admin proof's context),
-  so an anchor signature can never be replayed as a "password to stop" proof
-  and vice versa. The signed bytes are a tiny canonical JSON body
-  (RFC 8785-ordered keys, no whitespace, `seq` as a decimal string so no
-  IEEE-754 precision loss is possible), byte-for-byte pinned by test and
-  cross-checked against `serde_json` on hostile input. A changed `key_id`
-  means the vault was re-keyed; older checkpoints keep verifying under their
-  recorded `key_id` (the rotation story: a new anchor series, never a
-  break). A wrong password derives a different key, so a mistyped export can
-  never attribute an anchor to the real key — and the export path verifies
-  the password against the vault before recording (T1.4).
-- **Anchor export/verify/status (T1.4).** Users get the other half of the
-  guarantee: `kintsugi anchor export [--out FILE] [--origin ID] [--no-sign]
-  [--password-file FILE]` writes a signed checkpoint of the current chain head
-  and records it, and `kintsugi anchor verify [--checkpoint FILE]` checks the log
-  against it with five distinct verdicts and exit codes — `0` INTACT, `1` STALE,
-  `2` TAMPERED, `3` does-not-verify, `4` UNVERIFIABLE — so a script can tell a
-  normal append from a rewrite without parsing prose. Verification reads only the
-  log file (never the daemon) and makes no network call: the export holds the
-  receipt, the user decides where it lives. An export is refused outright (nothing
-  written, nothing exported) when its head falls behind the last recorded anchor;
-  an unprovisioned or unreadable vault yields an honestly UNSIGNED checkpoint
-  rather than a silently weaker one. A purge rechains, so the next anchor records
-  the new head with the `audit:purge` row preserving the why — `verify` reports
-  that honestly as TAMPERED (the anchored head is no longer at its seq) rather
-  than as a pass. `kintsugi status` grows `anchored: <ts> (N events ago)` once any
-  anchor exists. The signed-bytes fixed point is a whole-second RFC3339 timestamp,
-  so a recorded anchor row rebuilds exactly the bytes that were signed instead of
-  storing a second copy of the file. What this buys and what it does not is
-  documented in [`docs/anchoring.md`](docs/anchoring.md): evident tampering to
-  whoever holds a copy, never tamper-proofness, and no claim about a machine you
-  never verify on.
 
 ## [0.2.1] — 2026-06-17
 
@@ -877,7 +891,6 @@ enforce-shell, the TUI overhaul, and the real-world update/backstop fixes).
   - Size/speed: release profile now `opt-level=s`, `lto=fat`, `strip`,
     `panic=abort` (panic hooks still run, TUI teardown safe) — ~30-50% smaller
     binaries. Hot-path cleanups in the classifier.
-
 
 ### Added
 - **P0.1** — Cargo workspace scaffold with six crates (`kintsugi-core`,
