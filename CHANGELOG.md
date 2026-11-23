@@ -27,6 +27,18 @@ as an escalation-only class floor — the **desktop Control Room** app, and a
 hardening pass from the review panels. Bundles everything since 0.2.1.
 
 ### Security fixes
+- **The dependency advisory backlog is cleared, and the audit gate is strict
+  again.** `cargo audit`'s 15-entry ignore list (the opt-in `llama`/`download`
+  quinn/rustls stack) is empty: those advisories were patched away rather than
+  scoped — quinn-proto 0.11.19, quinn-udp 0.5.16, rustls 0.23.46,
+  rustls-webpki 0.103.17, webpki-root-certs 1.0.12, url 2.5.9 — and the four
+  long-standing "unsound" warnings (tokio, rustix, anyhow, lru) went with them
+  (tokio 1.54.1, rustix 1.1.6, anyhow 1.0.104, lru 0.18.5). Any new advisory
+  anywhere in the lockfile now fails CI until a human decides. Two desktop-only
+  pins (rand 0.7 via wry/dioxus-desktop, glib 0.18 via tray-icon/libappindicator)
+  remain listed as open Dependabot alerts: clearing them needs an upstream major
+  bump that CI cannot build, and both are unreachable-API unsoundness
+  advisories, so they stay visible rather than being silently dismissed.
 - **Here-doc bodies are redacted before they can reach the log.** A secret
   pasted through `bash <<EOF … AWS_SECRET_ACCESS_KEY=… EOF` used to land
   verbatim in the append-only (unscrubbable) event log — the gap the 0.2.1

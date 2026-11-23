@@ -868,3 +868,26 @@ the locked product decisions this build implements.
   single and one-shot, so an approve challenge supersedes an unconsumed shutdown
   challenge (and vice versa), and the op-binding check then rejects any proof
   minted for the overwritten op — superseding can never transfer authority.
+
+- Security-gate hygiene (v0.4.0): advisories are cleared by PATCHING, not by
+  scoping. The 15-entry ignore list in `.cargo/audit.toml` is gone — quinn-proto
+  0.11.19, quinn-udp 0.5.16, rustls 0.23.46, rustls-webpki 0.103.17,
+  webpki-root-certs 1.0.12 and url 2.5.9 cleared every download-stack advisory,
+  and the same pass cleared the four standing "unsound" warnings (tokio 1.54.1,
+  rustix 1.1.6, anyhow 1.0.104, lru 0.18.5). `cargo audit` now passes with an
+  EMPTY ignore list, so the gate is load-bearing again instead of documenting a
+  backlog: any new advisory anywhere in the lockfile fails CI until a human
+  decides. Two Dependabot alerts are deliberately left open rather than forced:
+  rand 0.7.x (pinned transitively by phf_codegen -> selectors -> kuchikiki ->
+  wry 0.45 -> dioxus-desktop) and glib 0.18.x (pinned by libappindicator 0.9 ->
+  tray-icon 0.19), both in the non-CI desktop tree and both "unsound API"
+  advisories whose affected constructors this app never calls; clearing them
+  needs a wry/dioxus/tray-icon major bump that cannot be verified on CI, so they
+  stay visible until that bump is done deliberately. Separately, CodeQL's
+  `rust/hard-coded-cryptographic-value` findings are dismissed as "used in
+  tests": all 46 are literals passed to crypto APIs inside `#[cfg(test)]`
+  modules (admin.rs, anchor.rs, tui/app.rs) — fixture passwords, not secrets.
+  The alternative, deriving each fixture password at runtime so the dataflow
+  query stops matching, would obscure readable tests to satisfy a detector that
+  is working as designed; the dismissal reason is the honest classification and
+  is visible in the Security tab.

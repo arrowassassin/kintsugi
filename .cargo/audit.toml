@@ -4,33 +4,21 @@
 # combination — including kintsugi-model's opt-in `llama`/`download` backends
 # whose reqwest/quinn/rustls stack is never compiled by CI (see the lint-job
 # comment in ci.yml) and never shipped in the release binaries (release.yml
-# builds default-feature `--bins` only). The advisories below are real for
-# anyone who compiles those backends; they are recorded here, not dismissed.
+# builds default-feature `--bins` only). The lockfile is still a shipped
+# artifact of the repo, so advisories in it are fixed, not waved through.
 #
-# The gate FAILS on anything not listed: a new advisory anywhere in the
-# lockfile — including a *new* advisory in the download stack — breaks CI
-# until a human decides. Removing an entry requires fixing or scoping the
-# underlying crate, never silently.
+# The gate FAILS on any advisory: a new one anywhere in the lockfile — including
+# one in the download stack — breaks CI until a human decides. Adding an entry
+# to `ignore` is a last resort that requires a written reason here; it is never
+# silent.
+#
+# HISTORY: this list used to hold 15 entries for the quinn-proto / quinn-udp /
+# rustls / rustls-webpki / webpki-root-certs / url stack, each kept as "real for
+# whoever compiles those backends". They were cleared by patching the stack
+# rather than by scoping it: quinn-proto 0.11.19, quinn-udp 0.5.16, rustls
+# 0.23.46, rustls-webpki 0.103.17, webpki-root-certs 1.0.12, url 2.5.9. The same
+# pass cleared the four long-standing "unsound" warnings (tokio 1.54.1, rustix
+# 1.1.6, anyhow 1.0.104, lru 0.18.5), so the audit now reports zero
+# vulnerabilities and zero warnings with an EMPTY ignore list.
 [advisories]
-ignore = [
-    # quinn-proto 0.11.14 — QUIC protocol engine (reqwest/quinn, `download` feature only)
-    "RUSTSEC-2026-0185",
-    "RUSTSEC-2026-0338",
-    "RUSTSEC-2026-0339",
-    "RUSTSEC-2026-0340",
-    "RUSTSEC-2026-0342",
-    "RUSTSEC-2026-0523",
-    "RUSTSEC-2026-0524",
-    # quinn-udp 0.5.14 — QUIC UDP socket layer (same stack)
-    "RUSTSEC-2026-0538",
-    # rustls 0.23.40 — TLS (same stack)
-    "RUSTSEC-2026-0285",
-    "RUSTSEC-2026-0346",
-    "RUSTSEC-2026-0348",
-    "RUSTSEC-2026-0349",
-    # rustls-webpki 0.103.13 / webpki-root-certs 1.0.7 (same stack)
-    "RUSTSEC-2026-0382",
-    "RUSTSEC-2026-0383",
-    # url 2.5.8 (same stack)
-    "RUSTSEC-2026-0592",
-]
+ignore = []
