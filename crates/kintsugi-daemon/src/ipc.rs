@@ -284,9 +284,17 @@ fn round_trip_within(req: &Request, timeout: Option<std::time::Duration>) -> Res
     let name = make_name()?;
     let mut stream =
         Stream::connect(name).context("connect to kintsugi daemon (is it running?)")?;
+    // Unix only: a named-pipe stream on Windows does not honour a read timeout
+    // (setting one either errors or defeats the read), and propagating that turned a
+    // convenience bound into a hard failure for every Windows caller. The bound
+    // exists so the TUI's event loop cannot wedge on a wedged daemon — never as a
+    // security control — so Windows keeps the previous unbounded read.
+    #[cfg(unix)]
     if let Some(t) = timeout {
         stream.set_recv_timeout(Some(t))?;
     }
+    #[cfg(not(unix))]
+    let _ = timeout;
     write_message(&mut stream, req)?;
     let mut reader = bounded(&mut stream);
     read_message(&mut reader)
