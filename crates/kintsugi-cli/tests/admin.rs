@@ -186,11 +186,20 @@ fn degraded_vault_refuses_stop() {
     );
     assert!(combined.contains("degraded"), "must refuse: {combined}");
     assert!(!combined.contains("stopped the daemon"));
+    // A refused stop is a failure, not a silent success: exit non-zero.
+    assert!(
+        !out.status.success(),
+        "refused stop must exit non-zero: {combined}"
+    );
 }
 
 #[test]
 fn unprovisioned_stop_is_not_gated() {
-    // No vault → stop proceeds normally (here: reports the daemon isn't running).
+    // No vault → the gate lets stop proceed (no password prompt). Here there is
+    // also no daemon, so stop proceeds to... nothing, and reports that loudly
+    // (stderr + non-zero) instead of pretending the no-op succeeded. The
+    // distinction from the degraded case above: no "degraded" refusal — the
+    // gate simply isn't in the way.
     let dir = tempfile::tempdir().unwrap();
     let vault = dir.path().join("absent.json");
     let out = kintsugi()
@@ -199,6 +208,12 @@ fn unprovisioned_stop_is_not_gated() {
         .env("KINTSUGI_DB", dir.path().join("e.db"))
         .output()
         .unwrap();
-    assert!(out.status.success());
-    assert!(String::from_utf8_lossy(&out.stdout).contains("not running"));
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!out.status.success());
+    assert!(combined.contains("no daemon is running"));
+    assert!(!combined.contains("degraded"));
 }

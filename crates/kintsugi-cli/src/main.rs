@@ -1909,23 +1909,33 @@ pub(crate) fn cmd_stop() -> Result<()> {
     // honor the local gate (fail-closed on a degraded vault) and clean up a stale
     // PID. A still-alive-but-socket-dead process is the only case we kill by PID.
     if !admin_cmd::allow_stop() {
-        return Ok(());
+        // The gate already printed its reason (degraded vault, no terminal for
+        // the password, or a wrong password). Refusing must not read as success:
+        // a stop that stopped nothing fails loudly, never exit 0.
+        anyhow::bail!("stop refused — nothing was stopped");
     }
+    let mut stopped = false;
     if let Some(root) = watcher::stop() {
         println!("kintsugi: stopped the backstop watcher ({root}).");
+        stopped = true;
     }
     let pid_path = kintsugi_daemon::pid_file_path();
     let pid = std::fs::read_to_string(&pid_path)
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
-    match pid {
-        Some(pid) => {
-            kill_pid(&pid);
-            let _ = std::fs::remove_file(&pid_path);
-            println!("kintsugi: stopped the daemon (pid {pid}).");
-        }
-        None => println!("kintsugi: the daemon is not running."),
+    if let Some(pid) = pid {
+        kill_pid(&pid);
+        let _ = std::fs::remove_file(&pid_path);
+        println!("kintsugi: stopped the daemon (pid {pid}).");
+        stopped = true;
+    }
+    if !stopped {
+        // Nothing was running and nothing was stopped. The old behavior printed
+        // "the daemon is not running." and exited 0 — silent success that hid
+        // both a no-op and (without a TTY) a refused password gate from any
+        // script calling `kintsugi stop`. Say it on stderr and fail.
+        anyhow::bail!("no daemon is running — nothing to stop");
     }
     Ok(())
 }
@@ -1962,13 +1972,14 @@ fn stop_via_daemon() -> Result<()> {
                 println!("kintsugi: stopped the backstop watcher ({root}).");
             }
             println!("kintsugi: stopped the daemon.");
+            Ok(())
         }
         Err(e) => {
-            // Wrong password / degraded vault: refuse, don't fall back to a kill.
-            eprintln!("kintsugi: not stopping — {e}");
+            // Wrong password / degraded vault: refuse, don't fall back to a kill —
+            // and don't exit 0 either: a refused stop is a failure, not a no-op.
+            anyhow::bail!("not stopping — {e}");
         }
     }
-    Ok(())
 }
 
 /// The GitHub repo + installer URL. The installer is the single source of

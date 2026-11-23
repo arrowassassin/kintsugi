@@ -223,6 +223,9 @@ fn stop_kills_the_backstop_watcher() {
         .env("KINTSUGI_DATA_DIR", tmp.path())
         .env("KINTSUGI_DB", tmp.path().join("events.db"))
         .env("KINTSUGI_SOCKET", tmp.path().join("none.sock"))
+        // Vault → absent so the test is hermetic against the host's real vault
+        // (a provisioned machine must not turn this into a password prompt).
+        .env("KINTSUGI_VAULT", tmp.path().join("absent-vault.json"))
         .env("NO_COLOR", "1")
         .output()
         .unwrap();
@@ -235,6 +238,36 @@ fn stop_kills_the_backstop_watcher() {
     );
     // Reap the (now-terminated) stand-in process.
     let _ = child.wait();
+}
+
+#[test]
+fn stop_without_a_daemon_fails_loudly() {
+    let tmp = tempfile::tempdir().unwrap();
+    // Hermetic: socket → nothing, vault → absent (never the host's real vault),
+    // data dir → no watcher and no pid file. Nothing to stop, with or without a
+    // TTY, so this is also the scripted/non-interactive case.
+    let out = kintsugi()
+        .arg("stop")
+        .env("KINTSUGI_DATA_DIR", tmp.path())
+        .env("KINTSUGI_DB", tmp.path().join("events.db"))
+        .env("KINTSUGI_SOCKET", tmp.path().join("none.sock"))
+        .env("KINTSUGI_VAULT", tmp.path().join("absent-vault.json"))
+        .env("NO_COLOR", "1")
+        .output()
+        .unwrap();
+    // Silent success is the bug: with no daemon to stop, `stop` must say so on
+    // stderr and exit NON-ZERO, not report "success" while stopping nothing.
+    assert!(
+        !out.status.success(),
+        "stop without a daemon must exit non-zero\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("no daemon is running"),
+        "stderr should explain: {err}"
+    );
 }
 
 #[test]

@@ -234,8 +234,20 @@ fn stop_when_not_running_reports_it() {
         .arg("stop")
         .env("KINTSUGI_DB", tmp.path().join("e.db"))
         .env("KINTSUGI_SOCKET", tmp.path().join("none.sock"))
+        // Vault → absent so the test is hermetic against the host's real vault
+        // (a provisioned machine must not turn this into a password prompt).
+        .env("KINTSUGI_VAULT", tmp.path().join("absent-vault.json"))
         .output()
         .unwrap();
-    assert!(out.status.success());
-    assert!(String::from_utf8_lossy(&out.stdout).contains("not running"));
+    // No daemon, no watcher, no pid file: stop must FAIL LOUDLY (stderr +
+    // non-zero) rather than report silent success over a no-op.
+    assert!(
+        !out.status.success(),
+        "stop with nothing running must exit non-zero"
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("no daemon is running"),
+        "stderr should explain: {err}"
+    );
 }
