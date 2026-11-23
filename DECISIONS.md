@@ -628,3 +628,25 @@ the locked product decisions this build implements.
   which CI/headless can't build — same honest "not-CI-compiled" posture as the
   llama backend. GPUI was considered and declined: immature, macOS-first, and a
   weaker cross-platform story than the hard mac/Linux/Windows requirement allows.
+- T4.1 (here-doc redaction backstop, closing the 0.2.1 deferral):
+  `redact_command` gained a heredoc pre-pass — a single forward line scan that
+  segments bodies (`<<DELIM`, `<<-DELIM`, quoted delimiters, `<<<` here-strings)
+  before the tokenizer runs, then redacts each body LINE through the existing
+  passes (no new detection logic). Per-line because a here-doc fed to a shell
+  is a script: the program-gated passes fire with the body line's own program,
+  and an unbalanced quote can only swallow its own line, never the rest of
+  the body; the separated-flag linkage carries across body lines so the pass
+  is never weaker than the old whole-line behavior. The operator + delimiter
+  are carved as verbatim glue (a `mysql -p <<EOF` here-line no longer eats
+  its operator as the password value), an unterminated body takes the rest of
+  the input and the walk finishes (structurally terminating — the cursor only
+  moves forward), and heredoc-free input keeps the pre-heredoc path
+  byte-for-byte (fast path on no `<<`, plus a fallback for `<<`-text that
+  forms no heredoc). Honest residual: an unquoted secret value whose own text
+  contains a `<<` (e.g. `postgres://u:pa<<ss@h`) splits across the carve — the
+  prefix shape still redacts, but the old whole-token catch was incidental;
+  body lines are never op-scanned, so a secret inside a body is never split.
+  MARKER is unchanged and still frozen into the row hash;
+  the user still sees the raw command at warn time — only the stored row is
+  redacted. Classification's here-operator neutralization (parse.rs, DoS
+  prophylaxis) is untouched and independent.
