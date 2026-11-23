@@ -47,6 +47,16 @@ pub enum Request {
         path: String,
         cwd: PathBuf,
     },
+    /// "An agent session read this file." The consumer half of the write
+    /// propagation: if an earlier tainted session labelled `path`, the reader now
+    /// inherits that taint (and its later egress sink trips the trifecta).
+    /// `path` is an identifier — the file content never leaves the agent, and this
+    /// never blocks, never enqueues, and never touches a command verdict.
+    ReadObserved {
+        session: String,
+        path: String,
+        cwd: PathBuf,
+    },
     /// "Show me the provenance trail for this command" (P6.4). A read-only query for
     /// the CLI/TUI: the daemon returns the session's untrusted reads plus this
     /// command's sensitive-read → egress-sink → rule chain. Identifiers only.
@@ -263,9 +273,20 @@ fn expect_ack(resp: Response) -> Result<()> {
 
 /// Send a request and read the response on a fresh connection.
 fn round_trip(req: &Request) -> Result<Response> {
+    round_trip_within(req, None)
+}
+
+/// The same round-trip with an optional read deadline. A daemon that is alive but
+/// busy (the serve loop is single-threaded) would otherwise block the caller
+/// indefinitely — which, for the TUI, means freezing its event loop on the primary
+/// navigation key.
+fn round_trip_within(req: &Request, timeout: Option<std::time::Duration>) -> Result<Response> {
     let name = make_name()?;
     let mut stream =
         Stream::connect(name).context("connect to kintsugi daemon (is it running?)")?;
+    if let Some(t) = timeout {
+        stream.set_recv_timeout(Some(t))?;
+    }
     write_message(&mut stream, req)?;
     let mut reader = bounded(&mut stream);
     read_message(&mut reader)
@@ -308,9 +329,27 @@ impl Client {
         })?)
     }
 
+    /// Report a file read by an agent session (provenance read propagation).
+    pub fn read_observed(session: &str, path: &str, cwd: &std::path::Path) -> Result<()> {
+        expect_ack(round_trip(&Request::ReadObserved {
+            session: session.to_string(),
+            path: path.to_string(),
+            cwd: cwd.to_path_buf(),
+        })?)
+    }
+
     /// Fetch the provenance trail for a command: `(tainted, trail)`.
+    ///
+    /// Bounded: this is the call the TUI makes when you open a Detail view, and an
+    /// unbounded wait there freezes the whole interface for as long as the daemon
+    /// takes. Two seconds is generous for a single SQLite read; past that the caller
+    /// gets an error it can render honestly instead of a hung window.
     pub fn provenance(cmd: &ProposedCommand) -> Result<(bool, Vec<kintsugi_core::ProvStep>)> {
-        match round_trip(&Request::Provenance(cmd.clone()))? {
+        let resp = round_trip_within(
+            &Request::Provenance(cmd.clone()),
+            Some(std::time::Duration::from_secs(2)),
+        )?;
+        match resp {
             Response::Provenance { tainted, trail } => Ok((tainted, trail)),
             Response::Error { message } => anyhow::bail!("daemon error: {message}"),
             _ => anyhow::bail!("unexpected response to Provenance"),

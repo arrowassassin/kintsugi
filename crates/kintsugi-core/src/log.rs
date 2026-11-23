@@ -950,6 +950,35 @@ impl EventLog {
         Ok(removed)
     }
 
+    /// Append an audit-only marker row (`audit:*` reason) for an operation that
+    /// is not a command decision — today: a vault being provisioned.
+    ///
+    /// The marker is what makes "was this machine ever provisioned?" answerable
+    /// from the append-only log instead of from one deletable file: delete the
+    /// vault and the daemon sees the marker and reports a *degraded* vault rather
+    /// than falling back to unprovisioned bare approval.
+    pub fn record_audit_marker(&self, command: &str, reason: &str) -> Result<(), LogError> {
+        let marker = ProposedCommand::new(
+            "kintsugi",
+            std::path::PathBuf::from("."),
+            vec![command.to_string()],
+            command.to_string(),
+        );
+        let verdict = Verdict::rules(Class::Safe, Decision::Allow, reason);
+        self.log_event(&marker, &verdict, None)?;
+        Ok(())
+    }
+
+    /// Whether this log records a vault provision (`audit:provision`). The latch
+    /// behind [`VaultState::Degraded`]: a provisioned machine whose vault file is
+    /// missing must not degrade to bare approval.
+    pub fn has_provision_marker(&self) -> Result<bool, LogError> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT 1 FROM events WHERE reason = ?1 LIMIT 1")?;
+        Ok(stmt.exists(["audit:provision"])?)
+    }
+
     /// Recompute prev_hash/hash for every surviving row in seq order so the chain
     /// is valid again after a purge. Caller holds the write transaction.
     fn rechain(&self) -> Result<(), LogError> {
@@ -1116,15 +1145,24 @@ impl EventLog {
         let decision = (|| -> Result<Anchor, LogError> {
             if let Some(prev) = self.latest_anchor()? {
                 if prev.seq == seq && prev.head == head {
-                    return Ok(prev); // Idempotent: the checkpoint is already on record.
-                }
-                if prev.seq == seq {
+                    // Idempotent — *unless* this checkpoint carries something the
+                    // recorded row does not: a signature over the same head. The
+                    // common upgrade is export-unsigned → provision a vault →
+                    // re-export; returning the old row would leave the log holding
+                    // an unsigned anchor while the user holds a signed file, and
+                    // `anchor verify` with no `--checkpoint` would then report
+                    // UNVERIFIABLE right after an export claimed to sign and record.
+                    // Appending is allowed here (same seq, same head) and keeps the
+                    // series append-only: the newer signed row becomes the latest.
+                    if checkpoint.sig.is_none() || prev.sig == checkpoint.sig {
+                        return Ok(prev);
+                    }
+                } else if prev.seq == seq {
                     return Err(LogError::Fork(format!(
                         "seq {seq} was already anchored with head {}",
                         short(&prev.head)
                     )));
-                }
-                if seq < prev.seq {
+                } else if seq < prev.seq {
                     return Err(LogError::Fork(format!(
                         "seq {seq} is below the last recorded anchor seq {} — \
                          the events table no longer extends the anchor series \

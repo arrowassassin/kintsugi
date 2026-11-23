@@ -648,12 +648,16 @@ the locked product decisions this build implements.
   corpus, daemon incl. latency: 556 passed, 0 failed; the chain hash is
   app-level SHA-256 and unaffected. CI gains a failing `cargo audit` job
   (taiki-e/install-action; scoping in `.cargo/audit.toml`): the 15
-  pre-existing advisories all ride the opt-in `llama`/`download`
+  pre-existing advisories all rode the opt-in `llama`/`download`
   reqwest/quinn/rustls stack — compiled neither by CI nor shipped by
-  release builds — and are individually recorded there, not dismissed;
-  anything new fails loudly. The 4 unsound warnings (anyhow/lru/rustix/
-  tokio) print non-fatally and ride the next deliberate bump. New CI step
-  dependency flagged for human sign-off in the PR.
+  release builds. **Superseded within the same release:** those entries were
+  patched away rather than scoped, and `.cargo/audit.toml` now carries an EMPTY
+  ignore list (quinn-proto 0.11.19, quinn-udp 0.5.16, rustls 0.23.46,
+  rustls-webpki 0.103.17, webpki-root-certs 1.0.12, url 2.5.9), as did the four
+  standing "unsound" warnings (tokio 1.54.1, rustix 1.1.6, anyhow 1.0.104, lru
+  0.18.5). `cargo audit` is now silent on a clean lockfile, so any advisory is a
+  NEW one and fails the build until a human decides. New CI step dependency
+  flagged for human sign-off in the PR.
 - Channel truthfulness (T0.3): `plugin/aegis` renamed to `plugin/kintsugi` so the
   marketplace manifest's `source: ./plugin/kintsugi` resolves — the manifest was
   already truthful, the directory was not. `install.sh` now downloads from the
@@ -901,3 +905,41 @@ the locked product decisions this build implements.
   subcommand-gated tools match the verb at position 0 only, because a value-taking
   flag's VALUE could impersonate a safe verb (`kubectl -n get delete …`) — that
   hole is test-pinned closed. Catastrophic floor untouched.
+- Post-review hardening of 0.4.0 (both halves of the code review, all four
+  criticals): (1) `[security] require_approval_proof` and `[provenance] enabled`
+  are now asymmetric across scopes — a repo-level `.kintsugi.toml` may REQUIRE a
+  guardrail but never waive it, because that file lives in the workspace an agent
+  writes; only the user-owned global config can opt out, and a bare approval
+  accepted under an opt-out still writes an `admin approve:<id>` row with reason
+  `policy-opt-out`. A repo-only `false` used to re-enable silent self-approval of
+  a held catastrophic command. (2) `anchor verify` now PINS: it loads this
+  machine's vault and refuses (exit 3) a checkpoint whose `key_id` is not the
+  vault's stored public key, so a rewritten log re-signed with an attacker's own
+  key can no longer read INTACT. With no vault it says the signature is
+  self-consistent but unpinned instead of implying authenticity. (3) The
+  file-write taint now has its reader half: `ReadObserved` → `apply_read` →
+  `is_path_tainted` → `ReadFile`, so a later session reading a tainted path is
+  actually tainted; before this, `TaintEvent::ReadFile` existed only in tests and
+  the feature could not fire. (4) The generated OpenCode plugin forwards
+  `session_id: input.sessionID` on the shell payload — without it no OpenCode
+  command could ever be observed against a tainted session, which silently
+  disabled write propagation and the 0.3.0 fetch-act taint for the only agent the
+  plugin wires. Supporting fixes in the same pass: the brute-force throttle now
+  counts only PROOF attempts (a bare request cannot guess, and counting it let any
+  local peer lock the human out of approve AND shutdown); a provisioned machine
+  whose vault file disappears reads as Degraded, not Unprovisioned (an
+  `audit:provision` marker in the append-only log is the latch, since the vault is
+  one deletable file); re-anchoring the same head with a fresh signature appends
+  the signed row instead of silently keeping the old unsigned one; `--event write`
+  falls through to the gate when the payload is shell-shaped; `record_admin`
+  sanitizes the caller-supplied op before it reaches the never-deletable log; the
+  Antigravity gate accepts both `arguments` and `args`; `kintsugi init` wires
+  Claude's `PostToolUse` surface (it was plugin-only, so the default install got
+  no post-tool observation while the changelog said it did); the TUI's trail fetch
+  is bounded at 2 s and says so; and checkpoint parsing rejects duplicate fields
+  and oversized files. Residual, deliberately not forced: a secret used as the
+  here-doc DELIMITER word is stored verbatim (the operator+delimiter are structural
+  glue; splitting them mangled quoted delimiters — contrived, and the body text is
+  still redacted), and `rand 0.7`/`glib 0.18` remain open Dependabot alerts pinned
+  by `wry`/`dioxus-desktop` and `tray-icon`/`libappindicator` (unreachable-API
+  unsoundness advisories in a tree CI cannot build).

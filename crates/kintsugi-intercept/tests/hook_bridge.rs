@@ -36,7 +36,13 @@ struct Harness {
 }
 
 fn start(requests: usize) -> Harness {
-    let guard = serial_lock();
+    start_after_lock(requests, serial_lock())
+}
+
+/// The body of [`start`], with the serial lock already held. Lets a test set
+/// process-global env (the policy override) *inside* the critical section — a
+/// `set_var` outside it can be observed by a test already running.
+fn start_after_lock(requests: usize, guard: std::sync::MutexGuard<'static, ()>) -> Harness {
     let tmp = tempfile::tempdir().unwrap();
     std::env::set_var("KINTSUGI_SOCKET", tmp.path().join("kintsugi.sock"));
     std::env::set_var("KINTSUGI_DB", tmp.path().join("events.db"));
@@ -548,7 +554,7 @@ fn a_tainted_session_write_taints_the_path_for_a_later_reader() {
     // The full moat chain for file writes: taint enters a session → the session
     // writes a file → a LATER reader of that file inherits the taint → its sink
     // command is the lethal trifecta. Requests: ingest + write observation.
-    let mut h = start(2);
+    let mut h = start(3); // ingest + write observation + read observation
     let repo = pinned_repo(&h, true);
     let notes = repo.join("src").join("notes.rs");
 
@@ -572,8 +578,6 @@ fn a_tainted_session_write_taints_the_path_for_a_later_reader() {
         "a write observation never blocks"
     );
 
-    h.join();
-
     // The path propagated into the durable taint stream — identifiers only.
     let log = EventLog::open(&h.db).unwrap();
     let events = log.load_taint_events().unwrap();
@@ -587,19 +591,40 @@ fn a_tainted_session_write_taints_the_path_for_a_later_reader() {
         "write content must never reach the taint stream"
     );
 
-    // 3) Cold-start replay + a later READ of the path re-taints another session.
+    // 3) A LATER session READS the path — through the production read-observation
+    //    route, not by calling the taint API directly: the post-tool Read event
+    //    walks `ReadObserved` → `apply_read` → `is_path_tainted` → `ReadFile`.
+    let read = serde_json::json!({
+        "session_id": "ses_reader",
+        "cwd": repo.to_string_lossy(),
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Read",
+        "tool_input": { "file_path": notes.to_string_lossy() },
+        "tool_response": { "content": "fn main() {}" }
+    })
+    .to_string();
+    assert_eq!(
+        handle(&read),
+        HookOutcome::silent(),
+        "a read observation never blocks"
+    );
+
+    h.join();
+
+    // The reader-side transition is in the durable stream, keyed on the same path.
+    let log2 = EventLog::open(&h.db).unwrap();
+    assert!(
+        log2.load_taint_events().unwrap().into_iter().any(
+            |e| matches!(e, TaintEvent::ReadFile { ref session, ref path }
+                              if session == "ses_reader" && path == &notes)
+        ),
+        "the reader must inherit the path taint without a test-only call"
+    );
+
     let daemon = Daemon::open(&h.db).unwrap();
     assert!(
-        !daemon.is_session_tainted(Some("ses_reader")),
-        "the reader starts clean"
-    );
-    daemon.apply_taint(&TaintEvent::ReadFile {
-        session: "ses_reader".to_string(),
-        path: notes.clone(),
-    });
-    assert!(
         daemon.is_session_tainted(Some("ses_reader")),
-        "the replayed path taint must reach the reader"
+        "replay must reconstruct the reader's taint from the log"
     );
 
     // 4) A sink command in that reader session is now the lethal trifecta; a
@@ -619,6 +644,36 @@ fn a_tainted_session_write_taints_the_path_for_a_later_reader() {
         "an untouched session must not be escalated: {}",
         clean.reason
     );
+}
+
+#[test]
+fn reading_an_unlabelled_path_leaves_the_reader_clean() {
+    // Control for the read side: the observation still round-trips, but nothing
+    // appended a label to this path, so no transition is written and the reader
+    // stays clean. This is the false-positive guard for read propagation.
+    let mut h = start(1);
+    let repo = pinned_repo(&h, true);
+    let plain = repo.join("src").join("plain.rs");
+
+    let read = serde_json::json!({
+        "session_id": "ses_reader",
+        "cwd": repo.to_string_lossy(),
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Read",
+        "tool_input": { "file_path": plain.to_string_lossy() },
+        "tool_response": { "content": "fn main() {}" }
+    })
+    .to_string();
+    assert_eq!(handle(&read), HookOutcome::silent());
+    h.join();
+
+    let log = EventLog::open(&h.db).unwrap();
+    assert!(
+        log.load_taint_events().unwrap().is_empty(),
+        "an unlabelled read must not append a taint transition"
+    );
+    let daemon = Daemon::open(&h.db).unwrap();
+    assert!(!daemon.is_session_tainted(Some("ses_reader")));
 }
 
 #[test]
@@ -654,12 +709,19 @@ fn a_clean_session_write_taints_nothing() {
     );
 }
 
+/// A repo directory with no policy file at all (the global scope decides).
+fn bare_repo(h: &Harness) -> std::path::PathBuf {
+    let repo = h._tmp.path().join("repo-bare");
+    std::fs::create_dir_all(repo.join("src")).unwrap();
+    repo
+}
+
 #[test]
-fn write_observation_is_gated_by_the_provenance_policy() {
-    // `[provenance] enabled = false` disarms the write propagation exactly as it
-    // disarms the trifecta floor. The observation is still ACKed (it never
-    // blocks), it just records nothing. Ingest stays ungated (existing rule), so
-    // the discriminator is the absence of the WriteFile row.
+fn a_repo_cannot_disarm_write_propagation() {
+    // `[provenance] enabled = false` in a REPO file must not disarm the guard: that
+    // file sits in the workspace an agent writes, so honouring it would let one
+    // ordinary file write switch off the trifecta floor for its own repo. The
+    // observation is ACKed and the WriteFile row is still recorded.
     let mut h = start(2);
     let repo = pinned_repo(&h, false);
     let notes = repo.join("src").join("notes.rs");
@@ -682,11 +744,103 @@ fn write_observation_is_gated_by_the_provenance_policy() {
     h.join();
 
     let log = EventLog::open(&h.db).unwrap();
+    assert_eq!(
+        write_events(&log),
+        vec![("ses_writer".to_string(), notes.clone())],
+        "a repo-level opt-out must not disarm the guard"
+    );
+}
+
+#[test]
+fn a_global_provenance_opt_out_disarms_write_propagation() {
+    // The USER-owned global config is the one scope allowed to disarm it — the same
+    // rule as the approval proof. Ingest stays ungated (existing rule), so the
+    // discriminator is the absence of the WriteFile row.
+    // `start()` takes the serial lock itself, so the global config has to be in
+    // place BEFORE it runs; it is removed again below so no other test inherits it.
+    let guard = serial_lock();
+    let tmp = tempfile::tempdir().unwrap();
+    let config = tmp.path().join("config.toml");
+    std::fs::write(&config, "[provenance]\nenabled = false\n").unwrap();
+    std::env::set_var("KINTSUGI_CONFIG", &config);
+
+    let mut h = start_after_lock(2, guard);
+    let repo = bare_repo(&h);
+    let notes = repo.join("src").join("notes.rs");
+
+    let fetch = serde_json::json!({
+        "session_id": "ses_writer",
+        "cwd": repo.to_string_lossy(),
+        "tool_name": "WebFetch",
+        "tool_input": { "url": "https://untrusted.example/poison" }
+    })
+    .to_string();
+    assert_eq!(handle(&fetch), HookOutcome::silent());
+
+    let write = opencode_write_payload("ses_writer", &repo, &notes);
+    assert_eq!(
+        handle_with_event(Dialect::OpenCode, &write, HookEvent::Write),
+        HookOutcome::silent()
+    );
+    h.join();
+
+    let log = EventLog::open(&h.db).unwrap();
     let events = log.load_taint_events().unwrap();
     assert_eq!(events.len(), 1, "only the ingest may persist: {events:?}");
     assert!(
         write_events(&log).is_empty(),
-        "disabled provenance must persist no WriteFile row"
+        "a global opt-out must persist no WriteFile row"
+    );
+    std::env::remove_var("KINTSUGI_CONFIG");
+}
+
+#[test]
+fn antigravity_accepts_both_arguments_and_args_for_the_gate() {
+    // The pre-tool gate documented `toolCall.arguments`; the post surface documents
+    // `toolCall.args`. A mismatch would make the gate parse no command and allow every
+    // `run_command`, so both spellings must classify identically.
+    //
+    // Serialized: the hook half of this test talks to the ambient socket, and the
+    // harness tests below set that env per-test.
+    let _guard = serial_lock();
+    std::env::set_var("KINTSUGI_SOCKET", "/nonexistent/kintsugi.sock");
+    for key in ["arguments", "args"] {
+        let payload = serde_json::json!({
+            "conversationId": "conv-1",
+            "workspacePaths": ["/tmp/project"],
+            "toolCall": {
+                "name": "run_command",
+                key: { "CommandLine": "rm -rf /", "Cwd": "/tmp/project" }
+            }
+        })
+        .to_string();
+        let outcome = handle_with_event(Dialect::Antigravity, &payload, HookEvent::PreToolUse);
+        assert!(
+            outcome != HookOutcome::silent(),
+            "the `{key}` spelling must reach the gate (catastrophic command)"
+        );
+    }
+}
+
+#[test]
+fn a_shell_payload_on_the_write_route_still_hits_the_gate() {
+    // `--event write` is meant for file observations. A registration that points a
+    // shell hook at it (a plausible copy-paste) must not silently disarm the gate:
+    // the write route falls through to the decision path for shell-shaped payloads.
+    let _guard = serial_lock();
+    std::env::set_var("KINTSUGI_SOCKET", "/nonexistent/kintsugi.sock");
+    let shell = serde_json::json!({
+        "session_id": "ses_1",
+        "cwd": "/tmp/project",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": { "command": "rm -rf /" }
+    })
+    .to_string();
+    let outcome = handle_with_event(Dialect::Claude, &shell, HookEvent::Write);
+    assert!(
+        outcome != HookOutcome::silent(),
+        "a catastrophic shell payload must still be decided, got silence"
     );
 }
 

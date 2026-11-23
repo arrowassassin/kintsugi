@@ -661,8 +661,23 @@ fn trail_lines(app: &App, ev: &LoggedEvent) -> Vec<Line<'static>> {
     let Some(trail) = app.trail.as_ref().filter(|t| t.session == session) else {
         return Vec::new();
     };
-    // A clean session gets a designed empty state, not a blank.
+    // A tainted session whose trail came back empty must NOT be described as clean:
+    // the daemon's `tainted` flag is the authority, and the two disagreeing is
+    // itself worth showing.
     if trail.steps.is_empty() {
+        if trail.tainted {
+            return vec![
+                Line::from(""),
+                Line::from(vec![
+                    label(app, "trail"),
+                    Span::styled("tainted", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        " · no steps recorded — the session is labelled but the trail is empty",
+                        dim(app),
+                    ),
+                ]),
+            ];
+        }
         return vec![
             Line::from(""),
             Line::from(vec![

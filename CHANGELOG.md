@@ -91,6 +91,32 @@ version shippable. Bundles everything since 0.3.1.
   authorise a shutdown and an unprovisioned daemon accepted any op with no proof
   at all — now pinned to `"shutdown"`.
 
+- **Post-review hardening (four criticals, both halves of the review).** A repo-level
+  `.kintsugi.toml` could waive the approval proof — one ordinary file write by an
+  agent, a file writes are observation-only — and re-enable silent self-approval of
+  a held catastrophic command; guardrail opt-outs are now honoured only from the
+  user-owned global config (a repo may tighten, never waive), and a waived approval
+  writes its own `policy-opt-out` audit row. `anchor verify` validated a checkpoint
+  against the key the file itself carried, so a rewritten log re-signed with the
+  attacker's own key read INTACT; it now pins `key_id` to this machine's vault key
+  and refuses a foreign one. File-write taint had no reader-side consumer — the
+  `ReadFile` transition existed only in tests, so the feature could not fire; reads
+  of a labelled path now taint the reader. And the generated OpenCode plugin never
+  sent the session the daemon keys taint on, so no OpenCode session could be taint
+  observed at all; the shell payload now carries `session_id`.
+- **Denial-of-service and audit-trail fixes from the same review.** Bare approval
+  attempts no longer consume the brute-force budget (they carry no proof, so they
+  cannot be guessing — counting them let any local peer lock the human out of both
+  approve and authenticated shutdown). A provisioned machine whose vault file is
+  deleted now reports a degraded vault instead of falling back to bare approval. The
+  privileged-op audit row sanitizes the caller-supplied op, so a hostile peer can no
+  longer write arbitrary unredacted text into the never-deletable log. `--event
+  write` falls through to the gate on a shell-shaped payload, so a mis-registered
+  hook cannot disarm protection. `kintsugi init` now registers Claude's `PostToolUse`
+  surface (post-tool observation was plugin-only while the notes said it was live),
+  the TUI's provenance fetch is bounded at 2 s instead of freezing the event loop,
+  and `kintsugi anchor status` shows the anchor's age.
+
 ### Anchored trust (Phase 7)
 - **Public chain-head export (T1.1).** `EventLog::chain_head()` exposes the
   logical head — `(latest_seq, head_hash)` — as a single atomic read through the

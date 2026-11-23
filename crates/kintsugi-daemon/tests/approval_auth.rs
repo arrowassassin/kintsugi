@@ -179,22 +179,22 @@ fn bare_approve_on_a_locked_daemon_is_blocked_audited_and_throttled() {
         "expected a self-approval-blocked audit row, got {reasons:?}"
     );
 
-    // The throttle counts bare attempts with the same bounds as shutdown auth:
-    // past the free budget the daemon locks out instead of re-checking.
-    let mut locked_out = false;
-    for _ in 0..5 {
-        if let ipc::Response::Error { message } = f.daemon.handle_request(ipc::Request::Approve {
+    // A bare hammer does NOT consume the brute-force budget: the request carries no
+    // proof, so it cannot be guessing, and counting it would let any local peer lock
+    // the human out of approving (and out of authenticated shutdown) indefinitely.
+    for _ in 0..8 {
+        match f.daemon.handle_request(ipc::Request::Approve {
             id: f.id.clone(),
             nonce: None,
             proof: None,
         }) {
-            if message.contains("locked out") {
-                locked_out = true;
-                break;
-            }
+            ipc::Response::Error { message } => assert!(
+                message.contains("approval requires proof"),
+                "bare attempts stay refused, never 'locked out': {message}"
+            ),
+            other => panic!("bare approve must be refused, got {other:?}"),
         }
     }
-    assert!(locked_out, "a bare-approve hammer must trigger the lockout");
 
     cleanup();
 }
@@ -503,6 +503,13 @@ fn policy_opt_out_accepts_bare_approve_again() {
         proof: None,
     });
     assert!(matches!(resp, ipc::Response::Ack), "got {resp:?}");
+    // …but never silently: a waived approval writes its own audit row, so the
+    // timeline can never show it as a human decision with nothing behind it.
+    let reasons = approve_audit_reasons(&daemon, &id);
+    assert!(
+        reasons.iter().any(|r| r.contains("policy-opt-out")),
+        "a waived approval must be audited: {reasons:?}"
+    );
     assert_eq!(
         pending_status_of(daemon.handle_request(ipc::Request::PendingStatus { id })),
         "approved"
@@ -512,11 +519,67 @@ fn policy_opt_out_accepts_bare_approve_again() {
 }
 
 #[test]
-fn repo_policy_opt_out_scopes_to_the_held_commands_repo() {
-    // The auth gate reads the policy scoped to the held command's repo (the
-    // same `.kintsugi.toml` scope that produced the hold), so one repo can opt
-    // out without weakening the default everywhere.
+fn a_repo_policy_cannot_waive_the_approval_proof() {
+    // The repo-level `.kintsugi.toml` sits inside the workspace an agent writes, so
+    // honouring its `false` would let one ordinary file write re-enable silent
+    // self-approval for a held catastrophic command. A repo may REQUIRE the proof;
+    // it may never waive it — only the user-owned global scope can.
     let _g = serial_lock();
+    let tmp = tempfile::tempdir().unwrap();
+    let vault = tmp.path().join("vault.json");
+    let db = tmp.path().join("events.db");
+    provision_at(&vault, PW);
+    std::env::set_var("KINTSUGI_VAULT", &vault);
+    std::env::set_var("KINTSUGI_DB", &db);
+    // No global policy at all: the user has not opted out anywhere.
+    std::env::set_var("KINTSUGI_CONFIG", tmp.path().join("no-global.toml"));
+
+    // A repo that tries to opt out…
+    let opting_out = tmp.path().join("repo-opted-out");
+    std::fs::create_dir_all(&opting_out).unwrap();
+    std::fs::write(
+        opting_out.join(".kintsugi.toml"),
+        "[security]\nrequire_approval_proof = false\n",
+    )
+    .unwrap();
+
+    let daemon = Daemon::open(&db).unwrap();
+    let id = held(&daemon, &opting_out);
+
+    // …still gets the gate: refused loudly, audited, item stays pending.
+    match daemon.handle_request(ipc::Request::Approve {
+        id: id.clone(),
+        nonce: None,
+        proof: None,
+    }) {
+        ipc::Response::Error { message } => assert!(
+            message.contains("approval requires proof"),
+            "unexpected refusal: {message}"
+        ),
+        other => panic!("a repo must not be able to waive the proof, got {other:?}"),
+    }
+    assert_eq!(
+        pending_status_of(daemon.handle_request(ipc::Request::PendingStatus { id: id.clone() })),
+        "pending"
+    );
+    assert!(
+        approve_audit_reasons(&daemon, &id)
+            .iter()
+            .any(|r| r.contains("self-approval blocked")),
+        "the refused attempt must still be audited"
+    );
+
+    cleanup();
+}
+
+#[test]
+fn deleting_the_vault_does_not_re_enable_bare_approval() {
+    // The vault is one deletable file; the provision latch lives in the append-only
+    // log. A machine that was provisioned and whose vault file vanished must report
+    // a DEGRADED vault (refuse) instead of falling back to unprovisioned bare
+    // approval — otherwise "rm the vault" is a silent bypass of the whole gate.
+    let _g = serial_lock();
+    let cwd = tempfile::tempdir().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let vault = tmp.path().join("vault.json");
     let db = tmp.path().join("events.db");
@@ -525,50 +588,71 @@ fn repo_policy_opt_out_scopes_to_the_held_commands_repo() {
     std::env::set_var("KINTSUGI_DB", &db);
     std::env::set_var("KINTSUGI_CONFIG", tmp.path().join("no-global.toml"));
 
-    // A repo whose held commands opt out…
-    let opting_out = tmp.path().join("repo-opted-out");
-    std::fs::create_dir_all(&opting_out).unwrap();
-    std::fs::write(
-        opting_out.join(".kintsugi.toml"),
-        "[security]\nrequire_approval_proof = false\n",
-    )
-    .unwrap();
-    // …and one that keeps the default.
-    let default_repo = tmp.path().join("repo-default");
-    std::fs::create_dir_all(&default_repo).unwrap();
+    // What `kintsugi admin provision` records (the CLI does this via EventLog).
+    {
+        let log = kintsugi_core::EventLog::open(&db).unwrap();
+        log.record_audit_marker("kintsugi admin provision", "audit:provision")
+            .unwrap();
+    }
+    std::fs::remove_file(&vault).unwrap();
 
     let daemon = Daemon::open(&db).unwrap();
-    let opted_id = held(&daemon, &opting_out);
-    let default_id = held(&daemon, &default_repo);
-
-    // The opted-out repo: bare approve accepted.
-    assert!(matches!(
-        daemon.handle_request(ipc::Request::Approve {
-            id: opted_id.clone(),
-            nonce: None,
-            proof: None,
-        }),
-        ipc::Response::Ack
-    ));
-    assert_eq!(
-        pending_status_of(daemon.handle_request(ipc::Request::PendingStatus { id: opted_id })),
-        "approved"
-    );
-
-    // The default repo, same daemon: bare approve still blocked.
+    let id = held(&daemon, cwd.path());
     match daemon.handle_request(ipc::Request::Approve {
-        id: default_id.clone(),
+        id: id.clone(),
         nonce: None,
         proof: None,
     }) {
-        ipc::Response::Error { message } => {
-            assert!(message.contains("approval requires proof"))
-        }
-        other => panic!("default repo must keep the gate, got {other:?}"),
+        ipc::Response::Error { message } => assert!(
+            message.contains("degraded"),
+            "a missing vault on a provisioned machine must read as degraded: {message}"
+        ),
+        other => panic!("deleting the vault must not re-enable bare approval, got {other:?}"),
     }
     assert_eq!(
-        pending_status_of(daemon.handle_request(ipc::Request::PendingStatus { id: default_id })),
+        pending_status_of(daemon.handle_request(ipc::Request::PendingStatus { id })),
         "pending"
+    );
+
+    cleanup();
+}
+
+#[test]
+fn bare_refusals_cannot_lock_the_human_out_of_approving() {
+    // The throttle exists to stop password guessing, so only PROOF attempts may
+    // consume it. A bare approve carries no guessable secret; counting it would let
+    // any local peer deny the human their own approve/shutdown for up to an hour.
+    let _g = serial_lock();
+    let cwd = tempfile::tempdir().unwrap();
+    let f = locked_daemon_with_hold(cwd.path());
+    let id = f.id.clone();
+
+    for _ in 0..12 {
+        match f.daemon.handle_request(ipc::Request::Approve {
+            id: id.clone(),
+            nonce: None,
+            proof: None,
+        }) {
+            ipc::Response::Error { message } => assert!(
+                message.contains("approval requires proof"),
+                "bare attempts stay refused, never 'locked out': {message}"
+            ),
+            other => panic!("bare approve must be refused, got {other:?}"),
+        }
+    }
+
+    // The human can still complete the real flow afterwards: a real proof must be
+    // served immediately, not "locked out" by another party's bare attempts.
+    let op = format!("approve:{id}");
+    let (_, nonce, _salt, _params, proof_hex) = valid_proof(&f.daemon, PW, &op);
+    let resp = f.daemon.handle_request(ipc::Request::Approve {
+        id: id.clone(),
+        nonce: Some(nonce),
+        proof: Some(proof_hex),
+    });
+    assert!(
+        matches!(resp, ipc::Response::Ack),
+        "a valid proof must still approve: {resp:?}"
     );
 
     cleanup();

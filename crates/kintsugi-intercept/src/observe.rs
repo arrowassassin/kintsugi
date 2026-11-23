@@ -151,9 +151,49 @@ pub fn classify_tool_write(
     input: &serde_json::Value,
     workspace: &Path,
 ) -> Option<String> {
-    if tool.trim().is_empty() {
+    if !WRITE_TOOLS.iter().any(|t| t.eq_ignore_ascii_case(tool)) {
         return None;
     }
+    resolve_path_arg(input, workspace)
+}
+
+/// The file-shaped write tools this build pins fixtures for. The write route is
+/// opt-in (`--event write`), but naming the tools still matters: without it any
+/// payload carrying a `path` key labels a path, so a misrouted `Read` would be
+/// recorded as a write. Unknown names are a silent miss (fail-open) — this is
+/// observation-only, so a miss loses a label and never unlocks anything.
+const WRITE_TOOLS: &[&str] = &[
+    "write",
+    "Write",
+    "write_file",
+    "WriteFile",
+    "edit",
+    "Edit",
+    "MultiEdit",
+    "StrReplace",
+    "afterFileEdit",
+    "apply_patch",
+    "apply_file_edit",
+];
+
+/// The file-shaped read tools. Deliberately a name allowlist and not the route:
+/// `PostToolUse` also carries web fetches, searches and shell commands, so
+/// "anything with a path" would label a fetched URL as a local file read.
+const READ_TOOLS: &[&str] = &[
+    "Read",
+    "read",
+    "read_file",
+    "readFile",
+    "ReadFile",
+    "View",
+    "view",
+    "view_file",
+];
+
+/// Resolve a call's path argument against the workspace, lexically, and only when
+/// it lands inside it. Shared by the write and read classifiers so the trust
+/// boundary is defined exactly once.
+fn resolve_path_arg(input: &serde_json::Value, workspace: &Path) -> Option<String> {
     // Cursor pins `file_path` (snake_case); OpenCode pins `filePath` (camelCase).
     // The remaining aliases mirror the read classifier's tolerated spellings.
     let raw = first_str(
@@ -177,6 +217,25 @@ pub fn classify_tool_write(
         return None; // outside the workspace trust boundary
     }
     Some(resolved.to_string_lossy().into_owned())
+}
+
+/// Extract the target path of a file-READ tool call, for provenance propagation:
+/// a session that reads a path an earlier tainted session wrote inherits that
+/// taint. This is the consumer half of [`classify_tool_write`] — without it a
+/// `WriteFile` label is state nobody ever reads back.
+///
+/// Identifier-only, same as the write side: the return value is the resolved path
+/// and the call's content/result bytes are never touched. Workspace-relative
+/// resolution and the in-workspace rule are shared with the write classifier.
+pub fn classify_tool_read(
+    tool: &str,
+    input: &serde_json::Value,
+    workspace: &Path,
+) -> Option<String> {
+    if !READ_TOOLS.iter().any(|t| t.eq_ignore_ascii_case(tool)) {
+        return None;
+    }
+    resolve_path_arg(input, workspace)
 }
 
 /// Classify a shell command's argv into a taint source if it *ingests* remote
@@ -302,7 +361,31 @@ fn is_within(path: &Path, workspace: &Path) -> bool {
     }
     let norm = lexical_normalize(path);
     let root = lexical_normalize(workspace);
-    norm.starts_with(&root)
+    #[cfg(windows)]
+    {
+        // Windows paths are case-insensitive: `C:\WORK\REPO\src\x` IS inside
+        // `C:\work\repo`. Comparing `Path` components case-sensitively would call
+        // an in-workspace path "outside" (false read taint) and skip an
+        // in-workspace write (missed propagation).
+        return win_contains(&norm, &root);
+    }
+    #[cfg(not(windows))]
+    {
+        norm.starts_with(&root)
+    }
+}
+
+/// Case-insensitive component-wise containment for Windows paths, including the
+/// verbatim `\\?\` prefix shape.
+#[cfg(windows)]
+fn win_contains(path: &Path, root: &Path) -> bool {
+    fn parts(p: &Path) -> Vec<String> {
+        p.components()
+            .map(|c| c.as_os_str().to_string_lossy().to_ascii_lowercase())
+            .collect()
+    }
+    let (p, r) = (parts(path), parts(root));
+    p.len() >= r.len() && p[..r.len()] == r[..]
 }
 
 /// Collapse `.` and `..` lexically without filesystem access.
@@ -793,10 +876,67 @@ mod tests {
         );
     }
 
+    #[test]
+    fn read_paths_are_classified_only_for_read_shaped_tools() {
+        let ws = ws();
+        let got = classify_tool_read("Read", &json(r#"{"file_path":"src/lib.rs"}"#), &ws)
+            .expect("a Read tool's path");
+        assert!(
+            Path::new(&got).ends_with(Path::new("src").join("lib.rs")),
+            "{got}"
+        );
+        // `PostToolUse` also carries web fetches and shell calls; a path key alone
+        // must not turn one of those into a file read.
+        assert_eq!(
+            classify_tool_read("WebFetch", &json(r#"{"file_path":"src/lib.rs"}"#), &ws),
+            None
+        );
+        assert_eq!(
+            classify_tool_read("Bash", &json(r#"{"file_path":"src/lib.rs"}"#), &ws),
+            None
+        );
+        // Outside the workspace: not ours to label.
+        assert_eq!(
+            classify_tool_read("Read", &json(r#"{"file_path":"../../etc/passwd"}"#), &ws),
+            None
+        );
+    }
+
+    #[test]
+    fn a_misrouted_read_is_never_recorded_as_a_write() {
+        // The write route is opt-in, but a `Read` event forwarded to `--event write`
+        // must not label a path as written: that would be a false write taint.
+        assert_eq!(
+            classify_tool_write("Read", &json(r#"{"file_path":"src/lib.rs"}"#), &ws()),
+            None
+        );
+        // …and the write shapes the fixtures pin are still accepted.
+        for tool in ["Write", "write", "StrReplace", "afterFileEdit", "Edit"] {
+            assert!(
+                classify_tool_write(tool, &json(r#"{"file_path":"src/lib.rs"}"#), &ws()).is_some(),
+                "{tool} must still classify as a write"
+            );
+        }
+    }
+
     // Windows-only: a backslash-rooted path carries no drive, so `Path::is_relative`
     // calls it relative — but it is anchored at the volume root and can never be
     // inside the workspace. The pre-fix depth heuristic labelled it workspace-owned,
     // which is what the Windows CI runner caught.
+    #[cfg(windows)]
+    #[test]
+    fn windows_paths_are_compared_case_insensitively() {
+        // `C:\WORK\REPO` is the same directory as `C:\work\repo` on Windows.
+        assert!(is_within(
+            Path::new("C:\\WORK\\REPO\\src\\x.rs"),
+            Path::new("C:\\work\\repo")
+        ));
+        assert!(!is_within(
+            Path::new("C:\\work\\other\\x.rs"),
+            Path::new("C:\\work\\repo")
+        ));
+    }
+
     #[cfg(windows)]
     #[test]
     fn a_root_relative_path_is_never_inside_the_workspace() {

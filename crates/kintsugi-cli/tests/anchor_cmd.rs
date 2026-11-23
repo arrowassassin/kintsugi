@@ -108,6 +108,52 @@ fn text(out: &std::process::Output) -> String {
 }
 
 #[test]
+fn a_checkpoint_signed_by_a_foreign_key_is_invalid_not_intact() {
+    // Two machines, two vaults. `signature_is_valid()` alone accepts A's
+    // checkpoint on B, because it trusts the key the file carries — so without the
+    // pin against B's own vault, a forger who rewrites the log and re-signs it with
+    // a key of their choosing would read INTACT, exit 0. The pin is what makes the
+    // verdict mean "signed by a key this machine trusts".
+    let a = tempfile::tempdir().unwrap();
+    seed(&a.path().join("events.db"), "git status");
+    let pw_a = provision(a.path());
+    let file = a.path().join("checkpoint-from-a.txt");
+    let out = export(a.path(), Some(&file), None, Some(&pw_a), false);
+    assert!(out.status.success(), "export failed: {}", text(&out));
+
+    // Machine B: its own log and its own vault, provisioned with a different
+    // password (a different key generation).
+    let b = tempfile::tempdir().unwrap();
+    seed(&b.path().join("events.db"), "git status");
+    let pw_b = b.path().join("pw-b");
+    std::fs::write(&pw_b, format!("{}-another-machine", pw())).unwrap();
+    let prov = kintsugi()
+        .args(["admin", "provision", "--password-file"])
+        .arg(&pw_b)
+        .env("KINTSUGI_VAULT", b.path().join("vault.json"))
+        .output()
+        .unwrap();
+    assert!(prov.status.success(), "provision B failed: {}", text(&prov));
+
+    let v = verify(b.path(), Some(&file));
+    let t = text(&v);
+    assert_eq!(
+        v.status.code(),
+        Some(3),
+        "a foreign-key checkpoint must be INVALID (3), got {:?}:\n{t}",
+        v.status.code()
+    );
+    assert!(
+        t.contains("this vault does not own"),
+        "the refusal must name the reason:\n{t}"
+    );
+
+    // And the same file DOES verify on the machine that signed it.
+    let own = verify(a.path(), Some(&file));
+    assert_eq!(own.status.code(), Some(0), "got:\n{}", text(&own));
+}
+
+#[test]
 fn export_records_signs_and_verifies_intact() {
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("events.db");
@@ -413,7 +459,10 @@ fn status_shows_the_anchored_line_only_when_anchors_exist() {
     env(&mut c, dir.path());
     let s = text(&c.output().unwrap());
     assert!(s.contains("anchored:"), "got:\n{s}");
-    assert!(s.contains("(1 events ago)"), "got:\n{s}");
+    assert!(
+        s.contains("(1 events ago,"),
+        "the count must survive the age suffix: got:\n{s}"
+    );
 }
 
 #[test]

@@ -626,8 +626,15 @@ struct AntigravityStyle {
 struct AntigravityToolCall {
     #[serde(default)]
     name: Option<String>,
+    /// The shape the gate documents.
     #[serde(default)]
     arguments: Option<AntigravityArgs>,
+    /// The shape the post-tool surface documents (`toolCall.args`). Both are
+    /// accepted because a mismatch here means the gate parses no command and
+    /// silently allows every `run_command` — a catastrophic-classified-as-safe
+    /// outcome. Widening the parser can only add classification.
+    #[serde(default)]
+    args: Option<AntigravityArgs>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -654,7 +661,7 @@ fn parse_antigravity(input: &str) -> Parsed {
     ) {
         return Parsed::NotShell;
     }
-    let Some(args) = tc.arguments else {
+    let Some(args) = tc.arguments.or(tc.args) else {
         return Parsed::NotShell;
     };
     match args.command_line {

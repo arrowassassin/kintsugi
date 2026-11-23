@@ -803,14 +803,27 @@ fn init_no_daemon_creates_shims_and_wires_claude() {
     );
     assert!(body.contains("PreToolUse"));
 
-    // Idempotent: running again does not duplicate the hook.
+    // Both surfaces are wired: the shell gate and the post-tool observation.
+    assert!(
+        body.contains("PostToolUse"),
+        "settings should observe post-tool:\n{body}"
+    );
+
+    // Idempotent: running again duplicates neither registration.
     run_init();
     let body2 = std::fs::read_to_string(&settings).unwrap();
     assert_eq!(
         body2.matches("kintsugi-hook").count(),
-        1,
-        "hook must not duplicate"
+        2,
+        "one gate + one observation registration, no duplicates:\n{body2}"
     );
+    for evt in ["PreToolUse", "PostToolUse"] {
+        assert_eq!(
+            body2.matches(evt).count(),
+            1,
+            "{evt} must appear exactly once:\n{body2}"
+        );
+    }
 }
 
 #[test]

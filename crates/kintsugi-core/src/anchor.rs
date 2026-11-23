@@ -52,6 +52,8 @@ pub enum AnchorError {
     MalformedLine(usize),
     #[error("checkpoint field 'seq' is not a valid integer: {0}")]
     BadSeq(String),
+    #[error("checkpoint line {0} repeats a field that was already given")]
+    DuplicateField(usize),
     #[error("checkpoint is missing the {0} field")]
     MissingField(&'static str),
 }
@@ -152,19 +154,50 @@ impl Checkpoint {
             let Some((key, value)) = line.split_once('=') else {
                 return Err(AnchorError::MalformedLine(idx + 2)); // header is line 1
             };
+            // Last-wins would let a hand-edited file show one value to a human and
+            // verify a later one; a repeated known field is an error instead.
+            let dup = AnchorError::DuplicateField(idx + 2); // header is line 1
             match key {
-                "origin" => origin = Some(value.to_string()),
+                "origin" => {
+                    if origin.is_some() {
+                        return Err(dup);
+                    }
+                    origin = Some(value.to_string())
+                }
                 "seq" => {
+                    if seq.is_some() {
+                        return Err(dup);
+                    }
                     seq = Some(
                         value
                             .parse::<i64>()
                             .map_err(|_| AnchorError::BadSeq(value.to_string()))?,
                     )
                 }
-                "head" => head = Some(value.to_string()),
-                "key_id" => key_id = Some(value.to_string()),
-                "ts" => ts = Some(value.to_string()),
-                "sig" => sig = Some(value.to_string()),
+                "head" => {
+                    if head.is_some() {
+                        return Err(dup);
+                    }
+                    head = Some(value.to_string())
+                }
+                "key_id" => {
+                    if key_id.is_some() {
+                        return Err(dup);
+                    }
+                    key_id = Some(value.to_string())
+                }
+                "ts" => {
+                    if ts.is_some() {
+                        return Err(dup);
+                    }
+                    ts = Some(value.to_string())
+                }
+                "sig" => {
+                    if sig.is_some() {
+                        return Err(dup);
+                    }
+                    sig = Some(value.to_string())
+                }
                 _ => {} // Unknown extension line: outside the signature, ignored.
             }
         }

@@ -139,3 +139,38 @@ fn hash_at_seq_returns_the_row_hash_or_none() {
     assert_eq!(log.hash_at_seq(99).unwrap(), None);
     assert_eq!(log.hash_at_seq(0).unwrap(), None);
 }
+
+#[test]
+fn re_anchoring_the_same_head_with_a_signature_upgrades_the_row() {
+    // export-unsigned → provision a vault → re-export is a normal path. Returning
+    // the old unsigned row would leave the log unable to produce a signed verdict
+    // (`anchor verify` with no file reads the recorded row), right after the export
+    // printed "Signed under key_id". The upgrade appends a *new* row at the same
+    // (seq, head) — allowed by the no-fork guard, and still append-only.
+    let log = EventLog::open_in_memory().unwrap();
+    let e = log.log_event(&sample("ls -la"), &allow(), None).unwrap();
+    let (seq, head) = log.chain_head().unwrap();
+
+    let mut unsigned_cp = checkpoint(None);
+    unsigned_cp.seq = seq;
+    unsigned_cp.head = head.clone();
+    unsigned_cp.key_id = String::new();
+    let unsigned = log.record_anchor(&unsigned_cp).unwrap();
+    assert_eq!(unsigned.sig, None);
+
+    let mut signed_cp = unsigned_cp.clone();
+    signed_cp.key_id = "b".repeat(64);
+    signed_cp.sig = Some("aabbcc".to_string());
+    let upgraded = log.record_anchor(&signed_cp).unwrap();
+    assert_ne!(upgraded.id, unsigned.id, "the upgrade is a new row");
+    assert_eq!(upgraded.sig.as_deref(), Some("aabbcc"));
+    assert_eq!(
+        log.latest_anchor().unwrap().unwrap().sig.as_deref(),
+        Some("aabbcc")
+    );
+
+    // Re-recording the *same* signed checkpoint is idempotent again.
+    let again = log.record_anchor(&signed_cp).unwrap();
+    assert_eq!(again.id, upgraded.id);
+    assert_eq!(e.seq, seq);
+}

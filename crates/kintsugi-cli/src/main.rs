@@ -202,6 +202,12 @@ enum Command {
     Approve {
         /// The queue id (or a unique prefix).
         id: String,
+        /// Read the admin password from this file instead of prompting. The
+        /// interactive prompt reads `/dev/tty`, which scripts and test harnesses
+        /// cannot drive; this is the same file discipline `admin provision` and
+        /// `anchor export` already use.
+        #[arg(long)]
+        password_file: Option<PathBuf>,
     },
     /// Deny a held command by id (or unique id prefix).
     Deny {
@@ -649,8 +655,10 @@ fn main() -> Result<()> {
         Some(Command::Limits) => cmd_limits(),
         Some(Command::Guard { command }) => cmd_guard(&command),
         Some(Command::Queue) => cmd_queue(),
-        Some(Command::Approve { id }) => cmd_resolve_pending(&id, true),
-        Some(Command::Deny { id }) => cmd_resolve_pending(&id, false),
+        Some(Command::Approve { id, password_file }) => {
+            cmd_resolve_pending(&id, true, password_file.as_deref())
+        }
+        Some(Command::Deny { id }) => cmd_resolve_pending(&id, false, None),
         Some(Command::Run { id }) => cmd_run(id.as_deref()),
         Some(Command::Panic) => cmd_panic(),
         Some(Command::Resume) => cmd_resume(),
@@ -1323,7 +1331,11 @@ fn is_in_band(agent: &str) -> bool {
     matches!(agent, "shim" | "mcp")
 }
 
-fn cmd_resolve_pending(id: &str, approve: bool) -> Result<()> {
+fn cmd_resolve_pending(
+    id: &str,
+    approve: bool,
+    password_file: Option<&std::path::Path>,
+) -> Result<()> {
     if !Client::is_daemon_running() {
         anyhow::bail!("the daemon isn't running; start it with `kintsugi init`");
     }
@@ -1345,7 +1357,7 @@ fn cmd_resolve_pending(id: &str, approve: bool) -> Result<()> {
         // proof. A same-user agent shelling out to this can still reach the
         // daemon directly — the daemon's own auth gate is what stops it — but
         // it cannot get the password.
-        approve_via_daemon(&full).context("approve")?;
+        approve_via_daemon(&full, password_file).context("approve")?;
         if is_in_band(&item.command.agent) {
             println!("✓ approved {short} — the requesting agent may now proceed.");
         } else {
@@ -1444,7 +1456,7 @@ fn cmd_run(id: Option<&str>) -> Result<()> {
     // the kill-switch. On a locked daemon this carries the admin-password proof
     // (the human already typed a confirmation code on the real terminal; the
     // password is the anchor a same-user process can't type for you).
-    approve_via_daemon(&full).context("approve for run")?;
+    approve_via_daemon(&full, None).context("approve for run")?;
     // Execute the raw command (preserving chaining/redirects) in its original
     // directory, inheriting stdio so the user sees output live.
     let status = run_in_shell(&item.command.cwd, &item.command.raw)?;
@@ -1844,7 +1856,7 @@ fn wire_hook(kind: init::HookKind, home: Option<&std::path::Path>) -> Result<()>
     };
     use init::HookKind::*;
     match kind {
-        Claude => wire_settings_json(home, ".claude", "PreToolUse", "Bash", "claude"),
+        Claude => wire_claude(home),
         Qwen => wire_settings_json(
             home,
             ".qwen",
@@ -1875,6 +1887,18 @@ fn wire_settings_json(
         .and_then(|s| serde_json::from_str(&s).ok());
     backup_once(&path);
     let merged = init::merge_settings_hook(existing, event, matcher, &hook_command(agent));
+    write_file(&path, &serde_json::to_string_pretty(&merged)?)
+}
+
+/// Claude: merge the shell gate AND the post-tool observation surface into
+/// `~/.claude/settings.json` (one file, two events, idempotent).
+fn wire_claude(home: &std::path::Path) -> Result<()> {
+    let path = home.join(".claude").join("settings.json");
+    let existing = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok());
+    backup_once(&path);
+    let merged = init::merge_claude_hooks(existing, &hook_command("claude"));
     write_file(&path, &serde_json::to_string_pretty(&merged)?)
 }
 
@@ -2054,7 +2078,7 @@ fn stop_via_daemon() -> Result<()> {
 /// (`locked = false`), approval is sent bare: there is no secret to prove
 /// possession of, and the *daemon* decides that (this client's environment
 /// can't redirect the check). Daemon-side errors are surfaced verbatim.
-fn approve_via_daemon(id: &str) -> Result<()> {
+fn approve_via_daemon(id: &str, password_file: Option<&std::path::Path>) -> Result<()> {
     let op = format!("approve:{id}");
     let (locked, nonce, salt, params) =
         Client::auth_begin(&op).context("begin approval handshake")?;
@@ -2063,7 +2087,12 @@ fn approve_via_daemon(id: &str) -> Result<()> {
     // for a real nonce/proof; `Some(..)` carries the challenge-response when
     // locked.
     let auth: Option<(String, String)> = if locked {
-        let pw = admin_cmd::read_admin_password("Admin password to approve: ")?;
+        let pw = match password_file {
+            Some(f) => {
+                admin_cmd::read_password("Admin password to approve: ", &Some(f.to_path_buf()))?
+            }
+            None => admin_cmd::read_admin_password("Admin password to approve: ")?,
+        };
         let nonce_bytes = hex::decode(&nonce).context("decode challenge nonce")?;
         let proof =
             kintsugi_core::admin::compute_proof(&pw, &salt, params, &nonce_bytes, op.as_bytes())

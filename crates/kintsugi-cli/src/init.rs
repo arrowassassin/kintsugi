@@ -299,6 +299,25 @@ pub fn antigravity_mcp_config(mcp_bin: &str) -> Value {
     })
 }
 
+/// The matcher `kintsugi init` registers for Claude's post-tool observation: the
+/// content tools whose RESULT can taint a session, plus `Read` (the read side of
+/// write propagation) and MCP calls.
+pub const CLAUDE_POST_MATCHER: &str = "WebFetch|WebSearch|Read|mcp__.*";
+
+/// Merge BOTH Claude registrations in one pass: the `PreToolUse` shell gate and the
+/// `PostToolUse` observation surface. Two events, one file, idempotent — the same
+/// command serves both, because the hook routes on the payload's own
+/// `hook_event_name` marker.
+pub fn merge_claude_hooks(existing: Option<Value>, hook_command: &str) -> Value {
+    let gated = merge_settings_hook(existing, "PreToolUse", "Bash", hook_command);
+    merge_settings_hook(
+        Some(gated),
+        "PostToolUse",
+        CLAUDE_POST_MATCHER,
+        hook_command,
+    )
+}
+
 /// Codex CLI wiring: append a `[[hooks.PreToolUse]]` block to the existing
 /// `~/.codex/config.toml`, idempotently. Codex's hook protocol is Claude-
 /// compatible JSON; only the registration format (TOML) differs.
@@ -424,7 +443,14 @@ export const KintsugiPlugin = async () => ({
       let verdict = { decision: "allow", reason: "" };
       try {
         const res = spawnSync(KINTSUGI_HOOK, ["--agent", "opencode"], {
-          input: JSON.stringify({ command, cwd: process.cwd() }),
+          // The session is what the daemon keys taint on: without it no OpenCode
+          // command can ever be observed against a tainted session, so the write
+          // propagation (and the fetch-act taint) would be inert for this agent.
+          input: JSON.stringify({
+            command,
+            cwd: process.cwd(),
+            session_id: input.sessionID,
+          }),
           encoding: "utf8",
           timeout: 60000,
         });
@@ -625,6 +651,25 @@ mod tests {
     }
 
     #[test]
+    fn claude_wiring_registers_the_gate_and_post_tool_observation() {
+        let merged = merge_claude_hooks(None, "kintsugi-hook --agent claude");
+        let pre = merged["hooks"]["PreToolUse"].as_array().unwrap();
+        assert_eq!(pre.len(), 1);
+        assert_eq!(pre[0]["matcher"], "Bash");
+        let post = merged["hooks"]["PostToolUse"].as_array().unwrap();
+        assert_eq!(post.len(), 1, "the default install must observe post-tool");
+        assert_eq!(post[0]["matcher"], CLAUDE_POST_MATCHER);
+        assert_eq!(
+            post[0]["hooks"][0]["command"],
+            "kintsugi-hook --agent claude"
+        );
+
+        // Idempotent: a second init collapses to the same two entries.
+        let again = merge_claude_hooks(Some(merged.clone()), "kintsugi-hook --agent claude");
+        assert_eq!(again, merged);
+    }
+
+    #[test]
     fn merge_is_idempotent() {
         let once = merge_claude(None, "kintsugi-hook");
         let twice = merge_claude(Some(once.clone()), "kintsugi-hook");
@@ -816,6 +861,44 @@ mod tests {
         assert!(js.contains("--agent"));
         assert!(js.contains("opencode"));
         assert!(js.contains("throw new Error"));
+    }
+
+    #[test]
+    fn opencode_shell_payload_carries_the_session_the_daemon_keys_taint_on() {
+        // The regression this pins: the shell branch used to forward `{command, cwd}`
+        // with no session, so no OpenCode command could ever be observed against a
+        // tainted session — which silently disabled write propagation (and the
+        // fetch-act taint) for the only agent this file wires. The plugin is
+        // generated text, so the contract is asserted on the generated source AND on
+        // the wire shape it produces.
+        let js = opencode_plugin_js("/usr/local/bin/kintsugi-hook");
+        assert!(
+            js.contains("session_id: input.sessionID"),
+            "the shell payload must carry the session id"
+        );
+        // …and the write branch still keys its observation on the same field.
+        assert!(js.contains("input.sessionID"));
+        assert!(js.contains("payload.session = session"));
+
+        // The payload shape the JS builds, parsed by the real dialect: the session
+        // survives into the Shell parse (a JS-only assertion could drift from the
+        // parser; this is the wire contract).
+        let payload = serde_json::json!({
+            "command": "git status",
+            "cwd": "/repo",
+            "session_id": "ses_opencode",
+        })
+        .to_string();
+        match kintsugi_intercept::dialect::Dialect::OpenCode.parse(&payload) {
+            kintsugi_intercept::dialect::Parsed::Shell(shell) => {
+                assert_eq!(
+                    shell.session_id.as_deref(),
+                    Some("ses_opencode"),
+                    "the daemon keys taint on this field"
+                );
+            }
+            other => panic!("the generated payload must parse as a shell call: {other:?}"),
+        }
     }
 
     #[test]

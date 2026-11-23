@@ -139,6 +139,11 @@ fn load_trail(app: &mut App, session: &str) {
         ev.command.clone(),
     )
     .with_session(Some(session.to_string()));
+    // The call is bounded (2s, ipc::round_trip_within): a busy daemon must not
+    // freeze the event loop on the primary navigation key. The status line says
+    // what happened either way, so a slow or absent daemon is legible rather than
+    // looking like a hung window.
+    app.status = Some("fetching provenance…".to_string());
     match kintsugi_daemon::Client::provenance(&proposed) {
         Ok((tainted, steps)) => {
             app.trail = Some(app::ProvenanceCache {
@@ -147,11 +152,17 @@ fn load_trail(app: &mut App, session: &str) {
                 steps,
             });
             app.trail_failed = false;
+            app.status = None;
         }
-        Err(_) => {
+        Err(e) => {
             app.trail = None;
             app.trail_failed = true;
-            app.status = Some("provenance unavailable (daemon not running)".to_string());
+            let timed_out = format!("{e}").to_lowercase().contains("timed out");
+            app.status = Some(if timed_out {
+                "provenance timed out (daemon busy) — the event is still shown".to_string()
+            } else {
+                "provenance unavailable (daemon not running)".to_string()
+            });
         }
     }
 }

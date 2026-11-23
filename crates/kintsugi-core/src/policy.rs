@@ -8,10 +8,11 @@
 //! Security spine: policy may always *add* caution (a `deny` rule escalates any
 //! command to Hold/Deny). A policy `allow` may tame the ambiguous band, but it
 //! **never downgrades a rule-based catastrophic block** — that hard floor stands.
-//! The one auth-posture knob (`[security] require_approval_proof`, default on)
-//! follows the same monotonic shape: it can only ever add friction to the
-//! approve path, and turning it off is a deliberate, visible configuration
-//! choice — never a silent downgrade.
+//! The one auth-posture knob (`[security] require_approval_proof`, default on) is
+//! deliberately NOT symmetric across scopes: a repo may require the proof but can
+//! never waive it, because the repo file lives in the workspace an agent writes.
+//! Only the user-owned global scope can turn it off, and a waiving approval is
+//! still recorded as an audit event.
 
 use serde::Deserialize;
 
@@ -46,8 +47,12 @@ pub struct Security {
     /// human-approved behavior change): a same-user agent process that can
     /// reach the owner-only socket and speak the protocol cannot approve its
     /// own held command silently — the attempt fails loudly and is audited.
-    /// This only *adds* friction (the spine's monotonic rule); the opt-out
-    /// (`false`) restores the pre-Phase-7 bare-approve flow.
+    ///
+    /// Only the **user-owned global** policy may waive it. A repo-level
+    /// `.kintsugi.toml` can require the proof but can never waive it: that file
+    /// lives in the workspace an agent writes, so honouring a repo `false` would
+    /// let one ordinary file write re-enable silent self-approval. A waived
+    /// approval still writes its audit row, so it can never look like a human's.
     #[serde(default)]
     pub require_approval_proof: Option<bool>,
 }
@@ -106,13 +111,30 @@ impl Policy {
             threshold: repo.threshold.or(global.threshold),
             rules: Rules { allow, deny },
             provenance: Provenance {
-                enabled: repo.provenance.enabled.or(global.provenance.enabled),
+                // Same scope rule as `[security]` below, for the same reason: the
+                // repo file is agent-writable, so it may ENABLE a guardrail but
+                // never disable one. Only the user-owned global scope can opt out.
+                enabled: match (repo.provenance.enabled, global.provenance.enabled) {
+                    (Some(true), _) => Some(true),
+                    (_, Some(false)) => Some(false),
+                    (_, Some(true)) => Some(true),
+                    _ => None,
+                },
             },
             security: Security {
-                require_approval_proof: repo
-                    .security
-                    .require_approval_proof
-                    .or(global.security.require_approval_proof),
+                // A repo may REQUIRE the proof; it may never waive it. The repo
+                // policy file lives in the workspace the agent writes, so any
+                // weakening here is agent-reachable — the opt-out is honoured
+                // only from the user-owned global scope.
+                require_approval_proof: match (
+                    repo.security.require_approval_proof,
+                    global.security.require_approval_proof,
+                ) {
+                    (Some(true), _) => Some(true),   // a repo can always tighten
+                    (_, Some(false)) => Some(false), // the user's scope can waive
+                    (_, Some(true)) => Some(true),
+                    _ => None, // default (true) applies
+                },
             },
         }
     }
@@ -303,16 +325,29 @@ mod tests {
     }
 
     #[test]
-    fn merge_repo_overrides_approval_proof_in_both_directions() {
-        // Repo policy overrides global per the existing precedence.
-        let global = Policy::parse("[security]\nrequire_approval_proof = true").unwrap();
-        let repo = Policy::parse("[security]\nrequire_approval_proof = false").unwrap();
-        assert!(!Policy::merge(global, repo).require_approval_proof());
-        // … and a repo can re-arm what a global opted out of (monotonic: the
-        // override is a scope choice, never a silent downgrade everywhere).
+    fn merge_repo_can_tighten_but_never_waive_approval_proof() {
+        // A repo-level `.kintsugi.toml` lives in the workspace an agent writes, so
+        // it may only ever ADD the requirement. Ignoring a repo's `false` is the
+        // whole point: otherwise one ordinary file write re-enables bare
+        // self-approval for a held catastrophic command.
+        let repo_off = Policy::parse("[security]\nrequire_approval_proof = false").unwrap();
+        assert!(
+            Policy::merge(Policy::default(), repo_off.clone()).require_approval_proof(),
+            "a repo must not be able to waive the proof"
+        );
+
+        // The user-owned global scope IS allowed to waive it…
         let global_off = Policy::parse("[security]\nrequire_approval_proof = false").unwrap();
+        assert!(!Policy::merge(global_off.clone(), Policy::default()).require_approval_proof());
+        assert!(!Policy::merge(global_off.clone(), repo_off.clone()).require_approval_proof());
+
+        // …but a repo may still re-arm it for its own scope.
         let repo_on = Policy::parse("[security]\nrequire_approval_proof = true").unwrap();
         assert!(Policy::merge(global_off, repo_on).require_approval_proof());
+
+        // And a global opt-in is never weakened by a repo saying false.
+        let global_on = Policy::parse("[security]\nrequire_approval_proof = true").unwrap();
+        assert!(Policy::merge(global_on, repo_off).require_approval_proof());
     }
 
     #[test]
@@ -331,10 +366,22 @@ mod tests {
     }
 
     #[test]
-    fn merge_repo_overrides_provenance_toggle() {
-        let global = Policy::parse("[provenance]\nenabled = true").unwrap();
-        let repo = Policy::parse("[provenance]\nenabled = false").unwrap();
-        assert!(!Policy::merge(global, repo).provenance_enabled());
+    fn merge_repo_can_enable_but_not_disable_provenance() {
+        // Same scope rule as the approval proof: the repo file is agent-writable,
+        // so it may turn the guardrail ON for its own scope and never OFF.
+        let repo_off = Policy::parse("[provenance]\nenabled = false").unwrap();
+        assert!(
+            Policy::merge(Policy::default(), repo_off.clone()).provenance_enabled(),
+            "a repo must not be able to disable the trifecta guard"
+        );
+
+        // The user-owned global scope may disable it…
+        let global_off = Policy::parse("[provenance]\nenabled = false").unwrap();
+        assert!(!Policy::merge(global_off.clone(), Policy::default()).provenance_enabled());
+
+        // …and a repo may still re-arm it locally.
+        let repo_on = Policy::parse("[provenance]\nenabled = true").unwrap();
+        assert!(Policy::merge(global_off, repo_on).provenance_enabled());
     }
 
     #[test]

@@ -386,6 +386,19 @@ impl SealedVault {
         .is_ok()
     }
 
+    /// The hex verifying key of this vault's auth signing key — the same value a
+    /// checkpoint carries as `key_id`, so a checkpoint's authenticity can be
+    /// pinned to the vault file the user already trusts. `None` on a pre-v2 vault
+    /// with no stored public key: nothing can be pinned then, and callers must say
+    /// so rather than implying a guarantee they cannot make.
+    pub fn auth_key_id(&self) -> Option<&str> {
+        if self.auth_pubkey.is_empty() {
+            None
+        } else {
+            Some(&self.auth_pubkey)
+        }
+    }
+
     /// Whether this vault carries the v2 asymmetric proof key. A vault provisioned
     /// before the v2 upgrade has no usable public key, so challenge-response proofs
     /// ([`verify_proof`](Self::verify_proof)) can never succeed against it — even

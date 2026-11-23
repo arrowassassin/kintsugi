@@ -65,15 +65,20 @@ pub fn export(
     let mut vault_note = String::new();
     match (admin::load_vault(&admin::default_vault_path()), no_sign) {
         (VaultState::Locked(vault), false) => {
-            let password =
-                read_password("Admin password (signs the checkpoint): ", &password_file)?;
-            if !vault.verify_password(&password) {
+            // `Zeroizing` so the password is wiped when it leaves scope: this is
+            // the second privileged call site and the boundary should match the
+            // admin-proof one.
+            let password = zeroize::Zeroizing::new(read_password(
+                "Admin password (signs the checkpoint): ",
+                &password_file,
+            )?);
+            if !vault.verify_password(password.as_str()) {
                 bail!("wrong admin password — nothing was recorded or exported");
             }
             let (salt, params) = vault.auth_challenge();
-            let key_id = anchor_key_id(&salt, params, &password)?;
+            let key_id = anchor_key_id(&salt, params, password.as_str())?;
             checkpoint.key_id = key_id;
-            let sig = sign_checkpoint(&password, &salt, params, &checkpoint.bytes())?;
+            let sig = sign_checkpoint(password.as_str(), &salt, params, &checkpoint.bytes())?;
             checkpoint.sig = Some(hex::encode(sig));
         }
         (VaultState::Degraded(reason), _) => {
@@ -161,6 +166,20 @@ pub fn verify(checkpoint: Option<PathBuf>) -> Result<()> {
     // The verification target: the caller's file, else the last anchor row.
     let checkpoint = match checkpoint {
         Some(path) => {
+            // A checkpoint is a handful of short lines by construction, so anything
+            // large is not one: refuse before slurping it (a multi-GB file would
+            // otherwise OOM the CLI).
+            const MAX_CHECKPOINT_BYTES: u64 = 8 * 1024;
+            if let Ok(meta) = std::fs::metadata(&path) {
+                if meta.len() > MAX_CHECKPOINT_BYTES {
+                    println!(
+                        "UNVERIFIABLE: {} is {} bytes — a checkpoint is a few hundred;                          this is not one.",
+                        path.display(),
+                        meta.len()
+                    );
+                    std::process::exit(EXIT_UNVERIFIABLE);
+                }
+            }
             let text = match std::fs::read_to_string(&path) {
                 Ok(text) => text,
                 Err(e) => {
@@ -234,6 +253,39 @@ pub fn verify(checkpoint: Option<PathBuf>) -> Result<()> {
         std::process::exit(EXIT_INVALID);
     }
 
+    // Authenticity, not just self-consistency. `signature_is_valid` trusts the key
+    // the file carries, so on its own a forger can mint their own key, re-sign a
+    // rewritten log and get a green result. When this machine has a vault, the
+    // checkpoint must be signed by THAT vault's key.
+    match admin::load_vault(&admin::default_vault_path()) {
+        VaultState::Locked(vault) => match vault.auth_key_id() {
+            Some(pinned) if pinned != checkpoint.key_id => {
+                println!("INVALID: this checkpoint was signed by a key this vault does not own.");
+                println!("  key this machine trusts: {pinned}");
+                println!("  key that signed the file: {}", checkpoint.key_id);
+                println!(
+                    "  A checkpoint vouches for a log only on the machine whose key signed it; \
+                     verify it there, not here."
+                );
+                std::process::exit(EXIT_INVALID);
+            }
+            Some(_) => {} // signed by this vault's key and self-consistent
+            None => println!(
+                "warning: this vault stores no auth key (pre-v2) — the signature is \
+                 self-consistent but not pinned to a key."
+            ),
+        },
+        VaultState::Degraded(reason) => println!(
+            "warning: admin vault unreadable ({reason}) — the signature is self-consistent, \
+             but nothing pins it to a key."
+        ),
+        VaultState::Unprovisioned => println!(
+            "note: no admin vault on this machine — the signature is self-consistent, but \
+             no key you have vouched for pins it. Provision one (`kintsugi admin provision`) \
+             to make `anchor verify` check authenticity, not just integrity."
+        ),
+    }
+
     let n = checkpoint.seq;
     let chain = match log.verify_chain() {
         Ok(chain) => chain,
@@ -298,7 +350,21 @@ pub fn anchored_status_line(log: &EventLog) -> Option<String> {
     } else {
         ""
     };
-    Some(format!("  anchored: {ts} ({since} events ago){unsigned}"))
+    // Age versus the wall clock: a months-old "anchored, 0 events ago" is the
+    // signature of a log that has not moved (or was rewound), and reading it as
+    // reassuring is the failure the review flagged.
+    let age = {
+        let now = time::OffsetDateTime::now_utc();
+        let secs = (now - anchor.created_ts).whole_seconds().max(0);
+        match secs {
+            0..=3_599 => format!("{}m old", secs / 60),
+            3_600..=86_399 => format!("{}h old", secs / 3_600),
+            _ => format!("{}d old", secs / 86_400),
+        }
+    };
+    Some(format!(
+        "  anchored: {ts} ({since} events ago, {age}){unsigned}"
+    ))
 }
 
 /// Whole-second RFC3339 UTC. Seconds precision is deliberate: it is a fixed

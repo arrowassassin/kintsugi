@@ -21,7 +21,8 @@ daemon, and makes no network call. The copy is yours to make.
 - **TAMPERED** — the chain diverges before the anchor, or the anchored head is no
   longer at its sequence (a purge or a rewrite rebuilt the log underneath it).
 - **INVALID** — the signature does not verify under the `key_id` the checkpoint
-  carries. The file was edited, corrupted, or forged.
+  carries, **or** the `key_id` is not the one this machine's vault owns. The file
+  was edited, corrupted, forged, or signed on another machine.
 - **UNVERIFIABLE** — unsigned, missing, unreadable, or no anchor recorded. An
   unsigned checkpoint asserts nothing about who wrote it.
 
@@ -64,9 +65,21 @@ not the prose.
 
 Signing adds no new secret at rest. The key is derived per operation from the same
 admin-vault inputs the admin proof uses (password, `auth_salt`, KDF params), and
-only the verifying public key travels — as the checkpoint's `key_id`, in hex. That
-makes a checkpoint **self-certifying**: it verifies against a key it carries, and
-the vault file you already trust pins that key.
+only the verifying public key travels — as the checkpoint's `key_id`, in hex.
+
+**Pinning is what makes that mean "authentic", not merely "self-consistent".** A
+signature that verifies against the key *inside the file* proves only that the file
+was not edited after signing — anyone can mint their own key, re-sign a rewritten
+log, and produce a file that passes that check. So `kintsugi anchor verify` also
+loads this machine's admin vault and compares `key_id` against the vault's stored
+public key:
+
+- vault present and keys differ → **INVALID** (exit 3), "signed by a key this vault
+  does not own". Verify a checkpoint on the machine that made it.
+- vault present and keys match → the signature is pinned and the verdict is real.
+- no vault on this machine → the verdict is honest but weaker: the output says the
+  signature is self-consistent and *not* pinned, so a green result there means
+  "nothing was edited after signing", not "the right machine signed this".
 
 - No vault, or `--no-sign`, or an unreadable vault ⇒ the checkpoint is **unsigned**
   and `anchor verify` reports `UNVERIFIABLE`. That is deliberate: a signature you
@@ -96,5 +109,16 @@ new head — with the `audit:purge` row in the events table preserving the why.
   [`security-assessment.md`](security-assessment.md) for the honest boundary.
 - **It does not prove the log was never rewritten before you first anchored** —
   your first checkpoint is where the guarantee starts.
+- **A whole-database rollback is invisible.** Restoring the events table *and* the
+  anchors table from the same backup reports `INTACT`, because both travelled
+  together: the chain and the recorded anchor agree with each other. Only a copy
+  of the checkpoint that lives outside the database catches that — which is why
+  the export exists. `kintsugi status` prints the anchor's age next to the event
+  count so a months-old "0 events ago" reads as suspicious rather than calm.
+- **A secret used as the here-doc delimiter word is kept verbatim.** The redactor
+  treats `<<DELIM` as structure, not a value, so `bash <<PGPASSWORD=…` stores the
+  delimiter as written. Contrived, and documented in DECISIONS.md rather than
+  fixed by mangling a delimiter that the stored body still has to read as a
+  heredoc.
 - **It says nothing about a machine you do not verify on.** Verifying is a
   deliberate act: run it, read the exit code.

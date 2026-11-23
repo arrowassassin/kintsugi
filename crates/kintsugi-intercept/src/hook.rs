@@ -53,7 +53,18 @@ pub fn handle_with(dialect: Dialect, input: &str) -> HookOutcome {
 pub fn handle_with_event(dialect: Dialect, input: &str, event: HookEvent) -> HookOutcome {
     if event == HookEvent::Write {
         observe_write_call(dialect, input);
-        return HookOutcome::silent();
+        // A mis-registration — `beforeShellExecution` pointed at `--event write` —
+        // must not remove the gate. If the payload is a shell call, fall through to
+        // the decision path instead of returning silence; the observation above
+        // already happened, so nothing is lost either way.
+        if !matches!(dialect.parse(input), Parsed::Shell(_)) {
+            return HookOutcome::silent();
+        }
+        eprintln!(
+            "kintsugi-hook: --event write received a shell payload — honouring the gate instead of \
+             only observing; check the {} hook registration",
+            dialect.agent_id()
+        );
     }
     // Route on the explicit event marker BEFORE any shell parsing: a
     // PostToolUse payload reports a call that ALREADY ran. Re-judging it as a
@@ -170,10 +181,17 @@ fn observe_post_call(dialect: Dialect, input: &str) {
     let Some(call) = dialect.parse_post(input) else {
         return;
     };
+    // An untrusted ingest (web fetch, search, out-of-workspace read) taints the
+    // session…
     if let Some(src) =
         observe::classify_result_ingest(&call.tool, &call.input, &call.response, &call.cwd)
     {
         send_ingest(dialect, src, call.session_id.as_deref(), &call.cwd);
+    }
+    // …and a read of a path an earlier tainted session wrote propagates that
+    // taint to this reader. Both are observation-only, escalation-only.
+    if let Some(path) = observe::classify_tool_read(&call.tool, &call.input, &call.cwd) {
+        send_read(call.session_id.as_deref(), &path, &call.cwd);
     }
 }
 
@@ -200,6 +218,16 @@ fn send_write(session: Option<&str>, path: &str, cwd: &Path) {
         return;
     };
     let _ = Client::write_observed(session, path, cwd);
+}
+
+/// Report a read of a (possibly labelled) path. Best-effort and silent, exactly
+/// like [`send_write`]: an unreachable daemon or an untracked session never
+/// affects the agent.
+fn send_read(session: Option<&str>, path: &str, cwd: &Path) {
+    let Some(session) = session.filter(|s| !s.is_empty()) else {
+        return;
+    };
+    let _ = Client::read_observed(session, path, cwd);
 }
 
 /// The narrow event-marker probe used to route PostToolUse payloads. Only the
@@ -530,19 +558,28 @@ mod tests {
     }
 
     #[test]
-    fn a_write_event_never_routes_into_the_shell_decision_path() {
-        // Even a payload that would be a catastrophic shell command is inert on
-        // the write route: a write observation can never deny, and shell parsing
-        // is not entered at all.
-        let payload = r#"{"command":"rm -rf /","cwd":"/work"}"#;
+    fn a_write_event_falls_through_to_the_gate_for_shell_payloads() {
+        // A FILE-write payload is inert on this route: a write observation never
+        // denies. But a shell payload arriving here means the registration is wrong
+        // (`beforeShellExecution` pointed at `--event write`), and silently passing
+        // it would remove the gate — so it is decided instead.
+        let file_write =
+            r#"{"tool":"write","args":{"filePath":"/work/repo/x.rs"},"cwd":"/work/repo"}"#;
         assert_eq!(
-            handle_with_event(Dialect::Cursor, payload, HookEvent::Write),
+            handle_with_event(Dialect::OpenCode, file_write, HookEvent::Write),
             HookOutcome::silent()
         );
-        // Garbage is equally harmless.
+        // Garbage is harmless.
         assert_eq!(
             handle_with_event(Dialect::OpenCode, "not json", HookEvent::Write),
             HookOutcome::silent()
+        );
+        // A catastrophic shell command on this route still gets a verdict.
+        let shell = r#"{"command":"rm -rf /","cwd":"/work"}"#;
+        assert_ne!(
+            handle_with_event(Dialect::Cursor, shell, HookEvent::Write),
+            HookOutcome::silent(),
+            "a shell payload on the write route must not be waved through"
         );
     }
 

@@ -101,6 +101,11 @@ pub struct Daemon {
     /// ([`current_vault`](Self::current_vault)) — never cached — so a re-provision
     /// or password change applies immediately, with no restart and no stale-copy bug.
     vault_path: PathBuf,
+    /// Whether this log records a provision (`audit:provision`) — computed once at
+    /// open. With the latch set, a *missing* vault is `Degraded`, not
+    /// `Unprovisioned`: deleting the vault file is not a way back to bare
+    /// approval on a machine that was provisioned.
+    vault_expected: bool,
     /// The last challenge nonce issued (and its op), consumed once by `Shutdown`
     /// or `Approve`. The slot is deliberately single and one-shot: a challenge
     /// is bound to exactly one op (`"shutdown"` or `"approve:<id>"`) and one
@@ -247,6 +252,26 @@ fn needs_queue_entry(cmd: &ProposedCommand, class: kintsugi_core::Class) -> bool
 /// never authorize a shutdown by replaying the same op string back.
 const SHUTDOWN_OP: &str = "shutdown";
 
+/// Bound and canonicalize a caller-supplied op string before it reaches the audit
+/// log. Keeps `approve:<uuid>` intact (the shape the protocol uses), replaces any
+/// other byte with `?`, and caps the whole thing so a hostile peer cannot grow the
+/// never-deletable log with megabyte-long "op" names.
+fn sanitize_op(op: &str) -> String {
+    const MAX: usize = 64;
+    let mut out = String::with_capacity(op.len().min(MAX));
+    for ch in op.chars().take(MAX) {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | ':' | '.') {
+            out.push(ch);
+        } else {
+            out.push('?');
+        }
+    }
+    if op.chars().count() > MAX {
+        out.push('…');
+    }
+    out
+}
+
 impl Daemon {
     /// Open the daemon backed by the event log at `db_path`, creating parent dirs.
     pub fn open(db_path: impl Into<PathBuf>) -> Result<Self> {
@@ -297,6 +322,9 @@ impl Daemon {
                 TaintState::new()
             }
         };
+        // The provision latch: a machine that recorded a provision must never fall
+        // back to bare approval just because the vault file disappeared.
+        let vault_expected = log.has_provision_marker().unwrap_or(false);
         Ok(Self {
             log,
             mode: Mode::default(),
@@ -304,6 +332,7 @@ impl Daemon {
             snapshot_dir,
             kill_path,
             vault_path,
+            vault_expected,
             pending: RefCell::new(None),
             shutdown: Cell::new(false),
             throttle: RefCell::new(AuthThrottle::default()),
@@ -368,6 +397,42 @@ impl Daemon {
             return;
         }
         self.apply_taint(&TaintEvent::WriteFile {
+            session: session.to_string(),
+            path: std::path::PathBuf::from(path),
+        });
+    }
+
+    /// Apply a file-read taint transition (V1.1): a session read `path`, and if an
+    /// earlier tainted session labelled that path, the reader inherits the taint.
+    ///
+    /// This is the consumer that makes write propagation mean anything — without
+    /// it `TaintEvent::WriteFile` fills a map nothing reads, and "the agent
+    /// exfiltrated what it learned by writing and re-reading a file" stays
+    /// invisible. Same gating as [`apply_write`](Self::apply_write): the policy of
+    /// the reading session's cwd decides, a clean path is skipped so ordinary
+    /// reads never touch the append-only taint stream, and an already-tainted
+    /// reader is a no-op.
+    ///
+    /// Observation only: it never blocks, never enqueues, and never influences a
+    /// verdict; `path` is an identifier and the file's content is never read.
+    pub fn apply_read(&self, session: &str, path: &str, cwd: &std::path::Path) {
+        if session.is_empty() || path.trim().is_empty() {
+            return;
+        }
+        if !load_policy(cwd).provenance_enabled() {
+            return;
+        }
+        if self.is_session_tainted(Some(session)) {
+            return; // already tainted: the transition would be a no-op
+        }
+        if !self
+            .taint
+            .borrow()
+            .is_path_tainted(std::path::Path::new(path))
+        {
+            return; // nobody labelled this path
+        }
+        self.apply_taint(&TaintEvent::ReadFile {
             session: session.to_string(),
             path: std::path::PathBuf::from(path),
         });
@@ -520,7 +585,16 @@ impl Daemon {
     /// the daemon is the authority on the *path* (a caller can't redirect it), and
     /// the contents are never cached, so there is no stale-vault class of bug.
     fn current_vault(&self) -> VaultState {
-        admin::load_vault(&self.vault_path)
+        match admin::load_vault(&self.vault_path) {
+            // The file is gone but this machine was provisioned: treat it as
+            // degraded so a deleted/renamed vault can never quietly re-enable
+            // bare approval or a bare shutdown.
+            VaultState::Unprovisioned if self.vault_expected => VaultState::Degraded(
+                "the admin vault was provisioned on this machine but its file is missing"
+                    .to_string(),
+            ),
+            other => other,
+        }
     }
 
     /// Issue a challenge for a privileged op. `locked=false` means no vault, so the
@@ -593,17 +667,23 @@ impl Daemon {
             }
             VaultState::Locked(v) => v,
         };
-        // Brute-force lockout: after repeated failures, refuse without even
-        // checking the proof until the window elapses (the attempt is still
-        // logged). Defeats a script hammering the admin password.
-        if let Some(rem) = self.throttle.borrow().lockout_remaining() {
-            self.record_admin(op, false, "locked out");
-            return ipc::Response::Error {
-                message: format!(
-                    "too many failed attempts; locked out for {}s",
-                    rem.as_secs() + 1
-                ),
-            };
+        // Brute-force lockout, gated on a proof actually being offered: only a
+        // request carrying a nonce/proof can guess anything, so only those are
+        // throttled. A bare request cannot brute-force a secret, and counting it
+        // would let any local peer lock the human out of their own privileged ops
+        // (approve and shutdown share this budget) — a same-user DoS on the safety
+        // workflow, which is the opposite of what the throttle is for.
+        let proof_offered = nonce_hex.is_some() || proof_hex.is_some();
+        if proof_offered {
+            if let Some(rem) = self.throttle.borrow().lockout_remaining() {
+                self.record_admin(op, false, "locked out");
+                return ipc::Response::Error {
+                    message: format!(
+                        "too many failed attempts; locked out for {}s",
+                        rem.as_secs() + 1
+                    ),
+                };
+            }
         }
         // The challenge is one-shot: take it regardless of the outcome.
         let pending = self.pending.borrow_mut().take();
@@ -629,7 +709,9 @@ impl Daemon {
             self.shutdown.set(true);
             ipc::Response::Ack
         } else {
-            self.throttle.borrow_mut().record_failure();
+            if proof_offered {
+                self.throttle.borrow_mut().record_failure();
+            }
             // Distinguish a wrong password from a vault that simply can't carry a
             // proof (provisioned before the asymmetric-auth scheme): the latter
             // fails for *every* password, so a bare "authentication failed" reads
@@ -714,29 +796,41 @@ impl Daemon {
             }
             VaultState::Locked(v) => v,
         };
-        // Brute-force lockout: shared with shutdown auth (same bounds). After
-        // repeated failures, refuse without even checking the proof; the
-        // attempt is still audited. A success resets the shared budget.
-        if let Some(rem) = self.throttle.borrow().lockout_remaining() {
-            self.record_admin(&op, false, "locked out");
-            return ipc::Response::Error {
-                message: format!(
-                    "too many failed attempts; locked out for {}s",
-                    rem.as_secs() + 1
-                ),
-            };
+        // Brute-force lockout, shared with shutdown auth (same bounds) and gated on
+        // a proof actually being offered: a bare approve cannot guess a secret, so
+        // counting it would hand any local peer a DoS on the human's own approval
+        // and shutdown workflow. A success resets the shared budget.
+        let proof_offered = nonce_hex.is_some() || proof_hex.is_some();
+        if proof_offered {
+            if let Some(rem) = self.throttle.borrow().lockout_remaining() {
+                self.record_admin(&op, false, "locked out");
+                return ipc::Response::Error {
+                    message: format!(
+                        "too many failed attempts; locked out for {}s",
+                        rem.as_secs() + 1
+                    ),
+                };
+            }
         }
         // Absence is None, never an empty string: a placeholder must never
         // stand in for a real nonce/proof in the crypto path.
         let nonce_hex = nonce_hex.filter(|s| !s.trim().is_empty());
         let proof_hex = proof_hex.filter(|s| !s.trim().is_empty());
         match (nonce_hex, proof_hex) {
-            // Bare under the opt-out: the pre-Phase-7 behavior, restored.
-            (None, None) if !require_proof => self.resolve_pending_response(id, Decision::Allow),
-            // Bare under the default: the self-approval attempt. Loud, audited,
-            // throttled — never silent.
+            // Bare under the opt-out: the pre-Phase-7 behavior, restored — but
+            // never silent. An approval that reached the queue without proof is
+            // exactly what a human reading the timeline must be able to see, so
+            // it writes its own audit row; the log can never show this as
+            // `human:allow` with nothing behind it.
+            (None, None) if !require_proof => {
+                self.record_admin(&op, true, "policy-opt-out");
+                self.resolve_pending_response(id, Decision::Allow)
+            }
+            // Bare under the default: the self-approval attempt. Loud and audited —
+            // never silent. Deliberately NOT counted against the brute-force budget:
+            // it carries no proof, so it cannot be guessing, and counting it would
+            // let one such request per window lock the human out of approving.
             (None, None) => {
-                self.throttle.borrow_mut().record_failure();
                 self.record_admin(&op, false, "self-approval blocked");
                 ipc::Response::Error {
                     message: format!(
@@ -801,6 +895,12 @@ impl Daemon {
     /// Record a privileged-operation attempt as a hash-chained audit event, so a
     /// forced stop — successful or not — is always visible on the timeline.
     fn record_admin(&self, op: &str, ok: bool, reason: &str) {
+        // `op` is caller-supplied (`approve:<id>`) and lands in the append-only,
+        // never-deletable event log, so it is validated and bounded here: without
+        // this, any local peer could write attacker-chosen, unredacted text of up
+        // to MAX_FRAME bytes into the audit trail on every refused attempt.
+        let op = sanitize_op(op);
+        let op = op.as_str();
         let raw = format!(
             "admin {op} — {}",
             if ok { "authenticated" } else { "denied" }
@@ -1268,6 +1368,11 @@ impl Daemon {
             // never blocks, never enqueues, and never touches a command verdict.
             ipc::Request::WriteObserved { session, path, cwd } => {
                 self.apply_write(&session, &path, &cwd);
+                ipc::Response::Ack
+            }
+            // The reader half: a read of a labelled path taints the reader.
+            ipc::Request::ReadObserved { session, path, cwd } => {
+                self.apply_read(&session, &path, &cwd);
                 ipc::Response::Ack
             }
             ipc::Request::Provenance(cmd) => ipc::Response::Provenance {
