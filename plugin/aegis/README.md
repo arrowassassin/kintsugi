@@ -12,7 +12,7 @@ kintsugi init                    # starts the daemon and is otherwise idempotent
 Then enable the plugin:
 
 ```
-/plugin marketplace add arrowassassin/kintsugi
+/plugin marketplace add kintsugi-tools/kintsugi
 /plugin install kintsugi@kintsugi
 ```
 

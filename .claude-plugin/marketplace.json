@@ -2,8 +2,8 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-marketplace.json",
   "name": "kintsugi",
   "owner": {
-    "name": "arrowassassin",
-    "email": "arrowassassin1604@gmail.com"
+    "name": "kintsugi-tools",
+    "email": "kintsugi.tools@gmail.com"
   },
   "description": "Kintsugi — a local-first safety layer for AI coding agents.",
   "plugins": [
@@ -13,8 +13,8 @@
       "source": "./plugin/kintsugi",
       "description": "Intercept commands before they run, hold the dangerous ones for one-key approval, make destructive actions reversible, and keep a tamper-evident audit log. Requires the Kintsugi binaries (`cargo install kintsugi` or Homebrew).",
       "version": "0.1.0",
-      "author": { "name": "arrowassassin" },
-      "homepage": "https://github.com/arrowassassin/kintsugi",
+      "author": { "name": "kintsugi-tools" },
+      "homepage": "https://github.com/kintsugi-tools/kintsugi",
       "license": "MIT",
       "keywords": ["safety", "security", "agents", "interception", "audit", "undo"],
       "defaultEnabled": false

@@ -1,0 +1,34 @@
+// .zed/debug.json  — Zed allows comments (JSONC)
+[
+  {
+    "label": "Run kintsugi-daemon",
+    "adapter": "CodeLLDB",
+    "request": "launch",
+    // Build the binary first, then launch the built artifact.
+    "build": {
+      "command": "cargo",
+      "args": ["build", "--bin", "kintsugi-daemon"],
+    },
+    "program": "$ZED_WORKTREE_ROOT/target/debug/kintsugi-daemon",
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "args": [],
+    // No env → uses the default paths the Control Room app also reads:
+    //   ~/Library/Application Support/kintsugi/events.db  (+ the default socket)
+  },
+  {
+    "label": "Run kintsugi-daemon (isolated test instance)",
+    "adapter": "CodeLLDB",
+    "request": "launch",
+    "build": {
+      "command": "cargo",
+      "args": ["build", "--bin", "kintsugi-daemon"],
+    },
+    "program": "$ZED_WORKTREE_ROOT/target/debug/kintsugi-daemon",
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "args": [],
+    "env": {
+      "KINTSUGI_DB": "/tmp/kintsugi-dev/events.db",
+      "KINTSUGI_SOCKET": "/tmp/kintsugi-dev/k.sock",
+    },
+  },
+]
