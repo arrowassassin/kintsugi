@@ -8,6 +8,11 @@
 //! Security spine: policy may always *add* caution (a `deny` rule escalates any
 //! command to Hold/Deny). A policy `allow` may tame the ambiguous band, but it
 //! **never downgrades a rule-based catastrophic block** — that hard floor stands.
+//! The one auth-posture knob (`[security] require_approval_proof`, default on) is
+//! deliberately NOT symmetric across scopes: a repo may require the proof but can
+//! never waive it, because the repo file lives in the workspace an agent writes.
+//! Only the user-owned global scope can turn it off, and a waiving approval is
+//! still recorded as an audit event.
 
 use serde::Deserialize;
 
@@ -29,6 +34,27 @@ pub struct Policy {
     /// Provenance (taint-aware trifecta guard) settings.
     #[serde(default)]
     pub provenance: Provenance,
+    /// Security-posture settings.
+    #[serde(default)]
+    pub security: Security,
+}
+
+/// Security-posture settings (`[security]`).
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub struct Security {
+    /// Whether approving a held command over IPC requires proof of the admin
+    /// password. Absent ⇒ required (the Phase 7 default, a deliberate
+    /// human-approved behavior change): a same-user agent process that can
+    /// reach the owner-only socket and speak the protocol cannot approve its
+    /// own held command silently — the attempt fails loudly and is audited.
+    ///
+    /// Only the **user-owned global** policy may waive it. A repo-level
+    /// `.kintsugi.toml` can require the proof but can never waive it: that file
+    /// lives in the workspace an agent writes, so honouring a repo `false` would
+    /// let one ordinary file write re-enable silent self-approval. A waived
+    /// approval still writes its audit row, so it can never look like a human's.
+    #[serde(default)]
+    pub require_approval_proof: Option<bool>,
 }
 
 /// Provenance / taint-aware flow-control settings (`[provenance]`).
@@ -85,7 +111,30 @@ impl Policy {
             threshold: repo.threshold.or(global.threshold),
             rules: Rules { allow, deny },
             provenance: Provenance {
-                enabled: repo.provenance.enabled.or(global.provenance.enabled),
+                // Same scope rule as `[security]` below, for the same reason: the
+                // repo file is agent-writable, so it may ENABLE a guardrail but
+                // never disable one. Only the user-owned global scope can opt out.
+                enabled: match (repo.provenance.enabled, global.provenance.enabled) {
+                    (Some(true), _) => Some(true),
+                    (_, Some(false)) => Some(false),
+                    (_, Some(true)) => Some(true),
+                    _ => None,
+                },
+            },
+            security: Security {
+                // A repo may REQUIRE the proof; it may never waive it. The repo
+                // policy file lives in the workspace the agent writes, so any
+                // weakening here is agent-reachable — the opt-out is honoured
+                // only from the user-owned global scope.
+                require_approval_proof: match (
+                    repo.security.require_approval_proof,
+                    global.security.require_approval_proof,
+                ) {
+                    (Some(true), _) => Some(true),   // a repo can always tighten
+                    (_, Some(false)) => Some(false), // the user's scope can waive
+                    (_, Some(true)) => Some(true),
+                    _ => None, // default (true) applies
+                },
             },
         }
     }
@@ -98,6 +147,14 @@ impl Policy {
     /// Whether the provenance trifecta guard is enabled (default: true).
     pub fn provenance_enabled(&self) -> bool {
         self.provenance.enabled.unwrap_or(true)
+    }
+
+    /// Whether IPC approval requires an admin-password proof (default: true —
+    /// see [`Security::require_approval_proof`]). Only meaningful on a daemon
+    /// with a provisioned vault; with no vault there is nothing to prove and
+    /// approval stays bare (the shutdown mirror).
+    pub fn require_approval_proof(&self) -> bool {
+        self.security.require_approval_proof.unwrap_or(true)
     }
 
     /// Decide what this policy says about a command. Deny wins over allow.
@@ -245,9 +302,52 @@ mod tests {
                 deny: vec!["deploy".into()],
             },
             provenance: Provenance::default(),
+            security: Security::default(),
         };
         assert_eq!(p.action_for("deploy now"), PolicyAction::Deny);
         assert_eq!(p.risk_threshold(), DEFAULT_THRESHOLD);
+    }
+
+    #[test]
+    fn approval_proof_defaults_on_and_parses_off() {
+        // Absent ⇒ required (the Phase 7 default: a same-user agent approving its
+        // own held command becomes loud, failed, and audited instead of silent).
+        assert!(Policy::default().require_approval_proof());
+        assert!(Policy::parse("mode = \"attended\"")
+            .unwrap()
+            .require_approval_proof());
+        // Explicitly disabled (the documented opt-out for the pre-Phase-7 flow).
+        let off = Policy::parse("[security]\nrequire_approval_proof = false").unwrap();
+        assert!(!off.require_approval_proof());
+        // Explicit on.
+        let on = Policy::parse("[security]\nrequire_approval_proof = true").unwrap();
+        assert!(on.require_approval_proof());
+    }
+
+    #[test]
+    fn merge_repo_can_tighten_but_never_waive_approval_proof() {
+        // A repo-level `.kintsugi.toml` lives in the workspace an agent writes, so
+        // it may only ever ADD the requirement. Ignoring a repo's `false` is the
+        // whole point: otherwise one ordinary file write re-enables bare
+        // self-approval for a held catastrophic command.
+        let repo_off = Policy::parse("[security]\nrequire_approval_proof = false").unwrap();
+        assert!(
+            Policy::merge(Policy::default(), repo_off.clone()).require_approval_proof(),
+            "a repo must not be able to waive the proof"
+        );
+
+        // The user-owned global scope IS allowed to waive it…
+        let global_off = Policy::parse("[security]\nrequire_approval_proof = false").unwrap();
+        assert!(!Policy::merge(global_off.clone(), Policy::default()).require_approval_proof());
+        assert!(!Policy::merge(global_off.clone(), repo_off.clone()).require_approval_proof());
+
+        // …but a repo may still re-arm it for its own scope.
+        let repo_on = Policy::parse("[security]\nrequire_approval_proof = true").unwrap();
+        assert!(Policy::merge(global_off, repo_on).require_approval_proof());
+
+        // And a global opt-in is never weakened by a repo saying false.
+        let global_on = Policy::parse("[security]\nrequire_approval_proof = true").unwrap();
+        assert!(Policy::merge(global_on, repo_off).require_approval_proof());
     }
 
     #[test]
@@ -266,10 +366,22 @@ mod tests {
     }
 
     #[test]
-    fn merge_repo_overrides_provenance_toggle() {
-        let global = Policy::parse("[provenance]\nenabled = true").unwrap();
-        let repo = Policy::parse("[provenance]\nenabled = false").unwrap();
-        assert!(!Policy::merge(global, repo).provenance_enabled());
+    fn merge_repo_can_enable_but_not_disable_provenance() {
+        // Same scope rule as the approval proof: the repo file is agent-writable,
+        // so it may turn the guardrail ON for its own scope and never OFF.
+        let repo_off = Policy::parse("[provenance]\nenabled = false").unwrap();
+        assert!(
+            Policy::merge(Policy::default(), repo_off.clone()).provenance_enabled(),
+            "a repo must not be able to disable the trifecta guard"
+        );
+
+        // The user-owned global scope may disable it…
+        let global_off = Policy::parse("[provenance]\nenabled = false").unwrap();
+        assert!(!Policy::merge(global_off.clone(), Policy::default()).provenance_enabled());
+
+        // …and a repo may still re-arm it locally.
+        let repo_on = Policy::parse("[provenance]\nenabled = true").unwrap();
+        assert!(Policy::merge(global_off, repo_on).provenance_enabled());
     }
 
     #[test]

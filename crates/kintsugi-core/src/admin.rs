@@ -242,7 +242,10 @@ fn auth_message(nonce: &[u8], op: &[u8]) -> Vec<u8> {
 
 /// Derive the ed25519 signing key from the password and the vault's auth_salt.
 /// The 32-byte argon2id output is the seed; the private key is never written.
-fn auth_signing_key(
+/// Crate-visible: the anchor checkpoint signer (`anchor.rs`) reuses this exact
+/// derivation so anchor signatures and admin proofs share one key discipline
+/// (and one `key_id` identity) with no new secret at rest.
+pub(crate) fn auth_signing_key(
     params: KdfParams,
     password: &str,
     auth_salt_hex: &str,
@@ -381,6 +384,19 @@ impl SealedVault {
             &ed25519_dalek::Signature::from_bytes(&sig),
         )
         .is_ok()
+    }
+
+    /// The hex verifying key of this vault's auth signing key — the same value a
+    /// checkpoint carries as `key_id`, so a checkpoint's authenticity can be
+    /// pinned to the vault file the user already trusts. `None` on a pre-v2 vault
+    /// with no stored public key: nothing can be pinned then, and callers must say
+    /// so rather than implying a guarantee they cannot make.
+    pub fn auth_key_id(&self) -> Option<&str> {
+        if self.auth_pubkey.is_empty() {
+            None
+        } else {
+            Some(&self.auth_pubkey)
+        }
     }
 
     /// Whether this vault carries the v2 asymmetric proof key. A vault provisioned

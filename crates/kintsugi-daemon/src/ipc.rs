@@ -37,6 +37,26 @@ pub enum Request {
     /// (P6.2): the daemon labels the session; it never blocks on this — observation
     /// only labels, the trifecta rule decides later.
     Ingest(kintsugi_core::ObservedIngest),
+    /// "An agent session wrote this file." Provenance propagation input (V1.1):
+    /// a tainted session taints the path it writes, so a later reader inherits the
+    /// taint. `path` is an identifier — the write content never leaves the agent.
+    /// Observation only (never blocks), gated on the cwd's `[provenance]` policy
+    /// exactly like the trifecta floor.
+    WriteObserved {
+        session: String,
+        path: String,
+        cwd: PathBuf,
+    },
+    /// "An agent session read this file." The consumer half of the write
+    /// propagation: if an earlier tainted session labelled `path`, the reader now
+    /// inherits that taint (and its later egress sink trips the trifecta).
+    /// `path` is an identifier — the file content never leaves the agent, and this
+    /// never blocks, never enqueues, and never touches a command verdict.
+    ReadObserved {
+        session: String,
+        path: String,
+        cwd: PathBuf,
+    },
     /// "Show me the provenance trail for this command" (P6.4). A read-only query for
     /// the CLI/TUI: the daemon returns the session's untrusted reads plus this
     /// command's sensitive-read → egress-sink → rule chain. Identifiers only.
@@ -52,9 +72,24 @@ pub enum Request {
     // Struct variants (not newtype-of-String): serde's internally-tagged enums
     // cannot represent a tagged newtype wrapping a primitive.
     PendingStatus { id: String },
-    /// "A human approved this queued command id."
-    Approve { id: String },
-    /// "A human denied this queued command id."
+    /// "A human approved this queued command id." Since Phase 7 (anchored
+    /// trust) this is a *privileged* op on a locked daemon: it carries the
+    /// nonce + proof from `AuthBegin { op: "approve:<id>" }`. A bare approve
+    /// (both fields absent) is refused loudly, audited, and throttled under the
+    /// default policy (`[security] require_approval_proof = true`); a daemon
+    /// with no vault accepts it bare (the shutdown mirror — there is no secret
+    /// to prove possession of).
+    Approve {
+        id: String,
+        /// The challenge nonce + proof (hex). `None` on the bare path —
+        /// modeled as absence, NOT an empty string, so no placeholder ever
+        /// flows into the proof-verification crypto sink.
+        nonce: Option<String>,
+        /// See `nonce`.
+        proof: Option<String>,
+    },
+    /// "A human denied this queued command id." Stays bare by design: an agent
+    /// denying its own held command is a nuisance, not a threat.
     Deny { id: String },
     /// "Drop every still-pending entry from the queue without recording an audit
     /// row per one — the bulk recovery for orphaned holds."
@@ -238,9 +273,28 @@ fn expect_ack(resp: Response) -> Result<()> {
 
 /// Send a request and read the response on a fresh connection.
 fn round_trip(req: &Request) -> Result<Response> {
+    round_trip_within(req, None)
+}
+
+/// The same round-trip with an optional read deadline. A daemon that is alive but
+/// busy (the serve loop is single-threaded) would otherwise block the caller
+/// indefinitely — which, for the TUI, means freezing its event loop on the primary
+/// navigation key.
+fn round_trip_within(req: &Request, timeout: Option<std::time::Duration>) -> Result<Response> {
     let name = make_name()?;
     let mut stream =
         Stream::connect(name).context("connect to kintsugi daemon (is it running?)")?;
+    // Unix only: a named-pipe stream on Windows does not honour a read timeout
+    // (setting one either errors or defeats the read), and propagating that turned a
+    // convenience bound into a hard failure for every Windows caller. The bound
+    // exists so the TUI's event loop cannot wedge on a wedged daemon — never as a
+    // security control — so Windows keeps the previous unbounded read.
+    #[cfg(unix)]
+    if let Some(t) = timeout {
+        stream.set_recv_timeout(Some(t))?;
+    }
+    #[cfg(not(unix))]
+    let _ = timeout;
     write_message(&mut stream, req)?;
     let mut reader = bounded(&mut stream);
     read_message(&mut reader)
@@ -274,9 +328,40 @@ impl Client {
         expect_ack(round_trip(&Request::Ingest(observed.clone()))?)
     }
 
+    /// Report a file write by an agent session (provenance write propagation).
+    pub fn write_observed(session: &str, path: &str, cwd: &std::path::Path) -> Result<()> {
+        expect_ack(round_trip(&Request::WriteObserved {
+            session: session.to_string(),
+            path: path.to_string(),
+            cwd: cwd.to_path_buf(),
+        })?)
+    }
+
+    /// Report a file read by an agent session (provenance read propagation).
+    pub fn read_observed(session: &str, path: &str, cwd: &std::path::Path) -> Result<()> {
+        expect_ack(round_trip(&Request::ReadObserved {
+            session: session.to_string(),
+            path: path.to_string(),
+            cwd: cwd.to_path_buf(),
+        })?)
+    }
+
     /// Fetch the provenance trail for a command: `(tainted, trail)`.
+    ///
+    /// Bounded: this is the call the TUI makes when you open a Detail view, and an
+    /// unbounded wait there freezes the whole interface for as long as the daemon
+    /// takes. The budget is deliberately generous — a cold local-socket connect plus
+    /// a single SQLite read measured multiple seconds on `windows-latest` CI, so a
+    /// tight bound would turn a slow machine into a false "daemon busy". Past it the
+    /// caller gets an error it can render honestly instead of a hung window.
+    pub const PROVENANCE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
     pub fn provenance(cmd: &ProposedCommand) -> Result<(bool, Vec<kintsugi_core::ProvStep>)> {
-        match round_trip(&Request::Provenance(cmd.clone()))? {
+        let resp = round_trip_within(
+            &Request::Provenance(cmd.clone()),
+            Some(Self::PROVENANCE_TIMEOUT),
+        )?;
+        match resp {
             Response::Provenance { tainted, trail } => Ok((tainted, trail)),
             Response::Error { message } => anyhow::bail!("daemon error: {message}"),
             _ => anyhow::bail!("unexpected response to Provenance"),
@@ -306,9 +391,27 @@ impl Client {
         }
     }
 
-    /// Approve a queued command (records the human decision; may snapshot).
+    /// Approve a queued command bare — no proof. Kept for callers that predate
+    /// approval auth (the TUI, the desktop app). A daemon with a provisioned
+    /// vault under the default policy refuses this with a loud, actionable
+    /// error ("approval requires proof — run `kintsugi approve <id>`"), which
+    /// those callers surface verbatim; the human then approves interactively.
     pub fn approve(id: &str) -> Result<()> {
-        expect_ack(round_trip(&Request::Approve { id: id.to_string() })?)
+        Self::approve_with_proof(id, None, None)
+    }
+
+    /// Approve a queued command with the nonce-bound proof from
+    /// [`auth_begin`](Self::auth_begin)`("approve:<id>")`. Pass
+    /// `Some(nonce_hex)` + `Some(proof_hex)` for the authenticated path; pass
+    /// `None`/`None` when the daemon reported no vault (`locked = false`) and
+    /// no proof is required. Absence is modeled as `None`, never an empty
+    /// string, so a placeholder can't be mistaken for a real nonce.
+    pub fn approve_with_proof(id: &str, nonce: Option<&str>, proof: Option<&str>) -> Result<()> {
+        expect_ack(round_trip(&Request::Approve {
+            id: id.to_string(),
+            nonce: nonce.map(str::to_string),
+            proof: proof.map(str::to_string),
+        })?)
     }
 
     /// Deny a queued command.

@@ -1,0 +1,24 @@
+{
+  "tool_name": "Write",
+  "tool_input": {
+    "file_path": "/work/repo/src/notes.rs",
+    "content": "// draft notes\n"
+  },
+  "tool_use_id": "tu_55b1c8",
+  "cwd": "/work/repo",
+  "agent_message": "Writing notes.rs",
+  "conversation_id": "conv-4d2f9a1c",
+  "generation_id": "gen-77e3b2",
+  "model": "claude-opus-4-7-thinking-max",
+  "model_id": "claude-opus-4-7",
+  "model_params": [
+    { "id": "thinking", "value": "true" },
+    { "id": "context", "value": "1m" },
+    { "id": "effort", "value": "max" }
+  ],
+  "hook_event_name": "preToolUse",
+  "cursor_version": "1.7.2",
+  "workspace_roots": ["/work/repo"],
+  "user_email": "user@example.com",
+  "transcript_path": null
+}

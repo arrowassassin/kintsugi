@@ -23,6 +23,7 @@ use std::path::PathBuf;
 
 use anyhow::{bail, Context, Result};
 use kintsugi_core::admin::{self, Enforcement, LockedSettings, VaultState};
+use kintsugi_core::EventLog;
 
 /// Where the sealed admin vault lives (see [`admin::default_vault_path`]).
 pub fn vault_path() -> PathBuf {
@@ -56,6 +57,15 @@ pub fn provision(password_file: Option<PathBuf>, force: bool) -> Result<()> {
     let prov = admin::provision(&pw, &settings).map_err(|e| anyhow::anyhow!("{e}"))?;
     admin::save_vault(&path, &prov.vault)
         .with_context(|| format!("write vault {}", path.display()))?;
+    // Latch the provision in the append-only log. The vault is one deletable file;
+    // the log is not — so a machine that was provisioned and whose vault file
+    // disappears reports a *degraded* vault instead of quietly falling back to
+    // unprovisioned bare approval (see `Daemon::current_vault`).
+    if let Ok(log) = EventLog::open(kintsugi_daemon::default_db_path()) {
+        if !log.has_provision_marker().unwrap_or(false) {
+            let _ = log.record_audit_marker("kintsugi admin provision", "audit:provision");
+        }
+    }
     // Keep the daemon-free fail-closed marker in sync with the sealed setting, so
     // the shim/hook honor it even with the daemon down (default: off).
     let _ = kintsugi_daemon::set_fail_closed_marker(settings.fail_closed);
@@ -276,7 +286,9 @@ pub fn read_admin_password(prompt: &str) -> Result<String> {
 }
 
 /// Read a password from a file (trailing newline trimmed) or interactively.
-fn read_password(prompt: &str, file: &Option<PathBuf>) -> Result<String> {
+/// Crate-visible: the anchor export (T1.4) uses the identical entry for its
+/// signing password, so both privileged paths share one discipline.
+pub(crate) fn read_password(prompt: &str, file: &Option<PathBuf>) -> Result<String> {
     if let Some(f) = file {
         let s = std::fs::read_to_string(f)
             .with_context(|| format!("read password file {}", f.display()))?;

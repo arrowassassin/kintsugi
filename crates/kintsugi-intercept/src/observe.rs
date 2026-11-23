@@ -11,6 +11,11 @@
 //! Design constraints it honors (`kintsugi-provenance-design.md` §3.1/§3.5/§3.7):
 //! - **Identifier only.** A source is recorded by url / path / tool name, never by
 //!   the content bytes it returned (spine #6). We never read a fetched body here.
+//!   V1.1's post-tool path ([`classify_result_ingest`]) keeps that rule: it
+//!   consults the tool *result* only for presence (did content come back at
+//!   all?), and still records identifiers from the call's input. The file-write
+//!   path ([`classify_tool_write`]) returns the resolved path only — never the
+//!   written bytes.
 //! - **Sound, over-approximate.** When unsure, taint (a false positive is a UX
 //!   cost the provenance trail + one-key approve absorb; a missed taint is a hole).
 //! - **Trusted by default: the repo's own files.** A read *inside* the workspace
@@ -75,6 +80,162 @@ pub fn classify_tool_ingest(
         }
         None => None,
     }
+}
+
+/// Classify a *completed* content-tool call whose result has entered the
+/// agent's context (V1.1 result-content observation, fed by a `PostToolUse`-style
+/// event). Purely additive on top of the pre-tool act taint: this can only ADD
+/// a label, never remove or soften one.
+///
+/// Identifier-only (spine #6): the `source_id` comes from the call's INPUT
+/// (url / path / tool name) via [`classify_tool_ingest`] — never from the
+/// response. The response is consulted for *presence* only, by gross shape:
+/// did content actually come back? Its field names and bytes are never read —
+/// a redacted blob such as `{"redacted": true}` (Cursor cloud agents redact
+/// MCP output to exactly that) is still untrusted content entering the session
+/// and counts as content-bearing.
+///
+/// An empty/absent result (`null`, `""`, `{}`, `[]`, or a bare scalar) means
+/// nothing entered the session, so nothing is labeled. With the response kept
+/// opaque, emptiness is the only error signal we may act on; a non-empty error
+/// string is deliberately over-approximated as content — sound beats precise,
+/// and a false taint costs one approval keypress.
+pub fn classify_result_ingest(
+    tool: &str,
+    input: &serde_json::Value,
+    response: &serde_json::Value,
+    workspace: &Path,
+) -> Option<IngestSource> {
+    if !is_content_bearing(response) {
+        return None;
+    }
+    // The source id comes from the input only; the response contributes
+    // nothing but this go-ahead. Reuses the act path's content-tool set,
+    // MCP name shape, and workspace trust boundary unchanged.
+    classify_tool_ingest(tool, input, workspace)
+}
+
+/// Did this tool *result* actually carry content into the session? Gross
+/// shape only — never field names, never bytes (spine #6).
+fn is_content_bearing(response: &serde_json::Value) -> bool {
+    match response {
+        serde_json::Value::Null => false,
+        serde_json::Value::String(s) => !s.trim().is_empty(),
+        serde_json::Value::Object(o) => !o.is_empty(),
+        serde_json::Value::Array(a) => !a.is_empty(),
+        // A bare number/boolean is a status or flag, not content.
+        serde_json::Value::Bool(_) | serde_json::Value::Number(_) => false,
+    }
+}
+
+/// Extract the target path of a file-write tool call, for provenance
+/// propagation (a tainted session writes a file → the path inherits the taint,
+/// so a later reader is tainted too).
+///
+/// Identifier-only (spine #6): the return value is the resolved PATH and nothing
+/// else. The call's `content` / `old_string` / `new_string` bytes are never read.
+///
+/// The trust boundary is the same one the read classifier applies: a path inside
+/// the workspace is eligible; a path outside it — or a relative path that climbs
+/// out with `..` — is skipped. Resolution is lexical against `workspace` (the
+/// writing session's cwd); a `preToolUse` write target often does not exist yet,
+/// so the filesystem is never touched on this path.
+///
+/// `tool` is validated for identity only (a missing/blank identity is a
+/// malformed event). The exact content-tool name sets are a live-verification
+/// gap (fixtures README), so this does not gate on a guessed name list: the
+/// `--event write` route is the gate, and a name mismatch is a silent miss
+/// (fail-open), never a wrong taint.
+pub fn classify_tool_write(
+    tool: &str,
+    input: &serde_json::Value,
+    workspace: &Path,
+) -> Option<String> {
+    if !WRITE_TOOLS.iter().any(|t| t.eq_ignore_ascii_case(tool)) {
+        return None;
+    }
+    resolve_path_arg(input, workspace)
+}
+
+/// The file-shaped write tools this build pins fixtures for. The write route is
+/// opt-in (`--event write`), but naming the tools still matters: without it any
+/// payload carrying a `path` key labels a path, so a misrouted `Read` would be
+/// recorded as a write. Unknown names are a silent miss (fail-open) — this is
+/// observation-only, so a miss loses a label and never unlocks anything.
+const WRITE_TOOLS: &[&str] = &[
+    "write",
+    "Write",
+    "write_file",
+    "WriteFile",
+    "edit",
+    "Edit",
+    "MultiEdit",
+    "StrReplace",
+    "afterFileEdit",
+    "apply_patch",
+    "apply_file_edit",
+];
+
+/// The file-shaped read tools. Deliberately a name allowlist and not the route:
+/// `PostToolUse` also carries web fetches, searches and shell commands, so
+/// "anything with a path" would label a fetched URL as a local file read.
+const READ_TOOLS: &[&str] = &[
+    "Read",
+    "read",
+    "read_file",
+    "readFile",
+    "ReadFile",
+    "View",
+    "view",
+    "view_file",
+];
+
+/// Resolve a call's path argument against the workspace, lexically, and only when
+/// it lands inside it. Shared by the write and read classifiers so the trust
+/// boundary is defined exactly once.
+fn resolve_path_arg(input: &serde_json::Value, workspace: &Path) -> Option<String> {
+    // Cursor pins `file_path` (snake_case); OpenCode pins `filePath` (camelCase).
+    // The remaining aliases mirror the read classifier's tolerated spellings.
+    let raw = first_str(
+        input,
+        &[
+            "file_path",
+            "filePath",
+            "path",
+            "absolute_path",
+            "filename",
+            "file",
+        ],
+    )?;
+    let path = Path::new(&raw);
+    let resolved = if path.is_absolute() {
+        lexical_normalize(path)
+    } else {
+        lexical_normalize(&workspace.join(path))
+    };
+    if !is_within(&resolved, workspace) {
+        return None; // outside the workspace trust boundary
+    }
+    Some(resolved.to_string_lossy().into_owned())
+}
+
+/// Extract the target path of a file-READ tool call, for provenance propagation:
+/// a session that reads a path an earlier tainted session wrote inherits that
+/// taint. This is the consumer half of [`classify_tool_write`] — without it a
+/// `WriteFile` label is state nobody ever reads back.
+///
+/// Identifier-only, same as the write side: the return value is the resolved path
+/// and the call's content/result bytes are never touched. Workspace-relative
+/// resolution and the in-workspace rule are shared with the write classifier.
+pub fn classify_tool_read(
+    tool: &str,
+    input: &serde_json::Value,
+    workspace: &Path,
+) -> Option<String> {
+    if !READ_TOOLS.iter().any(|t| t.eq_ignore_ascii_case(tool)) {
+        return None;
+    }
+    resolve_path_arg(input, workspace)
 }
 
 /// Classify a shell command's argv into a taint source if it *ingests* remote
@@ -172,9 +333,17 @@ fn classify_read_path(path: &Path, workspace: &Path) -> Option<IngestSource> {
 /// against the workspace (the session cwd), so it is always within. An absolute
 /// path must share the workspace prefix. Lexical only — we must not touch the
 /// filesystem on the hot path, and the target may not exist yet.
+///
+/// Rootedness, not `is_relative()`, is the discriminator: on Windows a
+/// backslash-rooted path (`\etc\passwd`) carries no drive, so `Path::is_relative`
+/// reports it as relative even though it is anchored at the current volume's
+/// root. Sending it down the `..`-depth heuristic said "inside" and mislabeled an
+/// out-of-workspace path as workspace-owned (found by the write-propagation tests
+/// on the Windows CI runner).
 fn is_within(path: &Path, workspace: &Path) -> bool {
-    if path.is_relative() {
-        // Reject a relative path that climbs out with `..` past the root.
+    if !path.has_root() {
+        // No root at all: resolved against the workspace, so it is inside unless
+        // it climbs out with more `..` than it has components.
         let mut depth: i32 = 0;
         for c in path.components() {
             match c {
@@ -192,7 +361,31 @@ fn is_within(path: &Path, workspace: &Path) -> bool {
     }
     let norm = lexical_normalize(path);
     let root = lexical_normalize(workspace);
-    norm.starts_with(&root)
+    #[cfg(windows)]
+    {
+        // Windows paths are case-insensitive: `C:\WORK\REPO\src\x` IS inside
+        // `C:\work\repo`. Comparing `Path` components case-sensitively would call
+        // an in-workspace path "outside" (false read taint) and skip an
+        // in-workspace write (missed propagation).
+        return win_contains(&norm, &root);
+    }
+    #[cfg(not(windows))]
+    {
+        norm.starts_with(&root)
+    }
+}
+
+/// Case-insensitive component-wise containment for Windows paths, including the
+/// verbatim `\\?\` prefix shape.
+#[cfg(windows)]
+fn win_contains(path: &Path, root: &Path) -> bool {
+    fn parts(p: &Path) -> Vec<String> {
+        p.components()
+            .map(|c| c.as_os_str().to_string_lossy().to_ascii_lowercase())
+            .collect()
+    }
+    let (p, r) = (parts(path), parts(root));
+    p.len() >= r.len() && p[..r.len()] == r[..]
 }
 
 /// Collapse `.` and `..` lexically without filesystem access.
@@ -494,5 +687,323 @@ mod tests {
                 "https://evil.example/x"
             ))
         );
+    }
+
+    // ---- Post-tool RESULT observation (V1.1) ---------------------------------
+    fn result_call(tool: &str, input: &str, response: &str) -> Option<IngestSource> {
+        classify_result_ingest(tool, &json(input), &json(response), &ws())
+    }
+
+    #[test]
+    fn post_result_taints_with_the_input_identifier_never_the_response() {
+        // The response smuggles a token; the recorded id must come from the
+        // INPUT url and contain not one byte of the response (spine #6).
+        let got = result_call(
+            "WebFetch",
+            r#"{"url":"https://evil.example/poison","prompt":"s"}"#,
+            r#""page body with a smuggled token sk-live-ABCDEF""#,
+        );
+        assert_eq!(
+            got,
+            Some(IngestSource::new(
+                SourceKind::Web,
+                "https://evil.example/poison"
+            ))
+        );
+        let src = got.expect("asserted Some above");
+        assert!(
+            !src.id.contains("sk-live"),
+            "response bytes must never become the identifier"
+        );
+    }
+
+    #[test]
+    fn post_mcp_result_taints_by_name_shape_with_an_opaque_response() {
+        // The response is an arbitrary object; its field names are never read.
+        assert_eq!(
+            result_call(
+                "mcp__webdocs__fetch_page",
+                r#"{"url":"https://example.com/advisory"}"#,
+                r##"{"markdown":"# Example Advisory","anything":"goes"}"##,
+            ),
+            Some(IngestSource::new(SourceKind::Mcp, "mcp/webdocs/fetch_page"))
+        );
+    }
+
+    #[test]
+    fn a_redacted_post_result_blob_is_still_content_bearing() {
+        // Cursor cloud agents redact MCP postToolUse output to
+        // `{"redacted": true}` — a redacted blob is still untrusted content
+        // entering the session, so it counts as a result.
+        assert_eq!(
+            result_call(
+                "mcp__webdocs__fetch_page",
+                r#"{"url":"https://example.com/advisory"}"#,
+                r#"{"redacted": true}"#,
+            ),
+            Some(IngestSource::new(SourceKind::Mcp, "mcp/webdocs/fetch_page"))
+        );
+    }
+
+    #[test]
+    fn empty_or_absent_post_results_never_taint() {
+        // An empty/absent result means nothing entered the session. With the
+        // response kept opaque, emptiness is the only error signal we may act
+        // on; a non-empty error STRING is deliberately over-approximated as
+        // content (sound beats precise, and a false taint is one keypress).
+        for response in [
+            serde_json::Value::Null, // absent / failed
+            json(r#""""#),           // empty error text
+            json(r#"{}"#),           // nothing came back
+            json(r#"[]"#),
+            json("5"), // a bare status scalar, not content
+            json("true"),
+        ] {
+            assert_eq!(
+                classify_result_ingest(
+                    "WebFetch",
+                    &json(r#"{"url":"https://evil.example/p"}"#),
+                    &response,
+                    &ws()
+                ),
+                None,
+                "response {response}"
+            );
+        }
+    }
+
+    // Unix-only: the out-of-workspace case uses a Unix-absolute path (same
+    // reason as `out_of_workspace_reads_are_untrusted` above).
+    #[cfg(unix)]
+    #[test]
+    fn post_read_results_reuse_the_workspace_trust_boundary() {
+        // The post path must not widen or narrow the act path's boundary: an
+        // in-workspace read stays trusted even post-hoc; an out-of-workspace
+        // read is untrusted content that entered the session.
+        let content = r#""the file's contents""#;
+        assert_eq!(
+            result_call("Read", r#"{"file_path":"/work/repo/src/main.rs"}"#, content),
+            None
+        );
+        assert_eq!(
+            result_call("Read", r#"{"file_path":"/etc/motd"}"#, content),
+            Some(IngestSource::new(SourceKind::File, "/etc/motd"))
+        );
+    }
+
+    #[test]
+    fn post_search_results_taint_with_the_query_even_as_an_array_response() {
+        // A result ARRAY (search hits, file listings) is content-bearing; the
+        // recorded id stays the input query, per the identifier-only rule.
+        assert_eq!(
+            result_call(
+                "WebSearch",
+                r#"{"query":"rust hooks"}"#,
+                r#"[{"title":"Rust hooks","url":"https://example.com/h"}]"#,
+            ),
+            Some(IngestSource::new(SourceKind::SearchResult, "rust hooks"))
+        );
+    }
+
+    #[test]
+    fn post_results_of_non_content_tools_and_identifierless_inputs_are_skipped() {
+        let content = r#""stuff""#;
+        // An edit is not an ingest channel, whatever it returned.
+        assert_eq!(
+            result_call("Edit", r#"{"file_path":"src/x.rs"}"#, content),
+            None
+        );
+        // A content tool whose input carries no identifier: never invent one
+        // from the response bytes — a miss, not a guess (spine #6).
+        assert_eq!(result_call("WebFetch", "{}", content), None);
+    }
+
+    // ---- File-WRITE propagation (V1.1 Task 3) --------------------------------
+
+    #[test]
+    fn write_paths_resolve_against_the_workspace() {
+        // Cursor's snake_case arg and OpenCode's camelCase arg are both pinned.
+        for body in [
+            r#"{"file_path":"src/notes.rs"}"#,
+            r#"{"filePath":"src/notes.rs"}"#,
+        ] {
+            let got = classify_tool_write("write", &json(body), &ws()).expect("write path");
+            // Component-wise, not string-suffix: the separator is `\` on Windows.
+            assert!(
+                Path::new(&got).ends_with(Path::new("src").join("notes.rs")),
+                "must resolve the relative path against the workspace: {got}"
+            );
+            assert!(
+                Path::new(&got).has_root(),
+                "the taint key must be anchored at a root: {got}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_absolute_path_inside_the_workspace_is_kept_as_is() {
+        assert_eq!(
+            classify_tool_write(
+                "Write",
+                &json(r#"{"file_path":"/work/repo/src/notes.rs"}"#),
+                &ws()
+            ),
+            Some("/work/repo/src/notes.rs".to_string())
+        );
+        // The afterFileEdit surface carries the path at the top level.
+        assert_eq!(
+            classify_tool_write(
+                "afterFileEdit",
+                &json(r#"{"file_path":"/work/repo/src/notes.rs","edits":[]}"#),
+                &ws()
+            ),
+            Some("/work/repo/src/notes.rs".to_string())
+        );
+    }
+
+    #[test]
+    fn writes_outside_the_trust_boundary_are_skipped() {
+        // A relative path climbing out of the workspace is not ours to label.
+        assert_eq!(
+            classify_tool_write("Write", &json(r#"{"file_path":"../../etc/passwd"}"#), &ws()),
+            None
+        );
+        // A sibling directory that merely shares a prefix is not inside.
+        assert_eq!(
+            classify_tool_write("Write", &json(r#"{"file_path":"../repo-other/x"}"#), &ws()),
+            None
+        );
+    }
+
+    #[test]
+    fn read_paths_are_classified_only_for_read_shaped_tools() {
+        let ws = ws();
+        let got = classify_tool_read("Read", &json(r#"{"file_path":"src/lib.rs"}"#), &ws)
+            .expect("a Read tool's path");
+        assert!(
+            Path::new(&got).ends_with(Path::new("src").join("lib.rs")),
+            "{got}"
+        );
+        // `PostToolUse` also carries web fetches and shell calls; a path key alone
+        // must not turn one of those into a file read.
+        assert_eq!(
+            classify_tool_read("WebFetch", &json(r#"{"file_path":"src/lib.rs"}"#), &ws),
+            None
+        );
+        assert_eq!(
+            classify_tool_read("Bash", &json(r#"{"file_path":"src/lib.rs"}"#), &ws),
+            None
+        );
+        // Outside the workspace: not ours to label.
+        assert_eq!(
+            classify_tool_read("Read", &json(r#"{"file_path":"../../etc/passwd"}"#), &ws),
+            None
+        );
+    }
+
+    #[test]
+    fn a_misrouted_read_is_never_recorded_as_a_write() {
+        // The write route is opt-in, but a `Read` event forwarded to `--event write`
+        // must not label a path as written: that would be a false write taint.
+        assert_eq!(
+            classify_tool_write("Read", &json(r#"{"file_path":"src/lib.rs"}"#), &ws()),
+            None
+        );
+        // …and the write shapes the fixtures pin are still accepted.
+        for tool in ["Write", "write", "StrReplace", "afterFileEdit", "Edit"] {
+            assert!(
+                classify_tool_write(tool, &json(r#"{"file_path":"src/lib.rs"}"#), &ws()).is_some(),
+                "{tool} must still classify as a write"
+            );
+        }
+    }
+
+    // Windows-only: a backslash-rooted path carries no drive, so `Path::is_relative`
+    // calls it relative — but it is anchored at the volume root and can never be
+    // inside the workspace. The pre-fix depth heuristic labelled it workspace-owned,
+    // which is what the Windows CI runner caught.
+    #[cfg(windows)]
+    #[test]
+    fn windows_paths_are_compared_case_insensitively() {
+        // `C:\WORK\REPO` is the same directory as `C:\work\repo` on Windows.
+        assert!(is_within(
+            Path::new("C:\\WORK\\REPO\\src\\x.rs"),
+            Path::new("C:\\work\\repo")
+        ));
+        assert!(!is_within(
+            Path::new("C:\\work\\other\\x.rs"),
+            Path::new("C:\\work\\repo")
+        ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_root_relative_path_is_never_inside_the_workspace() {
+        assert!(!is_within(Path::new(r"\etc\passwd"), &ws()));
+        // …while a root-relative path that really is under the workspace stays in.
+        assert!(is_within(Path::new(r"\work\repo\src\notes.rs"), &ws()));
+    }
+
+    // Unix-only: the input is a Unix-absolute path (see the note on
+    // `out_of_workspace_reads_are_untrusted` for the Windows path model).
+    #[cfg(unix)]
+    #[test]
+    fn an_absolute_write_outside_the_workspace_is_skipped() {
+        assert_eq!(
+            classify_tool_write("Write", &json(r#"{"file_path":"/etc/passwd"}"#), &ws()),
+            None
+        );
+        assert_eq!(
+            classify_tool_write("Write", &json(r#"{"file_path":"/tmp/x"}"#), &ws()),
+            None
+        );
+    }
+
+    #[test]
+    fn write_classification_returns_the_path_only_never_the_content() {
+        // The edit body (old/new strings, or a whole `content`) must never ride
+        // along: the classifier's return value is the identifier and nothing else
+        // (spine #6). This is the write-side twin of the post-result test.
+        let got = classify_tool_write(
+            "StrReplace",
+            &json(
+                r#"{"file_path":"src/lib.rs","old_string":"TOKEN-AAAA","new_string":"TOKEN-BBBB"}"#,
+            ),
+            &ws(),
+        )
+        .expect("write path");
+        assert!(
+            Path::new(&got).ends_with(Path::new("src").join("lib.rs")),
+            "{got}"
+        );
+        assert!(!got.contains("TOKEN"), "content leaked into the identifier");
+    }
+
+    #[test]
+    fn a_write_without_an_identity_or_a_path_is_skipped() {
+        // No tool identity: a malformed write event, not a guess.
+        assert_eq!(
+            classify_tool_write("", &json(r#"{"file_path":"src/x.rs"}"#), &ws()),
+            None
+        );
+        assert_eq!(
+            classify_tool_write("   ", &json(r#"{"file_path":"src/x.rs"}"#), &ws()),
+            None
+        );
+        // No path / blank path / wrong type.
+        for body in [
+            "{}",
+            r#"{"file_path":""}"#,
+            r#"{"file_path":"   "}"#,
+            r#"{"file_path":7}"#,
+            r#"{"filePath":null}"#,
+        ] {
+            assert_eq!(
+                classify_tool_write("write", &json(body), &ws()),
+                None,
+                "body {body}"
+            );
+        }
     }
 }

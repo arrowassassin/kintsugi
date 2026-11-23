@@ -21,7 +21,7 @@ pub mod llama;
 
 use kintsugi_core::{Class, ProposedCommand};
 
-pub use heuristic::HeuristicScorer;
+pub use heuristic::{dependency_hint, DependencyHint, HeuristicScorer};
 pub use manage::{select_spec, ModelSpec, MODEL_FALLBACK, MODEL_PRIMARY};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -43,6 +43,28 @@ pub trait Scorer: Send + Sync {
     /// Explain and score a command. `rule` is the Tier-1 rule id that fired, used
     /// for a faithful summary. The score is only consulted for the ambiguous band.
     fn score(&self, cmd: &ProposedCommand, class: Class, rule: &str) -> ModelOutput;
+
+    /// Score with the deterministic advisory [`DependencyHint`] (Phase 6 V1.1,
+    /// hardening item H). Called only in the ambiguous taint band, where the
+    /// daemon has derived the hint from the session's untrusted trail.
+    ///
+    /// Default: ignore the hint and delegate to [`score`](Self::score). The
+    /// contract is therefore additive-only for existing backends — a backend
+    /// that has not been taught the hint yet (the workstation-only llama
+    /// backend's prompt extension is deliberately not CI-built here) keeps its
+    /// exact current behavior, so the hint can never *remove* information a
+    /// backend would otherwise have produced. Implementors that consume the
+    /// hint may only ADD caution with it (spine #2).
+    fn score_with_hint(
+        &self,
+        cmd: &ProposedCommand,
+        class: Class,
+        rule: &str,
+        hint: DependencyHint,
+    ) -> ModelOutput {
+        let _ = hint;
+        self.score(cmd, class, rule)
+    }
 }
 
 /// Whether a real (non-heuristic) model backend is compiled in.

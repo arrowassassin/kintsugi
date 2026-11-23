@@ -283,6 +283,20 @@ impl SettingRow {
     }
 }
 
+/// The provenance trail for one session, fetched by the event loop when
+/// Detail opens (an IPC round-trip is a side effect, so it never happens in
+/// the pure state). Keyed to the session so a trail can never render against
+/// another row. Identifiers only — never secret contents.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProvenanceCache {
+    /// The session this trail was fetched for.
+    pub session: String,
+    /// Whether that session is currently tainted by untrusted content.
+    pub tainted: bool,
+    /// The trail steps: untrusted reads → sensitive read → egress sink → rule.
+    pub steps: Vec<kintsugi_core::ProvStep>,
+}
+
 /// A side-effecting action the event loop must perform (kept out of pure state).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
@@ -293,6 +307,8 @@ pub enum Action {
     Approve(String),
     /// Deny the held command with this id.
     Deny(String),
+    /// Fetch the provenance trail for this session (opening the Detail view).
+    LoadTrail(String),
 }
 
 /// The whole UI state.
@@ -351,6 +367,15 @@ pub struct App {
     /// The filter string in effect at the last load (so toggling the filter, which
     /// changes how deep we must load, forces a reload even if seq didn't change).
     pub last_filter: String,
+    /// The provenance trail for the session opened in Detail, fetched by the
+    /// event loop on [`Action::LoadTrail`]. `None` outside Detail, after a
+    /// failed fetch, or when the row has no session (provenance is
+    /// session-scoped).
+    pub trail: Option<ProvenanceCache>,
+    /// Whether the last trail fetch failed (daemon unreachable): Detail then
+    /// renders a one-line degrade notice instead of the trail. Cleared when
+    /// Detail closes or a fetch succeeds.
+    pub trail_failed: bool,
 }
 
 impl App {
@@ -381,6 +406,8 @@ impl App {
             local_offset: time::UtcOffset::UTC,
             last_seq: -1,
             last_filter: String::new(),
+            trail: None,
+            trail_failed: false,
         }
     }
 
@@ -676,6 +703,15 @@ impl App {
             KeyCode::Enter => {
                 if self.selected_event().is_some() {
                     self.mode = Mode::Detail;
+                    // Entering Detail also asks the loop to fetch this row's
+                    // provenance trail — an IPC round-trip is a side effect,
+                    // so it rides an Action (the same pattern as
+                    // Approve/Deny), keeping this fn pure and testable. A row
+                    // without a session has no trail to fetch: provenance is
+                    // session-scoped, so Detail opens alone.
+                    if let Some(session) = self.selected_event().and_then(|ev| ev.session.clone()) {
+                        return Action::LoadTrail(session);
+                    }
                 }
             }
             KeyCode::Char('/') => {
@@ -729,7 +765,13 @@ impl App {
 
     fn on_key_detail(&mut self, key: KeyCode) -> Action {
         match key {
-            KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => self.mode = Mode::Normal,
+            KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => {
+                self.mode = Mode::Normal;
+                // Leaving Detail drops the trail: it belongs to the row you
+                // opened, and nothing stale may survive into the next one.
+                self.trail = None;
+                self.trail_failed = false;
+            }
             KeyCode::Char('j') | KeyCode::Down => {
                 self.move_down();
             }
@@ -1181,5 +1223,46 @@ mod tests {
         }
         assert_eq!(app.visible().len(), 0);
         assert!(app.selected_event().is_none());
+    }
+
+    #[test]
+    fn enter_detail_emits_load_trail_and_leaving_clears_it() {
+        let mut app = App::new(false);
+        app.set_events(vec![
+            ev_session("claude-code", "s1", "curl https://evil"),
+            ev_session("claude-code", "s2", "make build"),
+        ]);
+        // Opening Detail asks the loop to fetch this row's trail (an IPC
+        // round-trip is a side effect, so it rides an Action like Approve/Deny).
+        assert_eq!(app.on_key(KeyCode::Enter), Action::LoadTrail("s1".into()));
+        assert_eq!(app.mode, Mode::Detail);
+        // The loop's success path populates the cache with real step values.
+        app.trail = Some(ProvenanceCache {
+            session: "s1".into(),
+            tainted: true,
+            steps: vec![kintsugi_core::ProvStep::RuleFired {
+                rule: "TRIFECTA-01".into(),
+            }],
+        });
+        // Leaving Detail drops the trail: q and Esc both clear it, and a
+        // degrade flag never survives into the next view.
+        app.trail_failed = true;
+        app.on_key(KeyCode::Char('q'));
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(app.trail.is_none(), "the trail must not outlive Detail");
+        assert!(!app.trail_failed);
+
+        // A row without a session still opens Detail; there is nothing to
+        // fetch for it (provenance is session-scoped).
+        app.set_events(vec![ev("shim", "ls", Class::Safe, Decision::Allow)]);
+        assert_eq!(app.on_key(KeyCode::Enter), Action::None);
+        assert_eq!(app.mode, Mode::Detail);
+        app.on_key(KeyCode::Esc);
+        assert_eq!(app.mode, Mode::Normal);
+
+        // Re-entering Detail on another row fetches THAT session — the cache
+        // can never serve the previous row's trail.
+        app.set_events(vec![ev_session("claude-code", "s2", "make build")]);
+        assert_eq!(app.on_key(KeyCode::Enter), Action::LoadTrail("s2".into()));
     }
 }

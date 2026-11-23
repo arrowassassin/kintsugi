@@ -1,0 +1,24 @@
+# cargo-audit gate configuration.
+#
+# Scope policy: `cargo audit` reads Cargo.lock, which resolves EVERY feature
+# combination — including kintsugi-model's opt-in `llama`/`download` backends
+# whose reqwest/quinn/rustls stack is never compiled by CI (see the lint-job
+# comment in ci.yml) and never shipped in the release binaries (release.yml
+# builds default-feature `--bins` only). The lockfile is still a shipped
+# artifact of the repo, so advisories in it are fixed, not waved through.
+#
+# The gate FAILS on any advisory: a new one anywhere in the lockfile — including
+# one in the download stack — breaks CI until a human decides. Adding an entry
+# to `ignore` is a last resort that requires a written reason here; it is never
+# silent.
+#
+# HISTORY: this list used to hold 15 entries for the quinn-proto / quinn-udp /
+# rustls / rustls-webpki / webpki-root-certs / url stack, each kept as "real for
+# whoever compiles those backends". They were cleared by patching the stack
+# rather than by scoping it: quinn-proto 0.11.19, quinn-udp 0.5.16, rustls
+# 0.23.46, rustls-webpki 0.103.17, webpki-root-certs 1.0.12, url 2.5.9. The same
+# pass cleared the four long-standing "unsound" warnings (tokio 1.54.1, rustix
+# 1.1.6, anyhow 1.0.104, lru 0.18.5), so the audit now reports zero
+# vulnerabilities and zero warnings with an EMPTY ignore list.
+[advisories]
+ignore = []

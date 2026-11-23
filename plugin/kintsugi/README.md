@@ -41,3 +41,11 @@ per-OS prebuilt binaries under `bin/` and point the hook/MCP at
 
 `kintsugi status` · `kintsugi log` · `kintsugi tui` · `kintsugi queue` / `approve <id>` ·
 `kintsugi undo` · `kintsugi panic` / `resume`.
+
+## PATH requirement
+
+The hooks in `hooks/hooks.json` call `kintsugi-hook` by name, so Kintsugi's bin
+directory must be on the `PATH` of the Claude Code process (`install.sh` and
+`cargo install` both place it in a standard bin dir). Prefer `kintsugi init` when
+you can: it writes the absolute path and registers both the gate and the post-tool
+observation surface.

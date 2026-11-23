@@ -223,6 +223,9 @@ fn stop_kills_the_backstop_watcher() {
         .env("KINTSUGI_DATA_DIR", tmp.path())
         .env("KINTSUGI_DB", tmp.path().join("events.db"))
         .env("KINTSUGI_SOCKET", tmp.path().join("none.sock"))
+        // Vault → absent so the test is hermetic against the host's real vault
+        // (a provisioned machine must not turn this into a password prompt).
+        .env("KINTSUGI_VAULT", tmp.path().join("absent-vault.json"))
         .env("NO_COLOR", "1")
         .output()
         .unwrap();
@@ -235,6 +238,36 @@ fn stop_kills_the_backstop_watcher() {
     );
     // Reap the (now-terminated) stand-in process.
     let _ = child.wait();
+}
+
+#[test]
+fn stop_without_a_daemon_fails_loudly() {
+    let tmp = tempfile::tempdir().unwrap();
+    // Hermetic: socket → nothing, vault → absent (never the host's real vault),
+    // data dir → no watcher and no pid file. Nothing to stop, with or without a
+    // TTY, so this is also the scripted/non-interactive case.
+    let out = kintsugi()
+        .arg("stop")
+        .env("KINTSUGI_DATA_DIR", tmp.path())
+        .env("KINTSUGI_DB", tmp.path().join("events.db"))
+        .env("KINTSUGI_SOCKET", tmp.path().join("none.sock"))
+        .env("KINTSUGI_VAULT", tmp.path().join("absent-vault.json"))
+        .env("NO_COLOR", "1")
+        .output()
+        .unwrap();
+    // Silent success is the bug: with no daemon to stop, `stop` must say so on
+    // stderr and exit NON-ZERO, not report "success" while stopping nothing.
+    assert!(
+        !out.status.success(),
+        "stop without a daemon must exit non-zero\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("no daemon is running"),
+        "stderr should explain: {err}"
+    );
 }
 
 #[test]
@@ -770,14 +803,27 @@ fn init_no_daemon_creates_shims_and_wires_claude() {
     );
     assert!(body.contains("PreToolUse"));
 
-    // Idempotent: running again does not duplicate the hook.
+    // Both surfaces are wired: the shell gate and the post-tool observation.
+    assert!(
+        body.contains("PostToolUse"),
+        "settings should observe post-tool:\n{body}"
+    );
+
+    // Idempotent: running again duplicates neither registration.
     run_init();
     let body2 = std::fs::read_to_string(&settings).unwrap();
     assert_eq!(
         body2.matches("kintsugi-hook").count(),
-        1,
-        "hook must not duplicate"
+        2,
+        "one gate + one observation registration, no duplicates:\n{body2}"
     );
+    for evt in ["PreToolUse", "PostToolUse"] {
+        assert_eq!(
+            body2.matches(evt).count(),
+            1,
+            "{evt} must appear exactly once:\n{body2}"
+        );
+    }
 }
 
 #[test]

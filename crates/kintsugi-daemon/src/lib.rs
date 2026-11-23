@@ -21,6 +21,7 @@ use anyhow::{Context, Result};
 use directories::ProjectDirs;
 use kintsugi_core::admin::{self, VaultState};
 use kintsugi_core::{Decision, EventLog, Mode, ProposedCommand, TaintEvent, TaintState, Verdict};
+use kintsugi_model::DependencyHint;
 
 pub use ipc::{Client, Observation, Resolution, Server};
 
@@ -100,7 +101,19 @@ pub struct Daemon {
     /// ([`current_vault`](Self::current_vault)) — never cached — so a re-provision
     /// or password change applies immediately, with no restart and no stale-copy bug.
     vault_path: PathBuf,
-    /// The last challenge nonce issued (and its op), consumed once by `Shutdown`.
+    /// Whether this log records a provision (`audit:provision`) — computed once at
+    /// open. With the latch set, a *missing* vault is `Degraded`, not
+    /// `Unprovisioned`: deleting the vault file is not a way back to bare
+    /// approval on a machine that was provisioned.
+    vault_expected: bool,
+    /// The last challenge nonce issued (and its op), consumed once by `Shutdown`
+    /// or `Approve`. The slot is deliberately single and one-shot: a challenge
+    /// is bound to exactly one op (`"shutdown"` or `"approve:<id>"`) and one
+    /// use. A consequence, accepted by design: an `AuthBegin` for approve
+    /// supersedes any unconsumed shutdown challenge and vice versa — the
+    /// op-binding check then rejects any proof minted for the overwritten op,
+    /// so the supersede can never authorize the other operation (documented in
+    /// docs/policy.md and pinned by `approval_auth.rs`).
     pending: RefCell<Option<(Vec<u8>, String)>>,
     /// Set when an authenticated shutdown has been accepted; the serve loop exits.
     shutdown: Cell<bool>,
@@ -233,6 +246,32 @@ fn needs_queue_entry(cmd: &ProposedCommand, class: kintsugi_core::Class) -> bool
     !AGENTS_WITH_NATIVE_ASK.contains(&cmd.agent.as_str())
 }
 
+/// The only op string [`shutdown_op`](Daemon::shutdown_op) serves. The proof's
+/// op binding is checked against THIS constant, not against the caller's op
+/// echo: a challenge minted for any other op (`"approve:<id>"`, junk) must
+/// never authorize a shutdown by replaying the same op string back.
+const SHUTDOWN_OP: &str = "shutdown";
+
+/// Bound and canonicalize a caller-supplied op string before it reaches the audit
+/// log. Keeps `approve:<uuid>` intact (the shape the protocol uses), replaces any
+/// other byte with `?`, and caps the whole thing so a hostile peer cannot grow the
+/// never-deletable log with megabyte-long "op" names.
+fn sanitize_op(op: &str) -> String {
+    const MAX: usize = 64;
+    let mut out = String::with_capacity(op.len().min(MAX));
+    for ch in op.chars().take(MAX) {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | ':' | '.') {
+            out.push(ch);
+        } else {
+            out.push('?');
+        }
+    }
+    if op.chars().count() > MAX {
+        out.push('…');
+    }
+    out
+}
+
 impl Daemon {
     /// Open the daemon backed by the event log at `db_path`, creating parent dirs.
     pub fn open(db_path: impl Into<PathBuf>) -> Result<Self> {
@@ -283,6 +322,9 @@ impl Daemon {
                 TaintState::new()
             }
         };
+        // The provision latch: a machine that recorded a provision must never fall
+        // back to bare approval just because the vault file disappeared.
+        let vault_expected = log.has_provision_marker().unwrap_or(false);
         Ok(Self {
             log,
             mode: Mode::default(),
@@ -290,6 +332,7 @@ impl Daemon {
             snapshot_dir,
             kill_path,
             vault_path,
+            vault_expected,
             pending: RefCell::new(None),
             shutdown: Cell::new(false),
             throttle: RefCell::new(AuthThrottle::default()),
@@ -326,6 +369,73 @@ impl Daemon {
             eprintln!("kintsugi-daemon: failed to persist taint event: {e}");
         }
         self.taint.borrow_mut().apply(&event);
+    }
+
+    /// Apply a file-write taint transition (V1.1): a tainted session wrote
+    /// `path`, so a later reader of that path inherits the session's taint through
+    /// [`TaintEvent::WriteFile`].
+    ///
+    /// Gated on the effective policy for the *writing session's* cwd — the same
+    /// `[provenance] enabled` switch that arms the trifecta floor. With the guard
+    /// off nothing is recorded: a path label would be inert state the operator
+    /// explicitly disabled.
+    ///
+    /// A clean session can propagate nothing, so its write is skipped outright (it
+    /// would be a no-op transition): that keeps frequent benign edits out of the
+    /// append-only taint stream instead of appending a no-op row per file. Beyond
+    /// that this follows [`apply_taint`](Self::apply_taint) exactly — persist, then
+    /// apply — and carries no `source_id`, so there is nothing to redact (segment
+    /// G). `path` is an identifier; write content never reaches this boundary.
+    pub fn apply_write(&self, session: &str, path: &str, cwd: &std::path::Path) {
+        if session.is_empty() || path.trim().is_empty() {
+            return;
+        }
+        if !load_policy(cwd).provenance_enabled() {
+            return;
+        }
+        if !self.is_session_tainted(Some(session)) {
+            return;
+        }
+        self.apply_taint(&TaintEvent::WriteFile {
+            session: session.to_string(),
+            path: std::path::PathBuf::from(path),
+        });
+    }
+
+    /// Apply a file-read taint transition (V1.1): a session read `path`, and if an
+    /// earlier tainted session labelled that path, the reader inherits the taint.
+    ///
+    /// This is the consumer that makes write propagation mean anything — without
+    /// it `TaintEvent::WriteFile` fills a map nothing reads, and "the agent
+    /// exfiltrated what it learned by writing and re-reading a file" stays
+    /// invisible. Same gating as [`apply_write`](Self::apply_write): the policy of
+    /// the reading session's cwd decides, a clean path is skipped so ordinary
+    /// reads never touch the append-only taint stream, and an already-tainted
+    /// reader is a no-op.
+    ///
+    /// Observation only: it never blocks, never enqueues, and never influences a
+    /// verdict; `path` is an identifier and the file's content is never read.
+    pub fn apply_read(&self, session: &str, path: &str, cwd: &std::path::Path) {
+        if session.is_empty() || path.trim().is_empty() {
+            return;
+        }
+        if !load_policy(cwd).provenance_enabled() {
+            return;
+        }
+        if self.is_session_tainted(Some(session)) {
+            return; // already tainted: the transition would be a no-op
+        }
+        if !self
+            .taint
+            .borrow()
+            .is_path_tainted(std::path::Path::new(path))
+        {
+            return; // nobody labelled this path
+        }
+        self.apply_taint(&TaintEvent::ReadFile {
+            session: session.to_string(),
+            path: std::path::PathBuf::from(path),
+        });
     }
 
     /// Whether the given session has been influenced by untrusted content. A
@@ -421,6 +531,50 @@ impl Daemon {
         }
     }
 
+    /// The advisory dependency hint for the ambiguous taint band (Phase 6 V1.1,
+    /// hardening item H). Deterministic and I/O-free: string matching of the
+    /// command against the session's — already-redacted — untrusted identifiers.
+    ///
+    /// The band is exactly what [`trifecta_floor`](Self::trifecta_floor)
+    /// governs at the partial level: provenance enabled, the session currently
+    /// tainted, and the command carrying exactly ONE leg — a sensitive read or
+    /// an egress sink, i.e. `Trifecta::Hold`/`Annotate`. Not `Block` (that lands
+    /// in the catastrophic arm, which keeps its summary-only behavior and never
+    /// computes a hint) and not `None` (no leg: the floor is inert, and the
+    /// command is judged purely on its own merits).
+    ///
+    /// Note the floor usually does not RAISE the class to get here — a
+    /// leg-bearing command is already ambiguous at baseline, so the reason text
+    /// alone can't prove band membership. This re-derives the floor's own three
+    /// inputs instead (tainted + the same two predicates), which stays exactly
+    /// in step with it by construction.
+    fn dependency_hint(
+        &self,
+        cmd: &ProposedCommand,
+        policy: &kintsugi_core::Policy,
+    ) -> DependencyHint {
+        use kintsugi_core::Trifecta;
+        if !policy.provenance_enabled() {
+            return DependencyHint::Unknown;
+        }
+        let Some(trail) = cmd
+            .session
+            .as_deref()
+            .and_then(|s| self.session_provenance(s))
+        else {
+            return DependencyHint::Unknown;
+        };
+        if !trail.is_tainted() {
+            return DependencyHint::Unknown;
+        }
+        let sensitive = kintsugi_core::is_sensitive_read(cmd).is_some();
+        let egress = kintsugi_core::is_egress_sink(cmd).is_some();
+        match kintsugi_core::evaluate_trifecta(true, sensitive, egress) {
+            Trifecta::Hold | Trifecta::Annotate => kintsugi_model::dependency_hint(cmd, &trail),
+            Trifecta::Block | Trifecta::None => DependencyHint::Unknown,
+        }
+    }
+
     /// Whether an authenticated shutdown has been accepted (serve loop should exit).
     pub fn should_shutdown(&self) -> bool {
         self.shutdown.get()
@@ -431,7 +585,16 @@ impl Daemon {
     /// the daemon is the authority on the *path* (a caller can't redirect it), and
     /// the contents are never cached, so there is no stale-vault class of bug.
     fn current_vault(&self) -> VaultState {
-        admin::load_vault(&self.vault_path)
+        match admin::load_vault(&self.vault_path) {
+            // The file is gone but this machine was provisioned: treat it as
+            // degraded so a deleted/renamed vault can never quietly re-enable
+            // bare approval or a bare shutdown.
+            VaultState::Unprovisioned if self.vault_expected => VaultState::Degraded(
+                "the admin vault was provisioned on this machine but its file is missing"
+                    .to_string(),
+            ),
+            other => other,
+        }
     }
 
     /// Issue a challenge for a privileged op. `locked=false` means no vault, so the
@@ -476,6 +639,19 @@ impl Daemon {
         nonce_hex: Option<&str>,
         proof_hex: Option<&str>,
     ) -> ipc::Response {
+        // Pin the op: this handler serves `shutdown` only. Without the pin, a
+        // challenge minted for another op (e.g. `AuthBegin("approve:<id>")`)
+        // could authorize a shutdown by echoing the same op string back — the
+        // proof would verify over that op — and an unprovisioned daemon would
+        // shut down on ANY op string, no proof at all. Found by the Phase 7
+        // approval-auth adversarial suite (`approval_auth.rs`); a monotonic
+        // tightening (adds a refusal, never removes one).
+        if op != SHUTDOWN_OP {
+            self.record_admin(op, false, "op not served by shutdown");
+            return ipc::Response::Error {
+                message: format!("shutdown requires a `{SHUTDOWN_OP}` challenge"),
+            };
+        }
         let vault = match self.current_vault() {
             VaultState::Degraded(_) => {
                 self.record_admin(op, false, "vault degraded");
@@ -491,17 +667,23 @@ impl Daemon {
             }
             VaultState::Locked(v) => v,
         };
-        // Brute-force lockout: after repeated failures, refuse without even
-        // checking the proof until the window elapses (the attempt is still
-        // logged). Defeats a script hammering the admin password.
-        if let Some(rem) = self.throttle.borrow().lockout_remaining() {
-            self.record_admin(op, false, "locked out");
-            return ipc::Response::Error {
-                message: format!(
-                    "too many failed attempts; locked out for {}s",
-                    rem.as_secs() + 1
-                ),
-            };
+        // Brute-force lockout, gated on a proof actually being offered: only a
+        // request carrying a nonce/proof can guess anything, so only those are
+        // throttled. A bare request cannot brute-force a secret, and counting it
+        // would let any local peer lock the human out of their own privileged ops
+        // (approve and shutdown share this budget) — a same-user DoS on the safety
+        // workflow, which is the opposite of what the throttle is for.
+        let proof_offered = nonce_hex.is_some() || proof_hex.is_some();
+        if proof_offered {
+            if let Some(rem) = self.throttle.borrow().lockout_remaining() {
+                self.record_admin(op, false, "locked out");
+                return ipc::Response::Error {
+                    message: format!(
+                        "too many failed attempts; locked out for {}s",
+                        rem.as_secs() + 1
+                    ),
+                };
+            }
         }
         // The challenge is one-shot: take it regardless of the outcome.
         let pending = self.pending.borrow_mut().take();
@@ -527,7 +709,9 @@ impl Daemon {
             self.shutdown.set(true);
             ipc::Response::Ack
         } else {
-            self.throttle.borrow_mut().record_failure();
+            if proof_offered {
+                self.throttle.borrow_mut().record_failure();
+            }
             // Distinguish a wrong password from a vault that simply can't carry a
             // proof (provisioned before the asymmetric-auth scheme): the latter
             // fails for *every* password, so a bare "authentication failed" reads
@@ -548,9 +732,175 @@ impl Daemon {
         }
     }
 
+    /// Complete an authenticated approval of queued command `id` (Phase 7,
+    /// anchored trust — the proof-of-human gate on self-approval).
+    ///
+    /// The design mirrors [`shutdown_op`](Self::shutdown_op) exactly:
+    /// - No vault → there is no secret to prove possession of, so approval is
+    ///   bare (the owner-only socket is the boundary; documented honestly in
+    ///   docs/security-assessment.md). This keeps the queue usable for users
+    ///   who never provisioned a vault — the gate must never brick the queue.
+    /// - Locked vault + bare request → **the threat case**: a same-user agent
+    ///   process that reached the socket tries to approve its own held
+    ///   command. Refused loudly with an actionable pointer at the human path,
+    ///   audited as a hash-chained `self-approval blocked` event, and counted
+    ///   by the same [`AuthThrottle`] as shutdown auth (5 free attempts, then
+    ///   30 s → doubling lockout, capped at 1 h) so hammering is defeated.
+    /// - Locked vault + nonce + proof → the one-shot pending challenge is
+    ///   consumed, the proof is verified op-bound (`"approve:<id>"`, so a proof
+    ///   can approve only the id it was issued for), and on success the
+    ///   approval resolves through the *usual* [`resolve_pending`] path — the
+    ///   kill-switch guard and the exactly-once CAS still apply. Auth decides
+    ///   *who may talk*; the rules layer still decides *what may happen*
+    ///   (spine: auth adds friction, it never unlocks).
+    /// - Policy opt-out (`[security] require_approval_proof = false`) accepts
+    ///   a bare approve again. The policy scope is the held command's repo
+    ///   (the same `.kintsugi.toml` scope that produced the hold), so one repo
+    ///   can opt out without weakening the default everywhere.
+    ///
+    /// `Deny` and `PrunePending` deliberately stay bare: an agent denying its
+    /// own held command is a nuisance, not a threat, and prune touches only the
+    /// queue, never the log.
+    fn approve_op(
+        &self,
+        id: &str,
+        nonce_hex: Option<&str>,
+        proof_hex: Option<&str>,
+    ) -> ipc::Response {
+        let op = format!("approve:{id}");
+        // The auth gate's policy scope: the held command's repo (same scope
+        // that decided the hold); the daemon's own cwd when the id is unknown.
+        let cwd = self
+            .log
+            .pending_command(id)
+            .ok()
+            .flatten()
+            .map(|c| c.cwd)
+            .unwrap_or_else(|| {
+                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+            });
+        let require_proof = load_policy(&cwd).require_approval_proof();
+
+        let vault = match self.current_vault() {
+            VaultState::Degraded(_) => {
+                self.record_admin(&op, false, "vault degraded");
+                return ipc::Response::Error {
+                    message: "admin vault is degraded; refusing privileged operations".into(),
+                };
+            }
+            // Unprovisioned: no lock exists, so a bare approval is allowed —
+            // the exact shutdown mirror.
+            VaultState::Unprovisioned => {
+                self.record_admin(&op, true, "unprovisioned");
+                return self.resolve_pending_response(id, Decision::Allow);
+            }
+            VaultState::Locked(v) => v,
+        };
+        // Brute-force lockout, shared with shutdown auth (same bounds) and gated on
+        // a proof actually being offered: a bare approve cannot guess a secret, so
+        // counting it would hand any local peer a DoS on the human's own approval
+        // and shutdown workflow. A success resets the shared budget.
+        let proof_offered = nonce_hex.is_some() || proof_hex.is_some();
+        if proof_offered {
+            if let Some(rem) = self.throttle.borrow().lockout_remaining() {
+                self.record_admin(&op, false, "locked out");
+                return ipc::Response::Error {
+                    message: format!(
+                        "too many failed attempts; locked out for {}s",
+                        rem.as_secs() + 1
+                    ),
+                };
+            }
+        }
+        // Absence is None, never an empty string: a placeholder must never
+        // stand in for a real nonce/proof in the crypto path.
+        let nonce_hex = nonce_hex.filter(|s| !s.trim().is_empty());
+        let proof_hex = proof_hex.filter(|s| !s.trim().is_empty());
+        match (nonce_hex, proof_hex) {
+            // Bare under the opt-out: the pre-Phase-7 behavior, restored — but
+            // never silent. An approval that reached the queue without proof is
+            // exactly what a human reading the timeline must be able to see, so
+            // it writes its own audit row; the log can never show this as
+            // `human:allow` with nothing behind it.
+            (None, None) if !require_proof => {
+                self.record_admin(&op, true, "policy-opt-out");
+                self.resolve_pending_response(id, Decision::Allow)
+            }
+            // Bare under the default: the self-approval attempt. Loud and audited —
+            // never silent. Deliberately NOT counted against the brute-force budget:
+            // it carries no proof, so it cannot be guessing, and counting it would
+            // let one such request per window lock the human out of approving.
+            (None, None) => {
+                self.record_admin(&op, false, "self-approval blocked");
+                ipc::Response::Error {
+                    message: format!(
+                        "approval requires proof — run `kintsugi approve {id}` (or \
+                          `kintsugi run {id}`) and enter the admin password; see \
+                          docs/policy.md to allow bare approval"
+                    ),
+                }
+            }
+            // The one-shot challenge is consumed regardless of the outcome.
+            (Some(nonce_hex), Some(proof_hex)) => {
+                let pending = self.pending.borrow_mut().take();
+                let ok = match pending {
+                    Some((issued_nonce, issued_op)) => {
+                        match (hex::decode(nonce_hex), hex::decode(proof_hex)) {
+                            (Ok(nonce), Ok(proof)) => {
+                                issued_op == op
+                                    && issued_nonce == nonce
+                                    && vault.verify_proof(&nonce, op.as_bytes(), &proof)
+                            }
+                            _ => false,
+                        }
+                    }
+                    None => false,
+                };
+                if ok {
+                    self.throttle.borrow_mut().reset();
+                    self.record_admin(&op, true, "authenticated");
+                    self.resolve_pending_response(id, Decision::Allow)
+                } else {
+                    self.throttle.borrow_mut().record_failure();
+                    // Distinguish a wrong password from a vault that simply
+                    // can't carry a proof (pre-v2): the latter fails for every
+                    // password, so point at the one-line fix instead.
+                    if !vault.supports_proof() {
+                        self.record_admin(&op, false, "vault missing proof key");
+                        return ipc::Response::Error {
+                            message: "admin vault has no auth key — re-run `kintsugi admin \
+                                  provision --force` (the daemon picks it up immediately, no \
+                                  restart needed)"
+                                .into(),
+                        };
+                    }
+                    self.record_admin(&op, false, "authentication failed");
+                    ipc::Response::Error {
+                        message: "authentication failed".into(),
+                    }
+                }
+            }
+            // Half an attempt (a nonce without a proof or vice versa): not
+            // bare, and not a proof — count it as a failed attempt.
+            _ => {
+                self.throttle.borrow_mut().record_failure();
+                self.record_admin(&op, false, "authentication failed");
+                ipc::Response::Error {
+                    message: "authentication failed".into(),
+                }
+            }
+        }
+    }
+
     /// Record a privileged-operation attempt as a hash-chained audit event, so a
     /// forced stop — successful or not — is always visible on the timeline.
     fn record_admin(&self, op: &str, ok: bool, reason: &str) {
+        // `op` is caller-supplied (`approve:<id>`) and lands in the append-only,
+        // never-deletable event log, so it is validated and bounded here: without
+        // this, any local peer could write attacker-chosen, unredacted text of up
+        // to MAX_FRAME bytes into the audit trail on every refused attempt.
+        let op = sanitize_op(op);
+        let op = op.as_str();
         let raw = format!(
             "admin {op} — {}",
             if ok { "authenticated" } else { "denied" }
@@ -641,7 +991,18 @@ impl Daemon {
         // catastrophic gets a summary for the hold card. Safe is never scored.
         match class {
             kintsugi_core::Class::Ambiguous => {
-                let out = self.scorer.score(cmd, class, &rule);
+                // Phase 6 V1.1 · hardening item H: in the ambiguous TAINT band —
+                // where the provenance floor engaged at the partial level — the
+                // Tier-2 step gains a deterministic, advisory dependency hint:
+                // does this command plausibly consume an identifier from the
+                // session's untrusted trail? Pure string matching (no inference,
+                // no I/O), so it adds no scoring call and cannot bypass the
+                // recorder's ScoreBudget. Escalation-only (spine #2): the hint
+                // may turn the attended Hold into a Deny; it can never unlock or
+                // downgrade anything, and the human paths below (policy
+                // allowlist, decision memory) still have the final say.
+                let hint = self.dependency_hint(cmd, &policy);
+                let out = self.scorer.score_with_hint(cmd, class, &rule, hint);
                 verdict.summary = Some(out.summary);
                 verdict.risk = Some(out.risk);
                 verdict.tier = 2;
@@ -652,11 +1013,18 @@ impl Daemon {
                     // review but NEVER downgrades Deny -> Allow. Auto-proceeding an
                     // ambiguous command unattended is only possible via an explicit
                     // human allowlist (.kintsugi.toml / decision memory) below — a human
-                    // decision, not the model's.
+                    // decision, not the model's. The hint changes nothing here.
                     verdict.reason = format!(
                         "model:risk={} ({}) — unattended holds ambiguous for review",
                         out.risk, rule
                     );
+                } else if hint == DependencyHint::LikelyDependent
+                    && verdict.decision == Decision::Hold
+                {
+                    // The advisory escalation: Hold -> Deny, marked for audit.
+                    // `advisory:dependent` appears in a reason ONLY here.
+                    verdict.decision = Decision::Deny;
+                    verdict.reason = format!("advisory:dependent ({})", verdict.reason);
                 }
             }
             kintsugi_core::Class::Catastrophic => {
@@ -996,6 +1364,17 @@ impl Daemon {
                 self.apply_taint(&observed.into_taint_event());
                 ipc::Response::Ack
             }
+            // Observation only: a write labels the path for future readers. It
+            // never blocks, never enqueues, and never touches a command verdict.
+            ipc::Request::WriteObserved { session, path, cwd } => {
+                self.apply_write(&session, &path, &cwd);
+                ipc::Response::Ack
+            }
+            // The reader half: a read of a labelled path taints the reader.
+            ipc::Request::ReadObserved { session, path, cwd } => {
+                self.apply_read(&session, &path, &cwd);
+                ipc::Response::Ack
+            }
             ipc::Request::Provenance(cmd) => ipc::Response::Provenance {
                 tainted: self.is_session_tainted(cmd.session.as_deref()),
                 trail: self.provenance_trail(&cmd),
@@ -1020,7 +1399,12 @@ impl Daemon {
                     message: e.to_string(),
                 },
             },
-            ipc::Request::Approve { id } => self.resolve_pending_response(&id, Decision::Allow),
+            // Proof-of-human approval (Phase 7): authenticated on a locked
+            // daemon, audited + throttled when bare. `Deny`/`PrunePending`
+            // stay bare by design (nuisance, not threat / queue-only).
+            ipc::Request::Approve { id, nonce, proof } => {
+                self.approve_op(&id, nonce.as_deref(), proof.as_deref())
+            }
             ipc::Request::Deny { id } => self.resolve_pending_response(&id, Decision::Deny),
             ipc::Request::PrunePending => match self.log.prune_pending() {
                 Ok(n) => ipc::Response::Pending {

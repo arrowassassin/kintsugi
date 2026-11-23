@@ -33,6 +33,14 @@ deny = ["git push *", "kubectl * --context=prod"]
 # The taint-aware "lethal trifecta" guard (untrusted input + a sensitive read + an
 # egress sink). On by default; set false to disable the trifecta escalation.
 enabled = true
+
+[security]
+# Require proof of the admin password to approve a held command. On by default:
+# with a provisioned vault a bare approve (an agent approving its own held
+# command) fails loudly and is audited. Only the GLOBAL file can set false — a
+# repo-level .kintsugi.toml may require the proof but never waive it, because
+# that file lives in the workspace an agent writes.
+require_approval_proof = true
 ```
 
 ## Matching
@@ -63,3 +71,55 @@ lethal trifecta and is escalated deterministically — held (attended) or denied
 (unattended), never silently allowed. Taint only ever *adds* caution; it can never
 downgrade a block. See [`provenance.md`](provenance.md) for the full model and the
 `kintsugi provenance` trail view.
+
+## Approval auth (`[security]`)
+
+Approving a held command over the daemon socket is a **privileged** operation when
+an admin vault exists. With `require_approval_proof` on (the default),
+`Approve` must carry the nonce-bound proof produced by the admin password — the
+same ritual `kintsugi stop` uses: `AuthBegin("approve:<id>")` → password prompt →
+one-shot, nonce-bound, id-bound proof. The password never crosses the socket.
+
+What that changes for a same-user agent process that can reach the owner-only
+socket:
+
+- A **bare** approve is refused with an actionable error and recorded as a
+  hash-chained `admin approve:<id>` audit row ("self-approval blocked"). It is
+  *not* counted against the brute-force lockout: a request carrying no proof
+  cannot be guessing, and counting it would let any local peer lock you out of
+  approving (and out of authenticated shutdown) by sending one bare request per
+  window. Only failed **proof** attempts consume the budget (5 free, then a 30 s
+  lockout that doubles, capped at 1 h); a valid proof always works.
+- A **Deny** and `PrunePending` stay bare: an agent denying its own held command
+  is a nuisance, not a threat, and prune touches only the queue, never the log.
+- With **no vault** (never provisioned) approval stays bare — there is no secret
+  to prove possession of, and the queue must not brick for users who have not
+  provisioned one.
+
+Honest boundary: this is not a boundary against malicious code already running
+as your user. It makes self-approval **loud, failed, and audited** instead of
+silent. The proof's op binding is `approve:<id>`, so a captured proof approves
+exactly one id, once.
+
+Opting out restores the pre-0.4.0 bare flow — but only from the **user-owned
+global** config (`~/.config/kintsugi/config.toml` or `$KINTSUGI_CONFIG`):
+
+```toml
+[security]
+require_approval_proof = false
+```
+
+A repo-level `.kintsugi.toml` may set this to `true` (tightening for that
+project); setting it to `false` there is **ignored**. That asymmetry is the
+point: the repo file sits inside the workspace an agent writes, so honouring it
+would let one ordinary file write re-enable silent self-approval for a held
+catastrophic command. Every approval accepted without proof still writes its own
+`admin approve:<id>` audit row with reason `policy-opt-out`, so it can never look
+like a human decision with nothing behind it.
+
+The same scope rule applies to `[provenance] enabled`: a repo may turn the
+trifecta guard ON, only the global file can turn it OFF.
+
+Opting out is also only as durable as the vault: once a machine has recorded a
+provision, deleting the vault file makes the daemon report a **degraded** vault
+(refuse privileged ops) rather than falling back to unprovisioned bare approval.

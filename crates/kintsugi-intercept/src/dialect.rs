@@ -19,13 +19,25 @@
 //! - GitHub Copilot CLI: `{toolName, toolArgs.command}` in (camelCase);
 //!   `{permissionDecision: allow|deny|ask, permissionDecisionReason}` out.
 //! - Cursor CLI: `{command, cwd}` in (beforeShellExecution); `{permission:
-//!   allow|deny|ask, userMessage, agentMessage}` out.
+//!   allow|deny|ask, userMessage, agentMessage}` out. Its file-write events
+//!   (`Write`/`StrReplace` pre-tool, `afterFileEdit`) are parsed by
+//!   [`Dialect::parse_write`] for provenance, on the explicit `--event write`
+//!   route.
 //! - OpenCode: no external-command hook — a bundled JS plugin bridges to us with
-//!   a simple `{command, cwd}` in / `{decision: allow|deny|ask, reason}` out.
+//!   a simple `{command, cwd}` in / `{decision: allow|deny|ask, reason}` out, and
+//!   forwards write/edit calls as `{tool, args, session, cwd}` on
+//!   `--event write` ([`Dialect::parse_write`]).
 //! - Google Antigravity: plugin `PreToolUse` hook (matcher `run_command`).
 //!   `{toolCall:{name, arguments:{CommandLine, Cwd}}, conversationId}` in
 //!   (PascalCase argument keys); `{decision: allow|deny, reason}` out — no native
 //!   ask, so an ambiguous hold is mapped to deny.
+//!
+//! V1.1 adds a *post-tool* surface for the dialects that expose one (Claude,
+//! Codex, Antigravity): [`Dialect::parse_post`] normalizes a completed call's
+//! input + opaque result for result-content observation, and a *write* surface
+//! for Cursor and OpenCode ([`Dialect::parse_write`]) so a tainted session's
+//! file writes propagate taint to the path. Shapes are pinned to the fixture
+//! files in `tests/fixtures/` — never to docs alone.
 
 use std::path::PathBuf;
 
@@ -58,6 +70,38 @@ pub struct Shell {
 /// to [`crate::observe::classify_tool_ingest`]; we never read the *result* bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContentCall {
+    pub tool: String,
+    pub input: serde_json::Value,
+    pub cwd: PathBuf,
+    pub session_id: Option<String>,
+}
+
+/// A completed tool call surfaced by a `PostToolUse`-style event, normalized for
+/// V1.1 *result-content* observation. `response` is the agent's (opaque) result
+/// payload — only its presence is ever consulted downstream; result bytes are
+/// never persisted or logged (spine #6). The source id for any taint comes from
+/// `input` (url / path / tool name), never from `response`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PostToolCall {
+    pub tool: String,
+    pub input: serde_json::Value,
+    pub response: serde_json::Value,
+    pub cwd: PathBuf,
+    pub session_id: Option<String>,
+}
+
+/// A non-shell **file-write** tool call surfaced for provenance observation: a
+/// Cursor `Write` / `StrReplace` / `afterFileEdit`, or an OpenCode `write` /
+/// `edit`. The raw `input` object is handed to
+/// [`crate::observe::classify_tool_write`], which extracts the target path — the
+/// write *body* (a `content` field, or `old_string`/`new_string` pairs) is never
+/// read, persisted, or logged (spine #6).
+///
+/// The fields are deliberately the same normalized shape as [`ContentCall`]
+/// because both classifiers consume (tool, args, workspace); a distinct type
+/// keeps the ingest and write observation surfaces honest at the call site.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WriteCall {
     pub tool: String,
     pub input: serde_json::Value,
     pub cwd: PathBuf,
@@ -198,13 +242,196 @@ impl Dialect {
                     get_str(&v, "conversationId"),
                 )
             }
-            // These dialects' hooks only ever deliver a shell command — no content
-            // tool to observe through this surface.
+            // No *ingest* shape is pinned for these dialects: their hooks carry
+            // file writes, not content-tool results. Writes ride the explicit
+            // `--event write` route through [`parse_write`] instead, so nothing
+            // is guessed here (the 0.2.1 lesson).
             Dialect::Cursor | Dialect::OpenCode => return None,
         };
         Some(ContentCall {
             tool,
             input: args,
+            cwd: cwd_or_current(cwd),
+            session_id: session,
+        })
+    }
+
+    /// Extract a file-write call from a payload delivered on the explicit
+    /// `--event write` route (the generated OpenCode plugin, or a Cursor write
+    /// matcher). Tolerant like [`parse_content`]: `None` for a non-write payload,
+    /// unparseable input, an unknown tool name, or a dialect with no pinned write
+    /// surface. Observation never blocks, so a miss is harmless.
+    ///
+    /// Every shape parsed here traces to a pinned fixture in `tests/fixtures/`:
+    /// Cursor `cursor-write.json`, `cursor-str-replace.json`,
+    /// `cursor-after-file-edit.json`; OpenCode `opencode-write-v1.json`,
+    /// `opencode-write-v2.json`. This is deliberately separate from
+    /// [`parse_content`]: that surface feeds the *ingest* classifier, and
+    /// emitting a call there for a Cursor payload would claim a Read/WebFetch arg
+    /// shape no fixture pins.
+    pub fn parse_write(self, input: &str) -> Option<WriteCall> {
+        let v: serde_json::Value = serde_json::from_str(input).ok()?;
+        let get_str = |val: &serde_json::Value, k: &str| {
+            val.get(k).and_then(|s| s.as_str()).map(String::from)
+        };
+        let (tool, args, cwd, session) = match self {
+            Dialect::Cursor => {
+                if let Some(tool) = get_str(&v, "tool_name") {
+                    // preToolUse write/edit (fixtures cursor-write.json,
+                    // cursor-str-replace.json). Cursor's exact content-tool name
+                    // set is a live-verification gap, so only the pinned names
+                    // are accepted — an unknown name is a miss, never a guess.
+                    if !matches!(tool.as_str(), "Write" | "StrReplace") {
+                        return None;
+                    }
+                    (
+                        tool,
+                        v.get("tool_input")
+                            .cloned()
+                            .unwrap_or(serde_json::Value::Null),
+                        get_str(&v, "cwd"),
+                        get_str(&v, "conversation_id"),
+                    )
+                } else {
+                    // afterFileEdit (fixture cursor-after-file-edit.json): no tool
+                    // identity, and the path sits at the top level. The whole
+                    // payload is handed over; the classifier reads only the path
+                    // key. No per-call cwd on this surface, so the documented
+                    // workspace root is the closest honest trust boundary.
+                    if get_str(&v, "hook_event_name").as_deref() != Some("afterFileEdit") {
+                        return None;
+                    }
+                    (
+                        "afterFileEdit".to_string(),
+                        v.clone(),
+                        v.get("workspace_roots")
+                            .and_then(|w| w.as_array())
+                            .and_then(|a| a.first())
+                            .and_then(|p| p.as_str())
+                            .map(String::from),
+                        get_str(&v, "conversation_id"),
+                    )
+                }
+            }
+            Dialect::OpenCode => {
+                if let Some(tool) = get_str(&v, "tool") {
+                    // The shape the generated plugin forwards (our own contract:
+                    // tool + args + session + cwd), and V2's raw event shape
+                    // `{tool, input}`. V2 documents no session field, so it stays
+                    // absent and the hook skips it rather than inventing one.
+                    (
+                        tool,
+                        v.get("args")
+                            .or_else(|| v.get("input"))
+                            .cloned()
+                            .unwrap_or(serde_json::Value::Null),
+                        get_str(&v, "cwd"),
+                        get_str(&v, "session").or_else(|| get_str(&v, "sessionID")),
+                    )
+                } else {
+                    // The raw V1 plugin callback (fixture opencode-write-v1.json):
+                    // input{tool, sessionID} + output{args}.
+                    let inner = v.get("input")?;
+                    (
+                        get_str(inner, "tool")?,
+                        v.get("output")
+                            .and_then(|o| o.get("args"))
+                            .cloned()
+                            .unwrap_or(serde_json::Value::Null),
+                        None,
+                        get_str(inner, "sessionID"),
+                    )
+                }
+            }
+            // No write surface is pinned for these dialects (Task 1 pinned Cursor
+            // and OpenCode only); report that honestly rather than guess.
+            Dialect::Claude
+            | Dialect::Qwen
+            | Dialect::Gemini
+            | Dialect::Copilot
+            | Dialect::Codex
+            | Dialect::Antigravity => return None,
+        };
+        Some(WriteCall {
+            tool,
+            input: args,
+            cwd: cwd_or_current(cwd),
+            session_id: session,
+        })
+    }
+
+    /// Extract a completed tool call from a `PostToolUse`-style payload, for
+    /// V1.1 *result-content* observation. Tolerant in the same way as
+    /// [`parse_content`]: returns `None` for unparseable input, missing
+    /// identity/response fields, or a dialect with no pinned post surface —
+    /// observation never blocks, so a miss is harmless. Every shape parsed
+    /// here traces to a pinned fixture in `tests/fixtures/` (the 0.2.1
+    /// lesson: never write to a documented-but-unverified shape).
+    ///
+    /// Divergence note (Antigravity): the documented post payload is camelCase
+    /// `toolCall.args`, which is what this parser reads — while the pre-tool
+    /// parser reads `toolCall.arguments`. At least one of the two is wrong for
+    /// the live wire; only a live CLI can say which. The pre-tool path is
+    /// deliberately left unchanged here; reconciliation rides on the
+    /// live-verification checkbox in the fixtures README.
+    pub fn parse_post(self, input: &str) -> Option<PostToolCall> {
+        let v: serde_json::Value = serde_json::from_str(input).ok()?;
+        let get_str = |val: &serde_json::Value, k: &str| {
+            val.get(k).and_then(|s| s.as_str()).map(String::from)
+        };
+        let (tool, args, response, cwd, session) = match self {
+            // Claude Code & Codex share the PostToolUse envelope:
+            // tool_name / tool_input / tool_response / cwd / session_id
+            // (fixtures: claude-post-tool-use.json, codex-post-tool-use.json).
+            // A post payload without a response is malformed — there is
+            // nothing to observe.
+            Dialect::Claude | Dialect::Codex => (
+                get_str(&v, "tool_name")?,
+                v.get("tool_input")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
+                v.get("tool_response").cloned()?,
+                get_str(&v, "cwd"),
+                get_str(&v, "session_id"),
+            ),
+            // Antigravity's documented PostToolUse carries `toolCall{name,
+            // args}` and NO result bytes — its hook output is advisory-only, so
+            // the response is honestly null here and result-content
+            // classification for this dialect is act-confirmation at best
+            // (fixture: antigravity-post-tool.json).
+            Dialect::Antigravity => {
+                let tc = v.get("toolCall")?;
+                let args = tc.get("args").cloned().unwrap_or(serde_json::Value::Null);
+                // No per-call cwd on this surface; the session's workspace
+                // roots are the closest honest stand-in.
+                let cwd = v
+                    .get("workspacePaths")
+                    .and_then(|w| w.as_array())
+                    .and_then(|a| a.first())
+                    .and_then(|p| p.as_str())
+                    .map(String::from);
+                (
+                    get_str(tc, "name")?,
+                    args,
+                    serde_json::Value::Null,
+                    cwd,
+                    get_str(&v, "conversationId"),
+                )
+            }
+            // No pinned post fixture exists for these dialects (Qwen's
+            // PostToolUse is unpinned; Cursor/OpenCode write surfaces are
+            // Task 3; Copilot postToolUse has no tool_use_id — open upstream
+            // issue; Gemini uses a different AfterTool contract).
+            Dialect::Qwen
+            | Dialect::Gemini
+            | Dialect::Copilot
+            | Dialect::Cursor
+            | Dialect::OpenCode => return None,
+        };
+        Some(PostToolCall {
+            tool,
+            input: args,
+            response,
             cwd: cwd_or_current(cwd),
             session_id: session,
         })
@@ -399,8 +626,15 @@ struct AntigravityStyle {
 struct AntigravityToolCall {
     #[serde(default)]
     name: Option<String>,
+    /// The shape the gate documents.
     #[serde(default)]
     arguments: Option<AntigravityArgs>,
+    /// The shape the post-tool surface documents (`toolCall.args`). Both are
+    /// accepted because a mismatch here means the gate parses no command and
+    /// silently allows every `run_command` — a catastrophic-classified-as-safe
+    /// outcome. Widening the parser can only add classification.
+    #[serde(default)]
+    args: Option<AntigravityArgs>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -427,7 +661,7 @@ fn parse_antigravity(input: &str) -> Parsed {
     ) {
         return Parsed::NotShell;
     }
-    let Some(args) = tc.arguments else {
+    let Some(args) = tc.arguments.or(tc.args) else {
         return Parsed::NotShell;
     };
     match args.command_line {
@@ -846,5 +1080,355 @@ mod tests {
         assert!(msg.contains("Kintsugi flagged this"));
         assert!(msg.contains("updates a dependency and runs its build script"));
         assert!(msg.contains("risk 42/100"));
+    }
+
+    // ----- PostToolUse result observation (V1.1) ------------------------------
+    // Every post-tool parse must trace to a pinned fixture in tests/fixtures/
+    // (the 0.2.1 lesson: adapters written to documented shapes, never
+    // round-trip-verified). No inline duplication of the pinned shapes: the
+    // files on disk are the contract.
+
+    fn fixture_text(name: &str) -> String {
+        std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures")
+                .join(name),
+        )
+        .unwrap_or_else(|e| panic!("fixture {name}: {e}"))
+    }
+
+    /// A programmatic mutation of a pinned fixture (single source of truth:
+    /// the file on disk), for the adversarial variants.
+    fn mutated_fixture(name: &str, edit: impl FnOnce(&mut serde_json::Value)) -> String {
+        let mut v: serde_json::Value =
+            serde_json::from_str(&fixture_text(name)).unwrap_or_else(|e| panic!("{e}"));
+        edit(&mut v);
+        v.to_string()
+    }
+
+    #[test]
+    fn all_pinned_fixture_files_are_valid_json() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+        let mut checked = 0;
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|e| e.to_str()) == Some("json") {
+                let text = std::fs::read_to_string(&path).unwrap();
+                serde_json::from_str::<serde_json::Value>(&text)
+                    .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+                checked += 1;
+            }
+        }
+        assert!(
+            checked >= 8,
+            "expected the pinned V1.1 fixture set, found {checked}"
+        );
+    }
+
+    #[test]
+    fn claude_post_tool_fixture_parses() {
+        let call = Dialect::Claude
+            .parse_post(&fixture_text("claude-post-tool-use.json"))
+            .expect("pinned claude post fixture must round-trip");
+        assert_eq!(call.tool, "WebFetch");
+        assert_eq!(call.input["url"], "https://example.com/advisory");
+        // The response rides along opaquely — parsed, never interpreted here.
+        assert!(call.response.is_string());
+        assert_eq!(call.cwd, PathBuf::from("/work/repo"));
+        assert_eq!(
+            call.session_id.as_deref(),
+            Some("e3f8a1c2-7b49-4d62-9a15-6c2d8e4f9b01")
+        );
+    }
+
+    #[test]
+    fn codex_post_tool_fixture_parses() {
+        let call = Dialect::Codex
+            .parse_post(&fixture_text("codex-post-tool-use.json"))
+            .expect("pinned codex post fixture must round-trip");
+        assert_eq!(call.tool, "mcp__webdocs__fetch_page");
+        assert_eq!(call.input["url"], "https://example.com/advisory");
+        assert!(call.response.is_string());
+        assert_eq!(call.cwd, PathBuf::from("/work/repo"));
+        assert_eq!(
+            call.session_id.as_deref(),
+            Some("b1e5d0a2-3f47-4c98-9d62-1a7b8c5e2f30")
+        );
+    }
+
+    #[test]
+    fn antigravity_post_tool_fixture_parses_the_documented_args_shape() {
+        let call = Dialect::Antigravity
+            .parse_post(&fixture_text("antigravity-post-tool.json"))
+            .expect("pinned antigravity post fixture must round-trip");
+        assert_eq!(call.tool, "read_url_content");
+        // The DOCUMENTED `toolCall.args` shape. Divergence note: the pre-tool
+        // Antigravity parser reads `toolCall.arguments` — at least one of the
+        // two is wrong for the live wire, and only a live CLI can say which
+        // (open checkbox in the fixtures README). The pre-tool path is left
+        // unchanged by this task; reconciliation rides on that checkbox.
+        assert_eq!(call.input["Url"], "https://example.com/advisory");
+        // No result bytes exist on this surface (its output is advisory-only
+        // `{}`), so the response is honestly null — never invented content.
+        assert_eq!(call.response, serde_json::Value::Null);
+        assert_eq!(call.cwd, PathBuf::from("/work/repo"));
+        assert_eq!(
+            call.session_id.as_deref(),
+            Some("ec33ebf9-0cba-4100-8142-c61503f6c587")
+        );
+    }
+
+    #[test]
+    fn post_tool_malformed_variants_parse_to_none() {
+        // Truncated JSON — an adversarial variant of every pinned fixture
+        // (char-safe halving: fixtures contain multi-byte characters).
+        for (dialect, name) in [
+            (Dialect::Claude, "claude-post-tool-use.json"),
+            (Dialect::Codex, "codex-post-tool-use.json"),
+            (Dialect::Antigravity, "antigravity-post-tool.json"),
+        ] {
+            let text = fixture_text(name);
+            let truncated: String = text.chars().take(text.chars().count() / 2).collect();
+            assert_eq!(dialect.parse_post(&truncated), None, "truncated {name}");
+        }
+
+        // Missing tool identity.
+        let no_tool = mutated_fixture("claude-post-tool-use.json", |v| {
+            v.as_object_mut().unwrap().remove("tool_name");
+        });
+        assert_eq!(Dialect::Claude.parse_post(&no_tool), None);
+
+        // Missing response (the plan's malformed case): a post payload with
+        // no result to observe is malformed, not a silent success.
+        for dialect in [Dialect::Claude, Dialect::Codex] {
+            let name = if dialect == Dialect::Claude {
+                "claude-post-tool-use.json"
+            } else {
+                "codex-post-tool-use.json"
+            };
+            let no_response = mutated_fixture(name, |v| {
+                v.as_object_mut().unwrap().remove("tool_response");
+            });
+            assert_eq!(dialect.parse_post(&no_response), None, "{dialect:?}");
+        }
+
+        // Missing toolCall (Antigravity).
+        let no_tc = mutated_fixture("antigravity-post-tool.json", |v| {
+            v.as_object_mut().unwrap().remove("toolCall");
+        });
+        assert_eq!(Dialect::Antigravity.parse_post(&no_tc), None);
+
+        // Wrong types.
+        let bad_type = mutated_fixture("claude-post-tool-use.json", |v| {
+            v["tool_name"] = serde_json::json!(7);
+        });
+        assert_eq!(Dialect::Claude.parse_post(&bad_type), None);
+        let bad_type = mutated_fixture("antigravity-post-tool.json", |v| {
+            v["toolCall"] = serde_json::json!("not-an-object");
+        });
+        assert_eq!(Dialect::Antigravity.parse_post(&bad_type), None);
+    }
+
+    #[test]
+    fn an_explicitly_null_post_response_parses_but_carries_no_content() {
+        // Present-but-null is NOT malformed (absent vs null are different
+        // states on the wire); it just observes nothing, per the classifier.
+        let null_response = mutated_fixture("claude-post-tool-use.json", |v| {
+            v["tool_response"] = serde_json::Value::Null;
+        });
+        assert!(Dialect::Claude.parse_post(&null_response).is_some());
+    }
+
+    // ----- File-write observation (V1.1 Task 3) -------------------------------
+    // Every write parse must trace to a pinned fixture in tests/fixtures/ (the
+    // cursor-write / cursor-str-replace / cursor-after-file-edit /
+    // opencode-write-v1 / opencode-write-v2 files). No inline shapes.
+
+    #[test]
+    fn cursor_write_fixture_normalizes_to_a_write_call() {
+        let call = Dialect::Cursor
+            .parse_write(&fixture_text("cursor-write.json"))
+            .expect("pinned cursor Write fixture must parse");
+        assert_eq!(call.tool, "Write");
+        assert_eq!(call.input["file_path"], "/work/repo/src/notes.rs");
+        // The per-call cwd is the trust boundary the classifier resolves against.
+        assert_eq!(call.cwd, PathBuf::from("/work/repo"));
+        assert_eq!(call.session_id.as_deref(), Some("conv-4d2f9a1c"));
+    }
+
+    #[test]
+    fn cursor_str_replace_fixture_normalizes_to_a_write_call() {
+        let call = Dialect::Cursor
+            .parse_write(&fixture_text("cursor-str-replace.json"))
+            .expect("pinned cursor StrReplace fixture must parse");
+        assert_eq!(call.tool, "StrReplace");
+        assert_eq!(call.input["file_path"], "/work/repo/src/lib.rs");
+        assert_eq!(call.session_id.as_deref(), Some("conv-4d2f9a1c"));
+    }
+
+    #[test]
+    fn cursor_after_file_edit_fixture_normalizes_to_a_write_call() {
+        let call = Dialect::Cursor
+            .parse_write(&fixture_text("cursor-after-file-edit.json"))
+            .expect("pinned cursor afterFileEdit fixture must parse");
+        // No tool identity on this event; the event name is the honest label.
+        assert_eq!(call.tool, "afterFileEdit");
+        // The path is top-level on this surface (pinned shape).
+        assert_eq!(call.input["file_path"], "/work/repo/src/notes.rs");
+        // No `cwd` field: the documented workspace root is the closest honest root.
+        assert_eq!(call.cwd, PathBuf::from("/work/repo"));
+        assert_eq!(call.session_id.as_deref(), Some("conv-4d2f9a1c"));
+    }
+
+    #[test]
+    fn opencode_v1_write_fixture_normalizes_with_its_session() {
+        // The pinned V1 plugin callback shape: input{tool, sessionID} + output{args}.
+        let call = Dialect::OpenCode
+            .parse_write(&fixture_text("opencode-write-v1.json"))
+            .expect("pinned opencode V1 write fixture must parse");
+        assert_eq!(call.tool, "write");
+        assert_eq!(call.input["filePath"], "/work/repo/src/notes.rs");
+        assert_eq!(call.session_id.as_deref(), Some("ses_9f2a41"));
+    }
+
+    #[test]
+    fn opencode_v2_write_fixture_parses_but_carries_no_session() {
+        // V2's documented before-event has `tool` + `input` and NO session field.
+        // We parse the shape honestly and leave the session absent: the hook then
+        // skips the observation (sessionless by design) rather than inventing an
+        // identifier. Tracked as a live-verification gap in the fixtures README.
+        let call = Dialect::OpenCode
+            .parse_write(&fixture_text("opencode-write-v2.json"))
+            .expect("pinned opencode V2 write fixture must parse");
+        assert_eq!(call.tool, "write");
+        assert_eq!(call.input["filePath"], "/work/repo/src/notes.rs");
+        assert_eq!(call.session_id, None, "V2 documents no session field");
+    }
+
+    #[test]
+    fn the_generated_opencode_bridge_shape_normalizes() {
+        // What the generated plugin forwards on `--event write` (our own contract,
+        // pinned by the init.rs unit test): tool + args + session + cwd.
+        let payload = r#"{
+            "tool": "write",
+            "args": { "filePath": "/work/repo/src/notes.rs" },
+            "session": "ses_9f2a41",
+            "cwd": "/work/repo"
+        }"#;
+        let call = Dialect::OpenCode
+            .parse_write(payload)
+            .expect("bridge shape");
+        assert_eq!(call.tool, "write");
+        assert_eq!(call.input["filePath"], "/work/repo/src/notes.rs");
+        assert_eq!(call.cwd, PathBuf::from("/work/repo"));
+        assert_eq!(call.session_id.as_deref(), Some("ses_9f2a41"));
+    }
+
+    #[test]
+    fn shell_payloads_are_never_mistaken_for_writes() {
+        // The flat `{command, cwd}` contract both dialects already speak is
+        // untouched: it carries no write identity, so the write route declines it.
+        let cursor_shell = r#"{"command":"git status","cwd":"/tmp","hook_event_name":"beforeShellExecution","conversation_id":"c1"}"#;
+        assert_eq!(Dialect::Cursor.parse_write(cursor_shell), None);
+        let opencode_shell = r#"{"command":"dd if=/dev/zero","cwd":"/work"}"#;
+        assert_eq!(Dialect::OpenCode.parse_write(opencode_shell), None);
+        // …and their PRE-tool shell parsing still works exactly as before.
+        assert!(matches!(
+            Dialect::Cursor.parse(cursor_shell),
+            Parsed::Shell(_)
+        ));
+        assert!(matches!(
+            Dialect::OpenCode.parse(opencode_shell),
+            Parsed::Shell(_)
+        ));
+    }
+
+    #[test]
+    fn only_the_pinned_cursor_content_tools_are_writes() {
+        // The exact Cursor content-tool name set is a live-verification gap, so
+        // only the fixture-pinned names are accepted (0.2.1 lesson: never guess a
+        // shape). An unknown tool is a miss, never a wrong parse.
+        let read = mutated_fixture("cursor-write.json", |v| {
+            v["tool_name"] = serde_json::json!("Read");
+        });
+        assert_eq!(Dialect::Cursor.parse_write(&read), None);
+        let delete = mutated_fixture("cursor-write.json", |v| {
+            v["tool_name"] = serde_json::json!("Delete");
+        });
+        assert_eq!(Dialect::Cursor.parse_write(&delete), None);
+    }
+
+    #[test]
+    fn write_parse_is_tolerant_of_malformed_payloads() {
+        for (dialect, name) in [
+            (Dialect::Cursor, "cursor-write.json"),
+            (Dialect::Cursor, "cursor-after-file-edit.json"),
+            (Dialect::OpenCode, "opencode-write-v1.json"),
+            (Dialect::OpenCode, "opencode-write-v2.json"),
+        ] {
+            let text = fixture_text(name);
+            let truncated: String = text.chars().take(text.chars().count() / 2).collect();
+            assert_eq!(dialect.parse_write(&truncated), None, "truncated {name}");
+        }
+        // Missing identity.
+        let no_tool = mutated_fixture("cursor-write.json", |v| {
+            v.as_object_mut().unwrap().remove("tool_name");
+        });
+        assert_eq!(Dialect::Cursor.parse_write(&no_tool), None);
+        // An `afterFileEdit` payload without the event marker is not a write.
+        let no_event = mutated_fixture("cursor-after-file-edit.json", |v| {
+            v.as_object_mut().unwrap().remove("hook_event_name");
+        });
+        assert_eq!(Dialect::Cursor.parse_write(&no_event), None);
+        // Wrong types.
+        let bad_type = mutated_fixture("cursor-write.json", |v| {
+            v["tool_name"] = serde_json::json!(7);
+        });
+        assert_eq!(Dialect::Cursor.parse_write(&bad_type), None);
+    }
+
+    #[test]
+    fn dialects_without_a_pinned_write_surface_return_none() {
+        // Task 1 pinned write shapes for Cursor and OpenCode only. Every other
+        // dialect reports "no write surface" rather than guessing (its post-tool
+        // or shell coverage is unaffected).
+        let cursor_write = fixture_text("cursor-write.json");
+        for d in [
+            Dialect::Claude,
+            Dialect::Qwen,
+            Dialect::Gemini,
+            Dialect::Copilot,
+            Dialect::Codex,
+            Dialect::Antigravity,
+        ] {
+            assert_eq!(d.parse_write(&cursor_write), None, "{d:?}");
+        }
+    }
+
+    #[test]
+    fn dialects_without_a_pinned_post_surface_return_none() {
+        // No Task-1 fixture pins these dialects' post shapes, so Kintsugi
+        // honestly reports "no post surface" rather than guessing at a wire
+        // format (the 0.2.1 lesson). Qwen's PostToolUse exists upstream but is
+        // unpinned; Cursor/OpenCode write surfaces are Task 3; Copilot's
+        // postToolUse lacks a tool_use_id (open issue, out of scope); Gemini
+        // uses AfterTool, a different contract entirely.
+        let claude_fixture = fixture_text("claude-post-tool-use.json");
+        for d in [
+            Dialect::Qwen,
+            Dialect::Gemini,
+            Dialect::Copilot,
+            Dialect::Cursor,
+            Dialect::OpenCode,
+        ] {
+            assert_eq!(d.parse_post(&claude_fixture), None, "{d:?}");
+        }
+        // Their PRE-tool shell payloads parse exactly as before.
+        let cursor_shell = r#"{"command":"git status","cwd":"/tmp","hook_event_name":"beforeShellExecution","conversation_id":"c1"}"#;
+        assert!(matches!(
+            Dialect::Cursor.parse(cursor_shell),
+            Parsed::Shell(_)
+        ));
+        assert_eq!(Dialect::Cursor.parse_post(cursor_shell), None);
     }
 }

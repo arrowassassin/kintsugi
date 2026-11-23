@@ -5,17 +5,22 @@
 //! `kintsugi-exec` tool to run a shell command *through*
 //! Kintsugi instead of shelling out raw. Each call is normalized to a
 //! [`ProposedCommand`], sent to the daemon, and — on allow — executed, with the
-//! command's output returned to the agent. Every call is recorded.
+//! command's output returned to the agent. Every call is recorded. An allowed
+//! command that fetches remote content (`curl`/`wget` GET, `git clone`) is also
+//! observed as a provenance taint source, exactly like the hook path; the
+//! fetched output itself is returned to the agent and never stored (spine #6).
 //!
 //! Transport: newline-delimited JSON-RPC 2.0 over stdio (the MCP stdio
 //! transport). Implemented by hand to avoid pulling an MCP framework dependency.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use kintsugi_core::{shell, Decision, ProposedCommand};
+use kintsugi_core::{shell, Decision, ObservedIngest, ProposedCommand};
 use kintsugi_daemon::Client;
 use serde_json::{json, Value};
+
+use crate::observe;
 
 /// Default protocol version advertised when the client doesn't pin one.
 const DEFAULT_PROTOCOL_VERSION: &str = "2024-11-05";
@@ -146,7 +151,7 @@ struct ToolOutcome {
 /// The full guarded-execution path: propose → decide → (allow) run → report.
 fn exec_through_kintsugi(agent: &str, cwd: PathBuf, session: &str, command: &str) -> ToolOutcome {
     let argv = shell::split(command);
-    let proposed = ProposedCommand::new(agent, cwd.clone(), argv, command.to_string())
+    let proposed = ProposedCommand::new(agent, cwd.clone(), argv.clone(), command.to_string())
         .with_session(Some(session.to_string()));
 
     let id = proposed.id.to_string();
@@ -183,7 +188,16 @@ fn exec_through_kintsugi(agent: &str, cwd: PathBuf, session: &str, command: &str
 
     let short = &id[..id.len().min(8)];
     match decision {
-        Decision::Allow => run_command(&cwd, command),
+        Decision::Allow => {
+            let outcome = run_command(&cwd, command);
+            // Ingest parity with the hook path: an ALLOWED command that fetches
+            // remote content taints the session for FUTURE commands. Emitted
+            // after the exec and before the output is returned, so the label is
+            // in place before the agent can act on the fetched bytes — while the
+            // fetch itself was still judged against prior taint state.
+            observe_shell_ingest(agent, &argv, session, &cwd);
+            outcome
+        }
         Decision::Deny => ToolOutcome {
             text: format!("Kintsugi blocked this command: {command}"),
             is_error: true,
@@ -208,6 +222,26 @@ fn approval_timeout() -> std::time::Duration {
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(0);
     std::time::Duration::from_secs(secs)
+}
+
+/// Observe an ALLOWED shell command that ingests remote content (`curl`/`wget`
+/// GET, `git clone`) — the MCP twin of the hook path's `observe_shell_ingest`
+/// (`crate::hook`). Same contract:
+///
+/// - **Identifier only (spine #6).** The source id is the URL / remote taken
+///   from the command itself; the fetched stdout/stderr is returned to the
+///   calling agent and never stored or logged anywhere. The daemon redacts the
+///   id at its single ingest boundary (`Daemon::apply_taint`).
+/// - **Observation never blocks.** Best-effort and silent: an unreachable
+///   daemon or an IPC error must never change the tool result.
+/// - **Allow only.** A denied or held command did not fetch anything, so it
+///   labels nothing.
+fn observe_shell_ingest(agent: &str, argv: &[String], session: &str, cwd: &Path) {
+    let Some(src) = observe::classify_shell_ingest(argv) else {
+        return;
+    };
+    let observed = ObservedIngest::now(src.kind, src.id, agent, session, cwd);
+    let _ = Client::ingest(&observed);
 }
 
 /// Poll the daemon until a held command is approved/denied, the deadline passes,

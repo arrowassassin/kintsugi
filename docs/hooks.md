@@ -85,3 +85,34 @@ Hooks are an interception layer, not an unbypassable firewall. An agent run in a
 binary by absolute path, can bypass the hook. That is exactly why Kintsugi keeps a
 filesystem-watcher backstop and snapshots: the guarantee is **"nothing is
 unrecoverable,"** not "nothing runs un-warned."
+
+## What `kintsugi init` registers
+
+Per agent, `kintsugi init` writes the *shell gate* and — for Claude Code — the
+**post-tool observation** surface. Same binary, same command; `kintsugi-hook`
+routes on the payload's own `hook_event_name`.
+
+| Agent | Event | Matcher | What it does |
+|---|---|---|---|
+| Claude Code | `PreToolUse` | `Bash` | decide allow / ask / deny |
+| Claude Code | `PostToolUse` | `WebFetch\|WebSearch\|Read\|mcp__.*` | observe what a content tool returned, and which workspace path a `Read` touched |
+| Qwen / Gemini | `PreToolUse` / `BeforeTool` | shell tools | decide |
+| Codex | `[[hooks.PreToolUse]]` | `^Bash$` | decide |
+| Cursor / Copilot / Antigravity / OpenCode | their own shapes | shell tool | decide |
+
+Post-tool observation never gates: it can only add provenance labels. A payload
+that arrives on the wrong surface is not silently swallowed — a shell payload on
+the observe route still goes through the gate (with a warning on stderr), so a
+mis-registered hook cannot disarm protection.
+
+`kintsugi-hook --event write` is the file-write observation route (the OpenCode
+plugin uses it). It returns silence for write payloads; if it ever receives a
+shell-shaped payload it falls through to the decision path instead of passing.
+
+### The packaged plugin's `PATH` requirement
+
+`plugin/kintsugi/hooks/hooks.json` (the marketplace plugin) invokes the bare name
+`kintsugi-hook`, while `kintsugi init` writes an absolute path. The plugin therefore
+needs Kintsugi's bin directory on the Claude Code process's `PATH` — it is installed
+by `install.sh` / `cargo install`. If the hook reports "command not found", run
+`kintsugi init` instead (absolute path, both surfaces), or add the bin dir to `PATH`.

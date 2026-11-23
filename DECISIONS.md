@@ -628,6 +628,273 @@ the locked product decisions this build implements.
   which CI/headless can't build — same honest "not-CI-compiled" posture as the
   llama backend. GPUI was considered and declined: immature, macOS-first, and a
   weaker cross-platform story than the hard mac/Linux/Windows requirement allows.
+- T0.1 (v0.4.0 release hygiene): CI toolchain policy is now "run the declared
+  MSRV, exactly." All three CI jobs are pinned to `dtolnay/rust-toolchain@1.96.0`
+  (matching `rust-version = "1.96"` and the compiler local dev uses) instead of
+  floating `@stable` — CI run #205 went red purely on drift (newer clippy emits
+  `duplicated_attributes`; 1.96 does not). Root-caused in code, not suppressed:
+  removed the duplicated `#[allow(clippy::too_many_arguments)]` on
+  `EventLog::append_locked` and two dead manifest entries new cargo flags
+  (unused workspace dep `kintsugi-app`, unused direct dep `anyhow` in
+  kintsugi-core). A future MSRV bump is a deliberate decision recorded here,
+  never a floating CI failure.
+- T0.2 (v0.4.0 release hygiene): `rusqlite` bumped 0.40.1 → 0.41.1, pulling
+  `libsqlite3-sys` 0.38.1 → 0.39.1 (bundled SQLite 3.54.1) — clears
+  RUSTSEC-2026-0459 from the engine that stores the tamper-evident log (a
+  crafted sibling WAL of differing page size could return uninitialized
+  page-cache memory). The 0.39-era pin rationale (libsqlite3-sys 0.38's
+  unstable `cfg_select!` failing on stable) is obsolete: the new combo
+  builds clean on the pinned MSRV. Full suite re-run post-bump — chain,
+  corpus, daemon incl. latency: 556 passed, 0 failed; the chain hash is
+  app-level SHA-256 and unaffected. CI gains a failing `cargo audit` job
+  (taiki-e/install-action; scoping in `.cargo/audit.toml`): the 15
+  pre-existing advisories all rode the opt-in `llama`/`download`
+  reqwest/quinn/rustls stack — compiled neither by CI nor shipped by
+  release builds. **Superseded within the same release:** those entries were
+  patched away rather than scoped, and `.cargo/audit.toml` now carries an EMPTY
+  ignore list (quinn-proto 0.11.19, quinn-udp 0.5.16, rustls 0.23.46,
+  rustls-webpki 0.103.17, webpki-root-certs 1.0.12, url 2.5.9), as did the four
+  standing "unsound" warnings (tokio 1.54.1, rustix 1.1.6, anyhow 1.0.104, lru
+  0.18.5). `cargo audit` is now silent on a clean lockfile, so any advisory is a
+  NEW one and fails the build until a human decides. New CI step dependency
+  flagged for human sign-off in the PR.
+- Channel truthfulness (T0.3): `plugin/aegis` renamed to `plugin/kintsugi` so the
+  marketplace manifest's `source: ./plugin/kintsugi` resolves — the manifest was
+  already truthful, the directory was not. `install.sh` now downloads from the
+  real org `kintsugi-tools/kintsugi` (derived from `git remote -v`; it was the
+  pre-transfer org, surviving on GitHub's breakable redirect). The README now
+  documents the actual release artifacts — the three per-OS binary tarballs +
+  `SHA256SUMS` produced by `release.yml` — instead of the cancelled desktop
+  `.dmg`/`.msi`/`.deb`/`.AppImage` installers, and says plainly that the desktop
+  app is built locally. `Formula/kintsugi.rb` added tap-ready at v0.3.1 with the
+  real source-tarball sha256 (`packaging/homebrew/kintsugi.rb` mirrors it);
+  publishing the tap remains a human step, per the STOP list.
+- Stop honesty + CHANGELOG 0.3.x (T0.4): `kintsugi stop` no longer reports
+  silent success. The old flow exited 0 in every no-daemon branch — including
+  a refused password gate (locked vault, no TTY) and the plain nothing-to-stop
+  case — so a scripted stop "succeeded" while stopping nothing. Now every
+  refused or nothing-to-stop path explains on stderr and exits non-zero
+  (`bail!`), while real work keeps exit 0 (live-daemon shutdown, watcher/stale-
+  PID cleanup); the daemon-side wrong-password refusal was fixed the same way.
+  The stop tests are hermetic against the host vault (`KINTSUGI_VAULT` →
+  absent), closing the dogfooding-machine suite failure. The CHANGELOG gained
+  its missing `0.3.0`/`0.3.1` sections written from the git tags (the stale
+  Tauri+Trunk desktop description was superseded by the shipped Dioxus-desktop
+  `desktop-dx/` reality), and `[Unreleased]` carries only this fix.
+- Phase 6 V1.1, post-tool result observation (plan Task 2): `Dialect::parse_post`
+  + `observe::classify_result_ingest` + a `hook_event_name == "PostToolUse"`
+  route that fires BEFORE shell parsing (a completed call is never re-judged as
+  a proposal) taint a session from what a content tool actually RETURNED —
+  Claude (`tool_response`, fixture-verified against the v2.1.330 docs) and
+  Codex (schema-verified MCP shape) live; Antigravity parses its documented
+  `toolCall.args` shape but carries no result bytes, so it stays honestly
+  parse-only (act-confirmation limit). The result is opaque by rule: only its
+  presence is consulted, identifiers come from the call's INPUT, and a redacted
+  `{"redacted": true}` blob still counts as content entering. Purely additive —
+  the pre-tool act taint is untouched (bridge test proves both persist), and
+  Qwen/Gemini/Copilot/Cursor/OpenCode return `None` rather than guessing at
+  unpinned shapes (the 0.2.1 lesson).
+- Phase 6 V1.1, file-write taint propagation (plan Task 3): a *tainted* session's
+  file write now labels the written path (`TaintEvent::WriteFile`), so a later
+  reader inherits the taint and the trifecta can fire on that reader's sink. The
+  wire surface is an explicit `kintsugi-hook --event write` route (new flag; its
+  absence is byte-identical to the pre-tool path, so a typo can never disarm the
+  shell gate), fed by the generated OpenCode plugin registering BOTH the V1
+  `tool.execute.before` handler and the V2 `ctx.tool.hook("execute.before")` one
+  (the APIs are incompatible), and by `Dialect::parse_write` for the pinned Cursor
+  `Write`/`StrReplace`/`afterFileEdit` shapes. The additive IPC `WriteObserved` →
+  `Daemon::apply_write` follows the `Ingest` precedent: gated on the cwd's
+  `[provenance] enabled` (the same switch as the floor), identifier-only (the path,
+  never the written bytes), persist-then-apply, and observation-only — it never
+  blocks, never enqueues, and never influences a command verdict; a clean session's
+  write appends no no-op row. Two deliberate boundaries: V2 documents no session
+  field, so V2 write events are forwarded sessionless and skipped (the existing
+  "sessionless observations are skipped" convention) rather than keyed on an
+  invented id; and Cursor's hook *registration* is deferred because its exact
+  content-tool name set is a live-verification gap — the Cursor parse path is
+  pinned, tested, and ready for the wiring.
+- Phase 6 V1.1 · MCP ingest parity: an ALLOWED fetch-shaped `kintsugi-exec` call
+  (curl/wget GET, `git clone`) now emits the same `ObservedIngest` as the hook
+  path, after the exec and before the output is returned to the calling agent.
+  The fetched stdout/stderr stays agent-only — never stored or logged (spine #6);
+  the URL identifier is redacted at the daemon's single ingest boundary
+  (`with_redacted_source_id`) as before. Denied, held, and upload-shaped (`curl
+  -d`) calls label nothing; observation remains best-effort and never blocks.
+- Phase 6 V1.1 · advisory dependency hint (hardening item H): the Tier-2
+  ambiguous-taint band gains an escalation-only `DependencyHint`
+  (LikelyDependent | LikelyIndependent | Unknown), computed deterministically —
+  pure string matching of the command against the session's already-redacted
+  untrusted identifiers, so it adds no inference call and cannot bypass the
+  recorder's ScoreBudget. LikelyDependent may escalate the attended Hold → Deny
+  with the reason prefixed `advisory:dependent` (the audit marker); the other
+  outcomes are text-only. The band is the trifecta floor's Hold/Annotate
+  engagement, re-derived from the floor's own three inputs (the reason text
+  alone can't prove membership — a leg-bearing command is already ambiguous at
+  baseline, so the floor rarely RAISES the class there). Safe is never scored;
+  Catastrophic keeps summary-only; unattended is unchanged. Scorer plumbing is a
+  defaulted `score_with_hint` trait method, so the workstation-only llama
+  backend (not CI-built) inherits today's exact behavior until its prompt
+  extension lands; policy allowlist / decision memory keep the final human say.
+- TUI provenance trail (Phase 6 V1.1, Task 6): the Detail view now fetches the
+  live trail over `Client::provenance` when it opens — a new `Action::LoadTrail`
+  handled in the event loop exactly like Approve/Deny, so the pure state machine
+  stays terminal-free and testable — and renders it below the row facts with the
+  CLI formatter's exact step grammar: glyph+word per step, tainted/clean as
+  words, the single danger accent on the rule leg only, NO_COLOR honored, a
+  designed empty state for clean sessions, and an honest degrade line ("provenance
+  unavailable (daemon not running)") when the fetch fails — Detail still renders
+  the event from the log. The cache is session-keyed and dropped when Detail
+  closes, so no stale trail can render against another row. This closes the TUI
+  half of the P6.5 note above; the demo GIF remains human-workstation work.
+
+
+## Phase 7 — anchored trust
+
+- T1.1 (public chain-head export): `EventLog::chain_head()` returns
+  `(latest_seq, head_hash)` from ONE SQL statement read through the connection —
+  never a hash of the `.db` file, because WAL commits land in the `-wal` sidecar
+  (checkpointed and overwritten in place), so file bytes can lag or miss the
+  logical head entirely. `(0, GENESIS_HASH)` when empty. Head access was private
+  (`head_hash`, used only by the append path); the new export is read-only and
+  changes no write behavior. Taint events stay deliberately outside the chain (the
+  Phase 6 `taint_events` decision): `chain_head` preserves that boundary and its
+  doc-comment records it as a preserved decision, not an oversight.
+- T1.2 (anchors table + no-fork guard): new append-only `anchors` rows record
+  exported checkpoints `(seq, head)`; `record_anchor` enforces the C2SP
+  invariant (never record a checkpoint inconsistent with one previously
+  recorded) with NO exceptions — lower seq or same-seq-different-head is refused
+  (`LogError::Fork`), identical `(seq, head)` is idempotent. Purge-baseline
+  decision: neither of the two sketched options (marker comparison /
+  baseline-reset) was needed or sound here — `purge_matching` appends its
+  `audit:purge` marker AFTER the rechain, and `seq` is an AUTOINCREMENT rowid,
+  so deletes never renumber or reuse: the marker always lands ABOVE every seq
+  ever used, an honest post-purge anchor therefore always carries a HIGHER seq
+  and passes the strict guard naturally, the discontinuity stays visible in the
+  anchor series (never faked continuity), and a marker-presence exception would
+  only have weakened restored-backup detection (any old backup containing a
+  purge marker would pass as a "reset"). A lower seq can only mean a restored or
+  rewritten events table — refused loudly, guard stays total. Migration:
+  `CREATE TABLE IF NOT EXISTS anchors` inside the init batch — a whole-table
+  add is idempotent, so an existing 0.3.x DB upgrades in place on next open
+  (same forward-compatible style as the session-column ALTER migration; no
+  conditional needed) — locked by an in-file test that builds a genuine
+  pre-anchor-schema DB and migrates it. Anchor code never mutates the events
+  table (spine #4: anchors are a NEW stream, not an edit stream) — asserted by
+  test against row count, seqs, and hashes.
+- T1.3 (checkpoint signing): reuse, don't add — the anchor signer derives its
+  ed25519 key per operation from the SAME vault inputs the admin proof uses
+  (password, `auth_salt`, KDF params; `auth_signing_key` made crate-visible for
+  exactly this), so no new secret exists at rest and the vault keeps storing
+  only the public key. `key_id` = that verifying pubkey in hex, embedded in each
+  checkpoint: self-certifying (the checkpoint verifies against a key it carries,
+  pinned by the vault file a user already trusts), and rotation falls out — a
+  password change re-keys the vault, the next export starts a new `key_id`
+  series, and older checkpoints keep verifying under their recorded `key_id`
+  (appended-series rotation, nothing invalidated). Signatures cover a NEW
+  context label `kintsugi.log.anchor.v1` so admin proofs and anchor signatures
+  are non-replayable across each other (tested both directions, including
+  against real `compute_proof` output). Canonical bytes: hand-rolled JSON for
+  the FIXED five-string shape only (RFC 8785 key order, no whitespace), with
+  `seq` as a decimal STRING on purpose — JCS numbers are IEEE-754 doubles, and
+  a string sidesteps i64 precision loss while keeping the serializer trivially
+  auditable; the escaping is cross-checked against `serde_json` on hostile
+  input and the full body is pinned byte-for-byte, so the hand-rolling is
+  locked, not trusted.
+- T1.4 (anchor CLI): the checkpoint file is a line-based `key=value` envelope
+  behind a `kintsugi-checkpoint/1` header, not JSON, because the artifact's job
+  is to survive being copied through a chat window or a password manager — a
+  human must be able to read it and a future version must be able to extend it.
+  Unknown keys are ignored and live outside the signature (C2SP-style forward
+  compatibility); a missing required field or a non-integer `seq` is a named
+  error, so `verify` never cries "tampered" at a mangled file it can diagnose.
+  Five verdicts, five exit codes (`0` INTACT, `1` STALE, `2` TAMPERED, `3` bad
+  signature, `4` UNVERIFIABLE) — an automation caller must be able to tell a
+  normal append from a rewrite without parsing prose, and `UNVERIFIABLE` is
+  deliberately distinct from `INVALID`: "I cannot check this" is not the same
+  claim as "this was forged". Timestamp precision is whole-second RFC3339 so
+  format-then-parse is a fixed point: the recorded anchor row rebuilds the exact
+  signed bytes, and no second copy of the checkpoint is ever stored. Export
+  records BEFORE it hands anything out (a refused fork must leave the user
+  holding nothing) and verifies the password against the vault before computing
+  anything, so a mistyped password cannot attribute an anchor to the real key.
+  Anchoring never talks to the daemon and never opens a socket — spine #5 (no
+  egress) is upheld by construction, and the copy is the user's deliberate act.
+  Residual, documented in `docs/anchoring.md`: a checkpoint makes tampering
+  *evident to whoever holds a copy*, not impossible; delete every copy and the
+  guarantee goes with it, and the first exported checkpoint is where the
+  guarantee starts.
+- T4.1 (here-doc redaction backstop, closing the 0.2.1 deferral):
+  `redact_command` gained a heredoc pre-pass — a single forward line scan that
+  segments bodies (`<<DELIM`, `<<-DELIM`, quoted delimiters, `<<<` here-strings)
+  before the tokenizer runs, then redacts each body LINE through the existing
+  passes (no new detection logic). Per-line because a here-doc fed to a shell
+  is a script: the program-gated passes fire with the body line's own program,
+  and an unbalanced quote can only swallow its own line, never the rest of
+  the body; the separated-flag linkage carries across body lines so the pass
+  is never weaker than the old whole-line behavior. The operator + delimiter
+  are carved as verbatim glue (a `mysql -p <<EOF` here-line no longer eats
+  its operator as the password value), an unterminated body takes the rest of
+  the input and the walk finishes (structurally terminating — the cursor only
+  moves forward), and heredoc-free input keeps the pre-heredoc path
+  byte-for-byte (fast path on no `<<`, plus a fallback for `<<`-text that
+  forms no heredoc). Honest residual: an unquoted secret value whose own text
+  contains a `<<` (e.g. `postgres://u:pa<<ss@h`) splits across the carve — the
+  prefix shape still redacts, but the old whole-token catch was incidental;
+  body lines are never op-scanned, so a secret inside a body is never split.
+  MARKER is unchanged and still frozen into the row hash;
+  the user still sees the raw command at warn time — only the stored row is
+  redacted. Classification's here-operator neutralization (parse.rs, DoS
+  prophylaxis) is untouched and independent.
+- T2.1/T2.2 (proof-of-human approval over IPC): the approve path mirrors the
+  privileged-shutdown ritual exactly rather than inventing a second auth scheme
+  — `AuthBegin("approve:<id>")` → password → one-shot proof, `None` (not `""`)
+  for absence so no placeholder reaches the crypto sink, and the op binding is
+  `approve:<id>` so a captured proof approves only the id it was minted for.
+  Default is `require_approval_proof = true`: a bare approve on a locked daemon
+  is refused loudly, written as a hash-chained `admin approve:<id>` event, and
+  counted by the shared `AuthThrottle` — the monotonic rule holds, it only ever
+  adds friction and can never unlock, and the resolved approval still walks the
+  ordinary `resolve_pending` path (kill-switch + exactly-once CAS) because auth
+  decides who may talk while the rules layer decides what may happen. Policy
+  scope is the held command's repo, so one repo can opt out without weakening
+  the default globally; an unprovisioned daemon keeps bare approval, since there
+  is nothing to prove and the queue must never brick. `Deny` stays bare (an agent
+  denying its own command is a nuisance, not a threat) and `PrunePending` stays
+  bare (queue-only, the log is untouched) — both documented in `docs/policy.md`.
+  The adversarial suite found a real hole while proving this: the privileged-op
+  handler never pinned its op string, so an `AuthBegin("approve:<id>")` challenge
+  could authorise a shutdown by echoing its own op back, and an unprovisioned
+  daemon would accept ANY op with no proof at all; the handler now pins
+  `SHUTDOWN_OP`, a tightening that only adds a refusal. The CLI half ships with
+  the daemon half deliberately — the daemon's error text tells the human to run
+  `kintsugi approve <id>`, which would be a dead end if T2.2 lagged behind. One
+  accepted consequence, stated because it looks like a bug: the challenge slot is
+  single and one-shot, so an approve challenge supersedes an unconsumed shutdown
+  challenge (and vice versa), and the op-binding check then rejects any proof
+  minted for the overwritten op — superseding can never transfer authority.
+
+- Security-gate hygiene (v0.4.0): advisories are cleared by PATCHING, not by
+  scoping. The 15-entry ignore list in `.cargo/audit.toml` is gone — quinn-proto
+  0.11.19, quinn-udp 0.5.16, rustls 0.23.46, rustls-webpki 0.103.17,
+  webpki-root-certs 1.0.12 and url 2.5.9 cleared every download-stack advisory,
+  and the same pass cleared the four standing "unsound" warnings (tokio 1.54.1,
+  rustix 1.1.6, anyhow 1.0.104, lru 0.18.5). `cargo audit` now passes with an
+  EMPTY ignore list, so the gate is load-bearing again instead of documenting a
+  backlog: any new advisory anywhere in the lockfile fails CI until a human
+  decides. Two Dependabot alerts are deliberately left open rather than forced:
+  rand 0.7.x (pinned transitively by phf_codegen -> selectors -> kuchikiki ->
+  wry 0.45 -> dioxus-desktop) and glib 0.18.x (pinned by libappindicator 0.9 ->
+  tray-icon 0.19), both in the non-CI desktop tree and both "unsound API"
+  advisories whose affected constructors this app never calls; clearing them
+  needs a wry/dioxus/tray-icon major bump that cannot be verified on CI, so they
+  stay visible until that bump is done deliberately. Separately, CodeQL's
+  `rust/hard-coded-cryptographic-value` findings are dismissed as "used in
+  tests": all 46 are literals passed to crypto APIs inside `#[cfg(test)]`
+  modules (admin.rs, anchor.rs, tui/app.rs) — fixture passwords, not secrets.
+  The alternative, deriving each fixture password at runtime so the dataflow
+  query stops matching, would obscure readable tests to satisfy a detector that
+  is working as designed; the dismissal reason is the honest classification and
+  is visible in the Security tab.
 - Gate v0.4.0 (P-1): widened the confident-safe recognizer with strictly read-only
   verbs (git/kubectl/docker/helm/terraform/gh/npm/cargo/go queries + text filters)
   to shrink the Ambiguous→Hold prompt band. Deep-research verdict recorded in
@@ -638,3 +905,41 @@ the locked product decisions this build implements.
   subcommand-gated tools match the verb at position 0 only, because a value-taking
   flag's VALUE could impersonate a safe verb (`kubectl -n get delete …`) — that
   hole is test-pinned closed. Catastrophic floor untouched.
+- Post-review hardening of 0.4.0 (both halves of the code review, all four
+  criticals): (1) `[security] require_approval_proof` and `[provenance] enabled`
+  are now asymmetric across scopes — a repo-level `.kintsugi.toml` may REQUIRE a
+  guardrail but never waive it, because that file lives in the workspace an agent
+  writes; only the user-owned global config can opt out, and a bare approval
+  accepted under an opt-out still writes an `admin approve:<id>` row with reason
+  `policy-opt-out`. A repo-only `false` used to re-enable silent self-approval of
+  a held catastrophic command. (2) `anchor verify` now PINS: it loads this
+  machine's vault and refuses (exit 3) a checkpoint whose `key_id` is not the
+  vault's stored public key, so a rewritten log re-signed with an attacker's own
+  key can no longer read INTACT. With no vault it says the signature is
+  self-consistent but unpinned instead of implying authenticity. (3) The
+  file-write taint now has its reader half: `ReadObserved` → `apply_read` →
+  `is_path_tainted` → `ReadFile`, so a later session reading a tainted path is
+  actually tainted; before this, `TaintEvent::ReadFile` existed only in tests and
+  the feature could not fire. (4) The generated OpenCode plugin forwards
+  `session_id: input.sessionID` on the shell payload — without it no OpenCode
+  command could ever be observed against a tainted session, which silently
+  disabled write propagation and the 0.3.0 fetch-act taint for the only agent the
+  plugin wires. Supporting fixes in the same pass: the brute-force throttle now
+  counts only PROOF attempts (a bare request cannot guess, and counting it let any
+  local peer lock the human out of approve AND shutdown); a provisioned machine
+  whose vault file disappears reads as Degraded, not Unprovisioned (an
+  `audit:provision` marker in the append-only log is the latch, since the vault is
+  one deletable file); re-anchoring the same head with a fresh signature appends
+  the signed row instead of silently keeping the old unsigned one; `--event write`
+  falls through to the gate when the payload is shell-shaped; `record_admin`
+  sanitizes the caller-supplied op before it reaches the never-deletable log; the
+  Antigravity gate accepts both `arguments` and `args`; `kintsugi init` wires
+  Claude's `PostToolUse` surface (it was plugin-only, so the default install got
+  no post-tool observation while the changelog said it did); the TUI's trail fetch
+  is bounded at 2 s and says so; and checkpoint parsing rejects duplicate fields
+  and oversized files. Residual, deliberately not forced: a secret used as the
+  here-doc DELIMITER word is stored verbatim (the operator+delimiter are structural
+  glue; splitting them mangled quoted delimiters — contrived, and the body text is
+  still redacted), and `rand 0.7`/`glib 0.18` remain open Dependabot alerts pinned
+  by `wry`/`dioxus-desktop` and `tray-icon`/`libappindicator` (unreachable-API
+  unsoundness advisories in a tree CI cannot build).
