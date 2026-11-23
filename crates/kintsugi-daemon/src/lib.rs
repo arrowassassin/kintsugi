@@ -21,6 +21,7 @@ use anyhow::{Context, Result};
 use directories::ProjectDirs;
 use kintsugi_core::admin::{self, VaultState};
 use kintsugi_core::{Decision, EventLog, Mode, ProposedCommand, TaintEvent, TaintState, Verdict};
+use kintsugi_model::DependencyHint;
 
 pub use ipc::{Client, Observation, Resolution, Server};
 
@@ -452,6 +453,50 @@ impl Daemon {
         }
     }
 
+    /// The advisory dependency hint for the ambiguous taint band (Phase 6 V1.1,
+    /// hardening item H). Deterministic and I/O-free: string matching of the
+    /// command against the session's — already-redacted — untrusted identifiers.
+    ///
+    /// The band is exactly what [`trifecta_floor`](Self::trifecta_floor)
+    /// governs at the partial level: provenance enabled, the session currently
+    /// tainted, and the command carrying exactly ONE leg — a sensitive read or
+    /// an egress sink, i.e. `Trifecta::Hold`/`Annotate`. Not `Block` (that lands
+    /// in the catastrophic arm, which keeps its summary-only behavior and never
+    /// computes a hint) and not `None` (no leg: the floor is inert, and the
+    /// command is judged purely on its own merits).
+    ///
+    /// Note the floor usually does not RAISE the class to get here — a
+    /// leg-bearing command is already ambiguous at baseline, so the reason text
+    /// alone can't prove band membership. This re-derives the floor's own three
+    /// inputs instead (tainted + the same two predicates), which stays exactly
+    /// in step with it by construction.
+    fn dependency_hint(
+        &self,
+        cmd: &ProposedCommand,
+        policy: &kintsugi_core::Policy,
+    ) -> DependencyHint {
+        use kintsugi_core::Trifecta;
+        if !policy.provenance_enabled() {
+            return DependencyHint::Unknown;
+        }
+        let Some(trail) = cmd
+            .session
+            .as_deref()
+            .and_then(|s| self.session_provenance(s))
+        else {
+            return DependencyHint::Unknown;
+        };
+        if !trail.is_tainted() {
+            return DependencyHint::Unknown;
+        }
+        let sensitive = kintsugi_core::is_sensitive_read(cmd).is_some();
+        let egress = kintsugi_core::is_egress_sink(cmd).is_some();
+        match kintsugi_core::evaluate_trifecta(true, sensitive, egress) {
+            Trifecta::Hold | Trifecta::Annotate => kintsugi_model::dependency_hint(cmd, &trail),
+            Trifecta::Block | Trifecta::None => DependencyHint::Unknown,
+        }
+    }
+
     /// Whether an authenticated shutdown has been accepted (serve loop should exit).
     pub fn should_shutdown(&self) -> bool {
         self.shutdown.get()
@@ -672,7 +717,18 @@ impl Daemon {
         // catastrophic gets a summary for the hold card. Safe is never scored.
         match class {
             kintsugi_core::Class::Ambiguous => {
-                let out = self.scorer.score(cmd, class, &rule);
+                // Phase 6 V1.1 · hardening item H: in the ambiguous TAINT band —
+                // where the provenance floor engaged at the partial level — the
+                // Tier-2 step gains a deterministic, advisory dependency hint:
+                // does this command plausibly consume an identifier from the
+                // session's untrusted trail? Pure string matching (no inference,
+                // no I/O), so it adds no scoring call and cannot bypass the
+                // recorder's ScoreBudget. Escalation-only (spine #2): the hint
+                // may turn the attended Hold into a Deny; it can never unlock or
+                // downgrade anything, and the human paths below (policy
+                // allowlist, decision memory) still have the final say.
+                let hint = self.dependency_hint(cmd, &policy);
+                let out = self.scorer.score_with_hint(cmd, class, &rule, hint);
                 verdict.summary = Some(out.summary);
                 verdict.risk = Some(out.risk);
                 verdict.tier = 2;
@@ -683,11 +739,18 @@ impl Daemon {
                     // review but NEVER downgrades Deny -> Allow. Auto-proceeding an
                     // ambiguous command unattended is only possible via an explicit
                     // human allowlist (.kintsugi.toml / decision memory) below — a human
-                    // decision, not the model's.
+                    // decision, not the model's. The hint changes nothing here.
                     verdict.reason = format!(
                         "model:risk={} ({}) — unattended holds ambiguous for review",
                         out.risk, rule
                     );
+                } else if hint == DependencyHint::LikelyDependent
+                    && verdict.decision == Decision::Hold
+                {
+                    // The advisory escalation: Hold -> Deny, marked for audit.
+                    // `advisory:dependent` appears in a reason ONLY here.
+                    verdict.decision = Decision::Deny;
+                    verdict.reason = format!("advisory:dependent ({})", verdict.reason);
                 }
             }
             kintsugi_core::Class::Catastrophic => {

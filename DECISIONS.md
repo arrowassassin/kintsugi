@@ -716,4 +716,19 @@ the locked product decisions this build implements.
   the URL identifier is redacted at the daemon's single ingest boundary
   (`with_redacted_source_id`) as before. Denied, held, and upload-shaped (`curl
   -d`) calls label nothing; observation remains best-effort and never blocks.
+- Phase 6 V1.1 · advisory dependency hint (hardening item H): the Tier-2
+  ambiguous-taint band gains an escalation-only `DependencyHint`
+  (LikelyDependent | LikelyIndependent | Unknown), computed deterministically —
+  pure string matching of the command against the session's already-redacted
+  untrusted identifiers, so it adds no inference call and cannot bypass the
+  recorder's ScoreBudget. LikelyDependent may escalate the attended Hold → Deny
+  with the reason prefixed `advisory:dependent` (the audit marker); the other
+  outcomes are text-only. The band is the trifecta floor's Hold/Annotate
+  engagement, re-derived from the floor's own three inputs (the reason text
+  alone can't prove membership — a leg-bearing command is already ambiguous at
+  baseline, so the floor rarely RAISES the class there). Safe is never scored;
+  Catastrophic keeps summary-only; unattended is unchanged. Scorer plumbing is a
+  defaulted `score_with_hint` trait method, so the workstation-only llama
+  backend (not CI-built) inherits today's exact behavior until its prompt
+  extension lands; policy allowlist / decision memory keep the final human say.
 
