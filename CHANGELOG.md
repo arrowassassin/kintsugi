@@ -66,6 +66,15 @@ All notable changes to Kintsugi are documented here. The format loosely follows
   [`docs/policy.md`](docs/policy.md).
 - **TUI: trifecta tag.** The detail pane names a taint-driven block ("lethal-trifecta
   block — untrusted content reached a sink"), so a provenance hold reads as such.
+- **TUI: provenance trail on Detail (Phase 6 V1.1).** Opening a held trifecta's
+  detail view now fetches the live trail from the daemon and renders it below the
+  event's own facts — the same grammar as `kintsugi provenance`: glyph + word per
+  step (`↓ untrusted read`, `• sensitive read`, `→ egress sink`, `⛔ rule fired`),
+  the tainted/clean state as words, the one danger accent reserved for the rule
+  that fired, `NO_COLOR` honored, and a designed empty state ("nothing to trace
+  for this session") for clean sessions. A down daemon degrades honestly: a
+  one-line notice, with the event itself still rendered from the log.
+
 - **Desktop app (Tauri + Dioxus, all-Rust, no npm).** New `kintsugi-app`
   data-binding engine (reads the daemon over IPC + the event log into UI
   view-models: timeline, audit search, metrics, hash-chain verify, queue, the P6.4
