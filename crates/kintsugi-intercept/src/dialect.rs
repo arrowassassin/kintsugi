@@ -26,6 +26,11 @@
 //!   `{toolCall:{name, arguments:{CommandLine, Cwd}}, conversationId}` in
 //!   (PascalCase argument keys); `{decision: allow|deny, reason}` out — no native
 //!   ask, so an ambiguous hold is mapped to deny.
+//!
+//! V1.1 adds a *post-tool* surface for the dialects that expose one (Claude,
+//! Codex, Antigravity): [`Dialect::parse_post`] normalizes a completed call's
+//! input + opaque result for result-content observation. Shapes are pinned to
+//! the fixture files in `tests/fixtures/` — never to docs alone.
 
 use std::path::PathBuf;
 
@@ -60,6 +65,20 @@ pub struct Shell {
 pub struct ContentCall {
     pub tool: String,
     pub input: serde_json::Value,
+    pub cwd: PathBuf,
+    pub session_id: Option<String>,
+}
+
+/// A completed tool call surfaced by a `PostToolUse`-style event, normalized for
+/// V1.1 *result-content* observation. `response` is the agent's (opaque) result
+/// payload — only its presence is ever consulted downstream; result bytes are
+/// never persisted or logged (spine #6). The source id for any taint comes from
+/// `input` (url / path / tool name), never from `response`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PostToolCall {
+    pub tool: String,
+    pub input: serde_json::Value,
+    pub response: serde_json::Value,
     pub cwd: PathBuf,
     pub session_id: Option<String>,
 }
@@ -205,6 +224,83 @@ impl Dialect {
         Some(ContentCall {
             tool,
             input: args,
+            cwd: cwd_or_current(cwd),
+            session_id: session,
+        })
+    }
+
+    /// Extract a completed tool call from a `PostToolUse`-style payload, for
+    /// V1.1 *result-content* observation. Tolerant in the same way as
+    /// [`parse_content`]: returns `None` for unparseable input, missing
+    /// identity/response fields, or a dialect with no pinned post surface —
+    /// observation never blocks, so a miss is harmless. Every shape parsed
+    /// here traces to a pinned fixture in `tests/fixtures/` (the 0.2.1
+    /// lesson: never write to a documented-but-unverified shape).
+    ///
+    /// Divergence note (Antigravity): the documented post payload is camelCase
+    /// `toolCall.args`, which is what this parser reads — while the pre-tool
+    /// parser reads `toolCall.arguments`. At least one of the two is wrong for
+    /// the live wire; only a live CLI can say which. The pre-tool path is
+    /// deliberately left unchanged here; reconciliation rides on the
+    /// live-verification checkbox in the fixtures README.
+    pub fn parse_post(self, input: &str) -> Option<PostToolCall> {
+        let v: serde_json::Value = serde_json::from_str(input).ok()?;
+        let get_str = |val: &serde_json::Value, k: &str| {
+            val.get(k).and_then(|s| s.as_str()).map(String::from)
+        };
+        let (tool, args, response, cwd, session) = match self {
+            // Claude Code & Codex share the PostToolUse envelope:
+            // tool_name / tool_input / tool_response / cwd / session_id
+            // (fixtures: claude-post-tool-use.json, codex-post-tool-use.json).
+            // A post payload without a response is malformed — there is
+            // nothing to observe.
+            Dialect::Claude | Dialect::Codex => (
+                get_str(&v, "tool_name")?,
+                v.get("tool_input")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
+                v.get("tool_response").cloned()?,
+                get_str(&v, "cwd"),
+                get_str(&v, "session_id"),
+            ),
+            // Antigravity's documented PostToolUse carries `toolCall{name,
+            // args}` and NO result bytes — its hook output is advisory-only, so
+            // the response is honestly null here and result-content
+            // classification for this dialect is act-confirmation at best
+            // (fixture: antigravity-post-tool.json).
+            Dialect::Antigravity => {
+                let tc = v.get("toolCall")?;
+                let args = tc.get("args").cloned().unwrap_or(serde_json::Value::Null);
+                // No per-call cwd on this surface; the session's workspace
+                // roots are the closest honest stand-in.
+                let cwd = v
+                    .get("workspacePaths")
+                    .and_then(|w| w.as_array())
+                    .and_then(|a| a.first())
+                    .and_then(|p| p.as_str())
+                    .map(String::from);
+                (
+                    get_str(tc, "name")?,
+                    args,
+                    serde_json::Value::Null,
+                    cwd,
+                    get_str(&v, "conversationId"),
+                )
+            }
+            // No pinned post fixture exists for these dialects (Qwen's
+            // PostToolUse is unpinned; Cursor/OpenCode write surfaces are
+            // Task 3; Copilot postToolUse has no tool_use_id — open upstream
+            // issue; Gemini uses a different AfterTool contract).
+            Dialect::Qwen
+            | Dialect::Gemini
+            | Dialect::Copilot
+            | Dialect::Cursor
+            | Dialect::OpenCode => return None,
+        };
+        Some(PostToolCall {
+            tool,
+            input: args,
+            response,
             cwd: cwd_or_current(cwd),
             session_id: session,
         })
@@ -846,5 +942,189 @@ mod tests {
         assert!(msg.contains("Kintsugi flagged this"));
         assert!(msg.contains("updates a dependency and runs its build script"));
         assert!(msg.contains("risk 42/100"));
+    }
+
+    // ----- PostToolUse result observation (V1.1) ------------------------------
+    // Every post-tool parse must trace to a pinned fixture in tests/fixtures/
+    // (the 0.2.1 lesson: adapters written to documented shapes, never
+    // round-trip-verified). No inline duplication of the pinned shapes: the
+    // files on disk are the contract.
+
+    fn fixture_text(name: &str) -> String {
+        std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures")
+                .join(name),
+        )
+        .unwrap_or_else(|e| panic!("fixture {name}: {e}"))
+    }
+
+    /// A programmatic mutation of a pinned fixture (single source of truth:
+    /// the file on disk), for the adversarial variants.
+    fn mutated_fixture(name: &str, edit: impl FnOnce(&mut serde_json::Value)) -> String {
+        let mut v: serde_json::Value =
+            serde_json::from_str(&fixture_text(name)).unwrap_or_else(|e| panic!("{e}"));
+        edit(&mut v);
+        v.to_string()
+    }
+
+    #[test]
+    fn all_pinned_fixture_files_are_valid_json() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+        let mut checked = 0;
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|e| e.to_str()) == Some("json") {
+                let text = std::fs::read_to_string(&path).unwrap();
+                serde_json::from_str::<serde_json::Value>(&text)
+                    .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+                checked += 1;
+            }
+        }
+        assert!(
+            checked >= 8,
+            "expected the pinned V1.1 fixture set, found {checked}"
+        );
+    }
+
+    #[test]
+    fn claude_post_tool_fixture_parses() {
+        let call = Dialect::Claude
+            .parse_post(&fixture_text("claude-post-tool-use.json"))
+            .expect("pinned claude post fixture must round-trip");
+        assert_eq!(call.tool, "WebFetch");
+        assert_eq!(call.input["url"], "https://example.com/advisory");
+        // The response rides along opaquely — parsed, never interpreted here.
+        assert!(call.response.is_string());
+        assert_eq!(call.cwd, PathBuf::from("/work/repo"));
+        assert_eq!(
+            call.session_id.as_deref(),
+            Some("e3f8a1c2-7b49-4d62-9a15-6c2d8e4f9b01")
+        );
+    }
+
+    #[test]
+    fn codex_post_tool_fixture_parses() {
+        let call = Dialect::Codex
+            .parse_post(&fixture_text("codex-post-tool-use.json"))
+            .expect("pinned codex post fixture must round-trip");
+        assert_eq!(call.tool, "mcp__webdocs__fetch_page");
+        assert_eq!(call.input["url"], "https://example.com/advisory");
+        assert!(call.response.is_string());
+        assert_eq!(call.cwd, PathBuf::from("/work/repo"));
+        assert_eq!(
+            call.session_id.as_deref(),
+            Some("b1e5d0a2-3f47-4c98-9d62-1a7b8c5e2f30")
+        );
+    }
+
+    #[test]
+    fn antigravity_post_tool_fixture_parses_the_documented_args_shape() {
+        let call = Dialect::Antigravity
+            .parse_post(&fixture_text("antigravity-post-tool.json"))
+            .expect("pinned antigravity post fixture must round-trip");
+        assert_eq!(call.tool, "read_url_content");
+        // The DOCUMENTED `toolCall.args` shape. Divergence note: the pre-tool
+        // Antigravity parser reads `toolCall.arguments` — at least one of the
+        // two is wrong for the live wire, and only a live CLI can say which
+        // (open checkbox in the fixtures README). The pre-tool path is left
+        // unchanged by this task; reconciliation rides on that checkbox.
+        assert_eq!(call.input["Url"], "https://example.com/advisory");
+        // No result bytes exist on this surface (its output is advisory-only
+        // `{}`), so the response is honestly null — never invented content.
+        assert_eq!(call.response, serde_json::Value::Null);
+        assert_eq!(call.cwd, PathBuf::from("/work/repo"));
+        assert_eq!(
+            call.session_id.as_deref(),
+            Some("ec33ebf9-0cba-4100-8142-c61503f6c587")
+        );
+    }
+
+    #[test]
+    fn post_tool_malformed_variants_parse_to_none() {
+        // Truncated JSON — an adversarial variant of every pinned fixture
+        // (char-safe halving: fixtures contain multi-byte characters).
+        for (dialect, name) in [
+            (Dialect::Claude, "claude-post-tool-use.json"),
+            (Dialect::Codex, "codex-post-tool-use.json"),
+            (Dialect::Antigravity, "antigravity-post-tool.json"),
+        ] {
+            let text = fixture_text(name);
+            let truncated: String = text.chars().take(text.chars().count() / 2).collect();
+            assert_eq!(dialect.parse_post(&truncated), None, "truncated {name}");
+        }
+
+        // Missing tool identity.
+        let no_tool = mutated_fixture("claude-post-tool-use.json", |v| {
+            v.as_object_mut().unwrap().remove("tool_name");
+        });
+        assert_eq!(Dialect::Claude.parse_post(&no_tool), None);
+
+        // Missing response (the plan's malformed case): a post payload with
+        // no result to observe is malformed, not a silent success.
+        for dialect in [Dialect::Claude, Dialect::Codex] {
+            let name = if dialect == Dialect::Claude {
+                "claude-post-tool-use.json"
+            } else {
+                "codex-post-tool-use.json"
+            };
+            let no_response = mutated_fixture(name, |v| {
+                v.as_object_mut().unwrap().remove("tool_response");
+            });
+            assert_eq!(dialect.parse_post(&no_response), None, "{dialect:?}");
+        }
+
+        // Missing toolCall (Antigravity).
+        let no_tc = mutated_fixture("antigravity-post-tool.json", |v| {
+            v.as_object_mut().unwrap().remove("toolCall");
+        });
+        assert_eq!(Dialect::Antigravity.parse_post(&no_tc), None);
+
+        // Wrong types.
+        let bad_type = mutated_fixture("claude-post-tool-use.json", |v| {
+            v["tool_name"] = serde_json::json!(7);
+        });
+        assert_eq!(Dialect::Claude.parse_post(&bad_type), None);
+        let bad_type = mutated_fixture("antigravity-post-tool.json", |v| {
+            v["toolCall"] = serde_json::json!("not-an-object");
+        });
+        assert_eq!(Dialect::Antigravity.parse_post(&bad_type), None);
+    }
+
+    #[test]
+    fn an_explicitly_null_post_response_parses_but_carries_no_content() {
+        // Present-but-null is NOT malformed (absent vs null are different
+        // states on the wire); it just observes nothing, per the classifier.
+        let null_response = mutated_fixture("claude-post-tool-use.json", |v| {
+            v["tool_response"] = serde_json::Value::Null;
+        });
+        assert!(Dialect::Claude.parse_post(&null_response).is_some());
+    }
+
+    #[test]
+    fn dialects_without_a_pinned_post_surface_return_none() {
+        // No Task-1 fixture pins these dialects' post shapes, so Kintsugi
+        // honestly reports "no post surface" rather than guessing at a wire
+        // format (the 0.2.1 lesson). Qwen's PostToolUse exists upstream but is
+        // unpinned; Cursor/OpenCode write surfaces are Task 3; Copilot's
+        // postToolUse lacks a tool_use_id (open issue, out of scope); Gemini
+        // uses AfterTool, a different contract entirely.
+        let claude_fixture = fixture_text("claude-post-tool-use.json");
+        for d in [
+            Dialect::Qwen,
+            Dialect::Gemini,
+            Dialect::Copilot,
+            Dialect::Cursor,
+            Dialect::OpenCode,
+        ] {
+            assert_eq!(d.parse_post(&claude_fixture), None, "{d:?}");
+        }
+        // Their PRE-tool shell payloads parse exactly as before.
+        let cursor_shell = r#"{"command":"git status","cwd":"/tmp","hook_event_name":"beforeShellExecution","conversation_id":"c1"}"#;
+        assert!(matches!(
+            Dialect::Cursor.parse(cursor_shell),
+            Parsed::Shell(_)
+        ));
+        assert_eq!(Dialect::Cursor.parse_post(cursor_shell), None);
     }
 }

@@ -18,6 +18,7 @@ use std::path::Path;
 
 use kintsugi_core::{shell, Class, Decision, ObservedIngest, ProposedCommand};
 use kintsugi_daemon::Client;
+use serde::Deserialize;
 
 pub use crate::dialect::HookOutcome;
 
@@ -26,6 +27,16 @@ use crate::observe;
 
 /// Handle one hook payload for a given dialect, performing the daemon round-trip.
 pub fn handle_with(dialect: Dialect, input: &str) -> HookOutcome {
+    // Route on the explicit event marker BEFORE any shell parsing: a
+    // PostToolUse payload reports a call that ALREADY ran. Re-judging it as a
+    // proposal would double-log a command nobody proposed and "deny" an
+    // action that cannot be undone by a deny. The observation below only
+    // labels the session for future commands — it never blocks and never
+    // touches the verdict path a PreToolUse payload takes.
+    if is_post_tool_use(input) {
+        observe_post_call(dialect, input);
+        return HookOutcome::silent();
+    }
     let parsed = match dialect.parse(input) {
         Parsed::Shell(s) => s,
         Parsed::NotShell => {
@@ -119,6 +130,42 @@ fn observe_content_call(dialect: Dialect, input: &str) {
     if let Some(src) = observe::classify_tool_ingest(&call.tool, &call.input, &call.cwd) {
         send_ingest(dialect, src, call.session_id.as_deref(), &call.cwd);
     }
+}
+
+/// Observe a *completed* tool call's result as a provenance taint source (V1.1
+/// result-content, fed by a PostToolUse event). Same contract as
+/// [`observe_content_call`]: best-effort and silent — a parse miss, an untracked
+/// session, or an unreachable daemon never affects the agent. The tool already
+/// ran, so there is nothing to gate; this only labels the session for FUTURE
+/// commands, purely additively on top of the pre-tool act taint.
+fn observe_post_call(dialect: Dialect, input: &str) {
+    let Some(call) = dialect.parse_post(input) else {
+        return;
+    };
+    if let Some(src) =
+        observe::classify_result_ingest(&call.tool, &call.input, &call.response, &call.cwd)
+    {
+        send_ingest(dialect, src, call.session_id.as_deref(), &call.cwd);
+    }
+}
+
+/// The narrow event-marker probe used to route PostToolUse payloads. Only the
+/// explicit `hook_event_name` the agent itself stamps decides — never payload
+/// shape (a PreToolUse shell payload misrouted onto the post path would
+/// bypass the decision gate, so a guess is never acceptable).
+#[derive(Debug, Deserialize)]
+struct HookEvent {
+    #[serde(default)]
+    hook_event_name: Option<String>,
+}
+
+/// Is this payload a `PostToolUse` event? Malformed input, other events, and
+/// missing markers all answer no — the decision path is the default.
+fn is_post_tool_use(input: &str) -> bool {
+    serde_json::from_str::<HookEvent>(input)
+        .ok()
+        .and_then(|e| e.hook_event_name)
+        .is_some_and(|name| name == "PostToolUse")
 }
 
 /// Observe a shell command that ingests remote content (`curl`/`wget`/`git
@@ -297,5 +344,57 @@ mod tests {
             dialect_from_args(["--agent=banana".to_string()]),
             Dialect::Claude
         );
+    }
+
+    // ----- PostToolUse routing (V1.1) -----------------------------------------
+
+    #[test]
+    fn post_tool_use_event_is_observed_never_gated() {
+        // Sessionless so the ingest send is skipped (no daemon in unit
+        // tests): a post event is pure observation — silent, no verdict.
+        let payload = r#"{
+            "hook_event_name": "PostToolUse",
+            "tool_name": "WebFetch",
+            "tool_input": { "url": "https://example.com/p" },
+            "tool_response": "page body",
+            "cwd": "/work"
+        }"#;
+        assert_eq!(handle(payload), HookOutcome::silent());
+    }
+
+    #[test]
+    fn post_tool_use_shell_result_is_never_rejudged_as_a_proposal() {
+        // The same catastrophic Bash call, but as a PostToolUse event: it
+        // already ran. Re-judging a completed call would double-log it and
+        // "deny" an action that cannot be undone by a deny — and the pre-tool
+        // path WOULD deny this fail-closed, so silence here proves the post
+        // routing held and never touched the decision path.
+        let payload = r#"{
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Bash",
+            "tool_input": { "command": "rm -rf /" },
+            "tool_response": "done"
+        }"#;
+        assert_eq!(handle(payload), HookOutcome::silent());
+    }
+
+    #[test]
+    fn is_post_tool_use_matches_only_the_explicit_event_marker() {
+        assert!(is_post_tool_use(
+            r#"{"hook_event_name":"PostToolUse","tool_name":"Read"}"#
+        ));
+        // Pre-tool events, other events, a missing marker, and garbage all
+        // take the decision path — the post route is never entered on a guess
+        // (misrouting a PreToolUse payload here would bypass the shell gate).
+        assert!(!is_post_tool_use(
+            r#"{"hook_event_name":"PreToolUse","tool_name":"Bash"}"#
+        ));
+        assert!(!is_post_tool_use(
+            r#"{"hook_event_name":"postToolUse","tool_name":"Bash"}"#
+        ));
+        assert!(!is_post_tool_use(r#"{"tool_name":"Bash"}"#));
+        assert!(!is_post_tool_use("not json"));
+        assert!(!is_post_tool_use(r#"["an array"]"#));
+        assert!(!is_post_tool_use("42"));
     }
 }
