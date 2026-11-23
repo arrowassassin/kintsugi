@@ -1,0 +1,36 @@
+# cargo-audit gate configuration.
+#
+# Scope policy: `cargo audit` reads Cargo.lock, which resolves EVERY feature
+# combination — including kintsugi-model's opt-in `llama`/`download` backends
+# whose reqwest/quinn/rustls stack is never compiled by CI (see the lint-job
+# comment in ci.yml) and never shipped in the release binaries (release.yml
+# builds default-feature `--bins` only). The advisories below are real for
+# anyone who compiles those backends; they are recorded here, not dismissed.
+#
+# The gate FAILS on anything not listed: a new advisory anywhere in the
+# lockfile — including a *new* advisory in the download stack — breaks CI
+# until a human decides. Removing an entry requires fixing or scoping the
+# underlying crate, never silently.
+[advisories]
+ignore = [
+    # quinn-proto 0.11.14 — QUIC protocol engine (reqwest/quinn, `download` feature only)
+    "RUSTSEC-2026-0185",
+    "RUSTSEC-2026-0338",
+    "RUSTSEC-2026-0339",
+    "RUSTSEC-2026-0340",
+    "RUSTSEC-2026-0342",
+    "RUSTSEC-2026-0523",
+    "RUSTSEC-2026-0524",
+    # quinn-udp 0.5.14 — QUIC UDP socket layer (same stack)
+    "RUSTSEC-2026-0538",
+    # rustls 0.23.40 — TLS (same stack)
+    "RUSTSEC-2026-0285",
+    "RUSTSEC-2026-0346",
+    "RUSTSEC-2026-0348",
+    "RUSTSEC-2026-0349",
+    # rustls-webpki 0.103.13 / webpki-root-certs 1.0.7 (same stack)
+    "RUSTSEC-2026-0382",
+    "RUSTSEC-2026-0383",
+    # url 2.5.8 (same stack)
+    "RUSTSEC-2026-0592",
+]

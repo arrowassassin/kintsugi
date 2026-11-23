@@ -97,3 +97,22 @@ jobs:
         with:
           name: coverage-lcov
           path: lcov.info
+
+  audit:
+    name: cargo audit (RustSec advisories)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # MSRV pin — see the toolchain policy note in the lint job. cargo-audit
+      # does not compile the workspace, but `cargo metadata` runs on this
+      # toolchain and audits the lockfile the pinned MSRV resolves.
+      - uses: dtolnay/rust-toolchain@1.96.0
+      - uses: taiki-e/install-action@cargo-audit
+      # FAILING gate: any vulnerability advisory in Cargo.lock breaks the
+      # build unless it is individually recorded in .cargo/audit.toml — that
+      # file scopes the known advisories to the opt-in llama/download
+      # backends (compiled neither by CI nor by release.yml) and carries the
+      # policy: a NEW advisory anywhere fails loudly until a human decides.
+      # Unsound/unmaintained warnings print but do not fail (they are
+      # upstream-code properties, tracked for the next bump decision).
+      - run: cargo audit
