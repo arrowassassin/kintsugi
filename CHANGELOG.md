@@ -79,6 +79,16 @@ All notable changes to Kintsugi are documented here. The format loosely follows
   that fired). Built with Trunk + `cargo tauri` on a workstation (detached from the
   CI workspace; needs the platform webview + wasm target).
 
+### Build & CI hygiene
+- **CI runs the declared MSRV, not a floating stable.** All three CI jobs are
+  pinned to the workspace `rust-version` (1.96.0) so CI, local dev, and the
+  declared minimum all run the same compiler. The pin that previously failed
+  purely on toolchain drift (CI run #205: a `duplicated_attributes` lint newer
+  clippy emits and 1.96 does not) reproduces green, and the drift findings were
+  root-caused in code, not suppressed: one duplicated `#[allow]` and two dead
+  manifest entries (unused workspace dep `kintsugi-app`; unused direct dep
+  `anyhow` in `kintsugi-core`) were removed.
+
 ## [0.2.1] — 2026-06-17
 
 Pre-rollout security & robustness hardening from an audit. No new features —

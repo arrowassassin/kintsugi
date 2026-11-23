@@ -628,3 +628,13 @@ the locked product decisions this build implements.
   which CI/headless can't build — same honest "not-CI-compiled" posture as the
   llama backend. GPUI was considered and declined: immature, macOS-first, and a
   weaker cross-platform story than the hard mac/Linux/Windows requirement allows.
+- T0.1 (v0.4.0 release hygiene): CI toolchain policy is now "run the declared
+  MSRV, exactly." All three CI jobs are pinned to `dtolnay/rust-toolchain@1.96.0`
+  (matching `rust-version = "1.96"` and the compiler local dev uses) instead of
+  floating `@stable` — CI run #205 went red purely on drift (newer clippy emits
+  `duplicated_attributes`; 1.96 does not). Root-caused in code, not suppressed:
+  removed the duplicated `#[allow(clippy::too_many_arguments)]` on
+  `EventLog::append_locked` and two dead manifest entries new cargo flags
+  (unused workspace dep `kintsugi-app`, unused direct dep `anyhow` in
+  kintsugi-core). A future MSRV bump is a deliberate decision recorded here,
+  never a floating CI failure.
