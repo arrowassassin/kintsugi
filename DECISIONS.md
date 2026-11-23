@@ -628,3 +628,14 @@ the locked product decisions this build implements.
   which CI/headless can't build — same honest "not-CI-compiled" posture as the
   llama backend. GPUI was considered and declined: immature, macOS-first, and a
   weaker cross-platform story than the hard mac/Linux/Windows requirement allows.
+- Channel truthfulness (T0.3): `plugin/aegis` renamed to `plugin/kintsugi` so the
+  marketplace manifest's `source: ./plugin/kintsugi` resolves — the manifest was
+  already truthful, the directory was not. `install.sh` now downloads from the
+  real org `kintsugi-tools/kintsugi` (derived from `git remote -v`; it was the
+  pre-transfer org, surviving on GitHub's breakable redirect). The README now
+  documents the actual release artifacts — the three per-OS binary tarballs +
+  `SHA256SUMS` produced by `release.yml` — instead of the cancelled desktop
+  `.dmg`/`.msi`/`.deb`/`.AppImage` installers, and says plainly that the desktop
+  app is built locally. `Formula/kintsugi.rb` added tap-ready at v0.3.1 with the
+  real source-tarball sha256 (`packaging/homebrew/kintsugi.rb` mirrors it);
+  publishing the tap remains a human step, per the STOP list.

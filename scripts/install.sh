@@ -22,7 +22,7 @@
 #                       (used by `kintsugi update`)
 set -eu
 
-REPO="arrowassassin/kintsugi"
+REPO="kintsugi-tools/kintsugi"
 BINS="kintsugi kintsugi-daemon kintsugi-shim kintsugi-hook kintsugi-mcp"
 BIN_DIR="${KINTSUGI_BIN_DIR:-}"   # empty → resolved in main() to where kintsugi already lives
 VERSION=""
