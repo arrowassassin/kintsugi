@@ -743,3 +743,15 @@ the locked product decisions this build implements.
   closes, so no stale trail can render against another row. This closes the TUI
   half of the P6.5 note above; the demo GIF remains human-workstation work.
 
+
+## Phase 7 — anchored trust
+
+- T1.1 (public chain-head export): `EventLog::chain_head()` returns
+  `(latest_seq, head_hash)` from ONE SQL statement read through the connection —
+  never a hash of the `.db` file, because WAL commits land in the `-wal` sidecar
+  (checkpointed and overwritten in place), so file bytes can lag or miss the
+  logical head entirely. `(0, GENESIS_HASH)` when empty. Head access was private
+  (`head_hash`, used only by the append path); the new export is read-only and
+  changes no write behavior. Taint events stay deliberately outside the chain (the
+  Phase 6 `taint_events` decision): `chain_head` preserves that boundary and its
+  doc-comment records it as a preserved decision, not an oversight.
