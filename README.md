@@ -201,7 +201,7 @@ below:
 | `kintsugi-model` | Tier-2 scorer: heuristic by default, real GGUF behind `--features llama` |
 | `kintsugi-tui` | live `ratatui` timeline |
 | `kintsugi-app` | data-binding layer behind the desktop Control Room (shared with the GUI) |
-| `desktop-dx/` | the Dioxus desktop **Control Room** app (separate workspace; ships `.dmg`/`.msi`/`.deb`) |
+| `desktop-dx/` | the Dioxus desktop **Control Room** app (separate workspace; build locally, no prebuilt installers yet) |
 
 ## Install
 
@@ -219,15 +219,27 @@ the desktop Control Room app, offering to build it if it isn't installed yet**
 (skipped on headless hosts or with `--no-desktop`). So `cargo install kintsugi &&
 kintsugi init` gets you everything, GUI included.
 
-**Prefer a packaged installer?** Grab one for your platform from the
-[latest release](https://github.com/kintsugi-tools/kintsugi/releases/latest):
-**`.dmg`** (macOS), **`.msi`** (Windows), **`.deb` / `.AppImage`** (Linux), it
-registers like any other app and first launch runs the setup wizard (password →
-optional model → initialize). To (re)register a desktop build by hand,
-`kintsugi install-desktop` writes the macOS `.app` bundle, the Linux `.desktop`
-entry + icons, or the Windows Start-menu shortcut; `kintsugi uninstall`
-(password-gated) removes everything. Keep it current from the app itself, 
-**Settings → Check for updates** runs the same flow as `kintsugi update`.
+**Prefer a release tarball?** Each release publishes per-platform tarballs of
+the five binaries, plus a `SHA256SUMS` you can verify against, on the
+[latest release](https://github.com/kintsugi-tools/kintsugi/releases/latest)
+page:
+
+| platform | artifact |
+|----------|----------|
+| macOS (Apple Silicon) | `kintsugi-aarch64-apple-darwin.tar.gz` |
+| Linux (x86_64) | `kintsugi-x86_64-unknown-linux-gnu.tar.gz` |
+| Windows (x64) | `kintsugi-x86_64-pc-windows-msvc.tar.gz` |
+
+The curl one-liner above downloads and checksum-verifies these for you. There
+are no prebuilt binaries for macOS-Intel or Linux-ARM64 yet (the installer
+builds from source there), and no prebuilt desktop installers (`.dmg` /
+`.msi` / `.deb` / `.AppImage`): the Control Room app is built locally.
+`kintsugi init` offers to build and register it, or run `cd desktop-dx && cargo
+run` yourself. To (re)register a desktop build by hand, `kintsugi
+install-desktop` writes the macOS `.app` bundle, the Linux `.desktop` entry +
+icons, or the Windows Start-menu shortcut; `kintsugi uninstall` (password-gated)
+removes everything. Keep it current from the app itself, **Settings → Check for
+updates** runs the same flow as `kintsugi update`.
 
 That's it, Kintsugi works immediately with **no model** (an offline heuristic
 scorer). The optional model just sharpens the plain-English summary and risk

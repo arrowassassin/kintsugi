@@ -654,3 +654,14 @@ the locked product decisions this build implements.
   anything new fails loudly. The 4 unsound warnings (anyhow/lru/rustix/
   tokio) print non-fatally and ride the next deliberate bump. New CI step
   dependency flagged for human sign-off in the PR.
+- Channel truthfulness (T0.3): `plugin/aegis` renamed to `plugin/kintsugi` so the
+  marketplace manifest's `source: ./plugin/kintsugi` resolves — the manifest was
+  already truthful, the directory was not. `install.sh` now downloads from the
+  real org `kintsugi-tools/kintsugi` (derived from `git remote -v`; it was the
+  pre-transfer org, surviving on GitHub's breakable redirect). The README now
+  documents the actual release artifacts — the three per-OS binary tarballs +
+  `SHA256SUMS` produced by `release.yml` — instead of the cancelled desktop
+  `.dmg`/`.msi`/`.deb`/`.AppImage` installers, and says plainly that the desktop
+  app is built locally. `Formula/kintsugi.rb` added tap-ready at v0.3.1 with the
+  real source-tarball sha256 (`packaging/homebrew/kintsugi.rb` mirrors it);
+  publishing the tap remains a human step, per the STOP list.
