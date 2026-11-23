@@ -328,6 +328,37 @@ impl Daemon {
         self.taint.borrow_mut().apply(&event);
     }
 
+    /// Apply a file-write taint transition (V1.1): a tainted session wrote
+    /// `path`, so a later reader of that path inherits the session's taint through
+    /// [`TaintEvent::WriteFile`].
+    ///
+    /// Gated on the effective policy for the *writing session's* cwd — the same
+    /// `[provenance] enabled` switch that arms the trifecta floor. With the guard
+    /// off nothing is recorded: a path label would be inert state the operator
+    /// explicitly disabled.
+    ///
+    /// A clean session can propagate nothing, so its write is skipped outright (it
+    /// would be a no-op transition): that keeps frequent benign edits out of the
+    /// append-only taint stream instead of appending a no-op row per file. Beyond
+    /// that this follows [`apply_taint`](Self::apply_taint) exactly — persist, then
+    /// apply — and carries no `source_id`, so there is nothing to redact (segment
+    /// G). `path` is an identifier; write content never reaches this boundary.
+    pub fn apply_write(&self, session: &str, path: &str, cwd: &std::path::Path) {
+        if session.is_empty() || path.trim().is_empty() {
+            return;
+        }
+        if !load_policy(cwd).provenance_enabled() {
+            return;
+        }
+        if !self.is_session_tainted(Some(session)) {
+            return;
+        }
+        self.apply_taint(&TaintEvent::WriteFile {
+            session: session.to_string(),
+            path: std::path::PathBuf::from(path),
+        });
+    }
+
     /// Whether the given session has been influenced by untrusted content. A
     /// `None` (untracked) session is reported as not tainted.
     pub fn is_session_tainted(&self, session: Option<&str>) -> bool {
@@ -994,6 +1025,12 @@ impl Daemon {
             // apply_taint persists best-effort and redacts the source_id (segment G).
             ipc::Request::Ingest(observed) => {
                 self.apply_taint(&observed.into_taint_event());
+                ipc::Response::Ack
+            }
+            // Observation only: a write labels the path for future readers. It
+            // never blocks, never enqueues, and never touches a command verdict.
+            ipc::Request::WriteObserved { session, path, cwd } => {
+                self.apply_write(&session, &path, &cwd);
                 ipc::Response::Ack
             }
             ipc::Request::Provenance(cmd) => ipc::Response::Provenance {

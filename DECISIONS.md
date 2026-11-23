@@ -690,3 +690,22 @@ the locked product decisions this build implements.
   the pre-tool act taint is untouched (bridge test proves both persist), and
   Qwen/Gemini/Copilot/Cursor/OpenCode return `None` rather than guessing at
   unpinned shapes (the 0.2.1 lesson).
+- Phase 6 V1.1, file-write taint propagation (plan Task 3): a *tainted* session's
+  file write now labels the written path (`TaintEvent::WriteFile`), so a later
+  reader inherits the taint and the trifecta can fire on that reader's sink. The
+  wire surface is an explicit `kintsugi-hook --event write` route (new flag; its
+  absence is byte-identical to the pre-tool path, so a typo can never disarm the
+  shell gate), fed by the generated OpenCode plugin registering BOTH the V1
+  `tool.execute.before` handler and the V2 `ctx.tool.hook("execute.before")` one
+  (the APIs are incompatible), and by `Dialect::parse_write` for the pinned Cursor
+  `Write`/`StrReplace`/`afterFileEdit` shapes. The additive IPC `WriteObserved` →
+  `Daemon::apply_write` follows the `Ingest` precedent: gated on the cwd's
+  `[provenance] enabled` (the same switch as the floor), identifier-only (the path,
+  never the written bytes), persist-then-apply, and observation-only — it never
+  blocks, never enqueues, and never influences a command verdict; a clean session's
+  write appends no no-op row. Two deliberate boundaries: V2 documents no session
+  field, so V2 write events are forwarded sessionless and skipped (the existing
+  "sessionless observations are skipped" convention) rather than keyed on an
+  invented id; and Cursor's hook *registration* is deferred because its exact
+  content-tool name set is a live-verification gap — the Cursor parse path is
+  pinned, tested, and ready for the wiring.

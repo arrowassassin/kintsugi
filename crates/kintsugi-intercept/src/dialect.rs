@@ -19,9 +19,14 @@
 //! - GitHub Copilot CLI: `{toolName, toolArgs.command}` in (camelCase);
 //!   `{permissionDecision: allow|deny|ask, permissionDecisionReason}` out.
 //! - Cursor CLI: `{command, cwd}` in (beforeShellExecution); `{permission:
-//!   allow|deny|ask, userMessage, agentMessage}` out.
+//!   allow|deny|ask, userMessage, agentMessage}` out. Its file-write events
+//!   (`Write`/`StrReplace` pre-tool, `afterFileEdit`) are parsed by
+//!   [`Dialect::parse_write`] for provenance, on the explicit `--event write`
+//!   route.
 //! - OpenCode: no external-command hook — a bundled JS plugin bridges to us with
-//!   a simple `{command, cwd}` in / `{decision: allow|deny|ask, reason}` out.
+//!   a simple `{command, cwd}` in / `{decision: allow|deny|ask, reason}` out, and
+//!   forwards write/edit calls as `{tool, args, session, cwd}` on
+//!   `--event write` ([`Dialect::parse_write`]).
 //! - Google Antigravity: plugin `PreToolUse` hook (matcher `run_command`).
 //!   `{toolCall:{name, arguments:{CommandLine, Cwd}}, conversationId}` in
 //!   (PascalCase argument keys); `{decision: allow|deny, reason}` out — no native
@@ -29,8 +34,10 @@
 //!
 //! V1.1 adds a *post-tool* surface for the dialects that expose one (Claude,
 //! Codex, Antigravity): [`Dialect::parse_post`] normalizes a completed call's
-//! input + opaque result for result-content observation. Shapes are pinned to
-//! the fixture files in `tests/fixtures/` — never to docs alone.
+//! input + opaque result for result-content observation, and a *write* surface
+//! for Cursor and OpenCode ([`Dialect::parse_write`]) so a tainted session's
+//! file writes propagate taint to the path. Shapes are pinned to the fixture
+//! files in `tests/fixtures/` — never to docs alone.
 
 use std::path::PathBuf;
 
@@ -79,6 +86,24 @@ pub struct PostToolCall {
     pub tool: String,
     pub input: serde_json::Value,
     pub response: serde_json::Value,
+    pub cwd: PathBuf,
+    pub session_id: Option<String>,
+}
+
+/// A non-shell **file-write** tool call surfaced for provenance observation: a
+/// Cursor `Write` / `StrReplace` / `afterFileEdit`, or an OpenCode `write` /
+/// `edit`. The raw `input` object is handed to
+/// [`crate::observe::classify_tool_write`], which extracts the target path — the
+/// write *body* (a `content` field, or `old_string`/`new_string` pairs) is never
+/// read, persisted, or logged (spine #6).
+///
+/// The fields are deliberately the same normalized shape as [`ContentCall`]
+/// because both classifiers consume (tool, args, workspace); a distinct type
+/// keeps the ingest and write observation surfaces honest at the call site.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WriteCall {
+    pub tool: String,
+    pub input: serde_json::Value,
     pub cwd: PathBuf,
     pub session_id: Option<String>,
 }
@@ -217,11 +242,117 @@ impl Dialect {
                     get_str(&v, "conversationId"),
                 )
             }
-            // These dialects' hooks only ever deliver a shell command — no content
-            // tool to observe through this surface.
+            // No *ingest* shape is pinned for these dialects: their hooks carry
+            // file writes, not content-tool results. Writes ride the explicit
+            // `--event write` route through [`parse_write`] instead, so nothing
+            // is guessed here (the 0.2.1 lesson).
             Dialect::Cursor | Dialect::OpenCode => return None,
         };
         Some(ContentCall {
+            tool,
+            input: args,
+            cwd: cwd_or_current(cwd),
+            session_id: session,
+        })
+    }
+
+    /// Extract a file-write call from a payload delivered on the explicit
+    /// `--event write` route (the generated OpenCode plugin, or a Cursor write
+    /// matcher). Tolerant like [`parse_content`]: `None` for a non-write payload,
+    /// unparseable input, an unknown tool name, or a dialect with no pinned write
+    /// surface. Observation never blocks, so a miss is harmless.
+    ///
+    /// Every shape parsed here traces to a pinned fixture in `tests/fixtures/`:
+    /// Cursor `cursor-write.json`, `cursor-str-replace.json`,
+    /// `cursor-after-file-edit.json`; OpenCode `opencode-write-v1.json`,
+    /// `opencode-write-v2.json`. This is deliberately separate from
+    /// [`parse_content`]: that surface feeds the *ingest* classifier, and
+    /// emitting a call there for a Cursor payload would claim a Read/WebFetch arg
+    /// shape no fixture pins.
+    pub fn parse_write(self, input: &str) -> Option<WriteCall> {
+        let v: serde_json::Value = serde_json::from_str(input).ok()?;
+        let get_str = |val: &serde_json::Value, k: &str| {
+            val.get(k).and_then(|s| s.as_str()).map(String::from)
+        };
+        let (tool, args, cwd, session) = match self {
+            Dialect::Cursor => {
+                if let Some(tool) = get_str(&v, "tool_name") {
+                    // preToolUse write/edit (fixtures cursor-write.json,
+                    // cursor-str-replace.json). Cursor's exact content-tool name
+                    // set is a live-verification gap, so only the pinned names
+                    // are accepted — an unknown name is a miss, never a guess.
+                    if !matches!(tool.as_str(), "Write" | "StrReplace") {
+                        return None;
+                    }
+                    (
+                        tool,
+                        v.get("tool_input")
+                            .cloned()
+                            .unwrap_or(serde_json::Value::Null),
+                        get_str(&v, "cwd"),
+                        get_str(&v, "conversation_id"),
+                    )
+                } else {
+                    // afterFileEdit (fixture cursor-after-file-edit.json): no tool
+                    // identity, and the path sits at the top level. The whole
+                    // payload is handed over; the classifier reads only the path
+                    // key. No per-call cwd on this surface, so the documented
+                    // workspace root is the closest honest trust boundary.
+                    if get_str(&v, "hook_event_name").as_deref() != Some("afterFileEdit") {
+                        return None;
+                    }
+                    (
+                        "afterFileEdit".to_string(),
+                        v.clone(),
+                        v.get("workspace_roots")
+                            .and_then(|w| w.as_array())
+                            .and_then(|a| a.first())
+                            .and_then(|p| p.as_str())
+                            .map(String::from),
+                        get_str(&v, "conversation_id"),
+                    )
+                }
+            }
+            Dialect::OpenCode => {
+                if let Some(tool) = get_str(&v, "tool") {
+                    // The shape the generated plugin forwards (our own contract:
+                    // tool + args + session + cwd), and V2's raw event shape
+                    // `{tool, input}`. V2 documents no session field, so it stays
+                    // absent and the hook skips it rather than inventing one.
+                    (
+                        tool,
+                        v.get("args")
+                            .or_else(|| v.get("input"))
+                            .cloned()
+                            .unwrap_or(serde_json::Value::Null),
+                        get_str(&v, "cwd"),
+                        get_str(&v, "session").or_else(|| get_str(&v, "sessionID")),
+                    )
+                } else {
+                    // The raw V1 plugin callback (fixture opencode-write-v1.json):
+                    // input{tool, sessionID} + output{args}.
+                    let inner = v.get("input")?;
+                    (
+                        get_str(inner, "tool")?,
+                        v.get("output")
+                            .and_then(|o| o.get("args"))
+                            .cloned()
+                            .unwrap_or(serde_json::Value::Null),
+                        None,
+                        get_str(inner, "sessionID"),
+                    )
+                }
+            }
+            // No write surface is pinned for these dialects (Task 1 pinned Cursor
+            // and OpenCode only); report that honestly rather than guess.
+            Dialect::Claude
+            | Dialect::Qwen
+            | Dialect::Gemini
+            | Dialect::Copilot
+            | Dialect::Codex
+            | Dialect::Antigravity => return None,
+        };
+        Some(WriteCall {
             tool,
             input: args,
             cwd: cwd_or_current(cwd),
@@ -1099,6 +1230,172 @@ mod tests {
             v["tool_response"] = serde_json::Value::Null;
         });
         assert!(Dialect::Claude.parse_post(&null_response).is_some());
+    }
+
+    // ----- File-write observation (V1.1 Task 3) -------------------------------
+    // Every write parse must trace to a pinned fixture in tests/fixtures/ (the
+    // cursor-write / cursor-str-replace / cursor-after-file-edit /
+    // opencode-write-v1 / opencode-write-v2 files). No inline shapes.
+
+    #[test]
+    fn cursor_write_fixture_normalizes_to_a_write_call() {
+        let call = Dialect::Cursor
+            .parse_write(&fixture_text("cursor-write.json"))
+            .expect("pinned cursor Write fixture must parse");
+        assert_eq!(call.tool, "Write");
+        assert_eq!(call.input["file_path"], "/work/repo/src/notes.rs");
+        // The per-call cwd is the trust boundary the classifier resolves against.
+        assert_eq!(call.cwd, PathBuf::from("/work/repo"));
+        assert_eq!(call.session_id.as_deref(), Some("conv-4d2f9a1c"));
+    }
+
+    #[test]
+    fn cursor_str_replace_fixture_normalizes_to_a_write_call() {
+        let call = Dialect::Cursor
+            .parse_write(&fixture_text("cursor-str-replace.json"))
+            .expect("pinned cursor StrReplace fixture must parse");
+        assert_eq!(call.tool, "StrReplace");
+        assert_eq!(call.input["file_path"], "/work/repo/src/lib.rs");
+        assert_eq!(call.session_id.as_deref(), Some("conv-4d2f9a1c"));
+    }
+
+    #[test]
+    fn cursor_after_file_edit_fixture_normalizes_to_a_write_call() {
+        let call = Dialect::Cursor
+            .parse_write(&fixture_text("cursor-after-file-edit.json"))
+            .expect("pinned cursor afterFileEdit fixture must parse");
+        // No tool identity on this event; the event name is the honest label.
+        assert_eq!(call.tool, "afterFileEdit");
+        // The path is top-level on this surface (pinned shape).
+        assert_eq!(call.input["file_path"], "/work/repo/src/notes.rs");
+        // No `cwd` field: the documented workspace root is the closest honest root.
+        assert_eq!(call.cwd, PathBuf::from("/work/repo"));
+        assert_eq!(call.session_id.as_deref(), Some("conv-4d2f9a1c"));
+    }
+
+    #[test]
+    fn opencode_v1_write_fixture_normalizes_with_its_session() {
+        // The pinned V1 plugin callback shape: input{tool, sessionID} + output{args}.
+        let call = Dialect::OpenCode
+            .parse_write(&fixture_text("opencode-write-v1.json"))
+            .expect("pinned opencode V1 write fixture must parse");
+        assert_eq!(call.tool, "write");
+        assert_eq!(call.input["filePath"], "/work/repo/src/notes.rs");
+        assert_eq!(call.session_id.as_deref(), Some("ses_9f2a41"));
+    }
+
+    #[test]
+    fn opencode_v2_write_fixture_parses_but_carries_no_session() {
+        // V2's documented before-event has `tool` + `input` and NO session field.
+        // We parse the shape honestly and leave the session absent: the hook then
+        // skips the observation (sessionless by design) rather than inventing an
+        // identifier. Tracked as a live-verification gap in the fixtures README.
+        let call = Dialect::OpenCode
+            .parse_write(&fixture_text("opencode-write-v2.json"))
+            .expect("pinned opencode V2 write fixture must parse");
+        assert_eq!(call.tool, "write");
+        assert_eq!(call.input["filePath"], "/work/repo/src/notes.rs");
+        assert_eq!(call.session_id, None, "V2 documents no session field");
+    }
+
+    #[test]
+    fn the_generated_opencode_bridge_shape_normalizes() {
+        // What the generated plugin forwards on `--event write` (our own contract,
+        // pinned by the init.rs unit test): tool + args + session + cwd.
+        let payload = r#"{
+            "tool": "write",
+            "args": { "filePath": "/work/repo/src/notes.rs" },
+            "session": "ses_9f2a41",
+            "cwd": "/work/repo"
+        }"#;
+        let call = Dialect::OpenCode
+            .parse_write(payload)
+            .expect("bridge shape");
+        assert_eq!(call.tool, "write");
+        assert_eq!(call.input["filePath"], "/work/repo/src/notes.rs");
+        assert_eq!(call.cwd, PathBuf::from("/work/repo"));
+        assert_eq!(call.session_id.as_deref(), Some("ses_9f2a41"));
+    }
+
+    #[test]
+    fn shell_payloads_are_never_mistaken_for_writes() {
+        // The flat `{command, cwd}` contract both dialects already speak is
+        // untouched: it carries no write identity, so the write route declines it.
+        let cursor_shell = r#"{"command":"git status","cwd":"/tmp","hook_event_name":"beforeShellExecution","conversation_id":"c1"}"#;
+        assert_eq!(Dialect::Cursor.parse_write(cursor_shell), None);
+        let opencode_shell = r#"{"command":"dd if=/dev/zero","cwd":"/work"}"#;
+        assert_eq!(Dialect::OpenCode.parse_write(opencode_shell), None);
+        // …and their PRE-tool shell parsing still works exactly as before.
+        assert!(matches!(
+            Dialect::Cursor.parse(cursor_shell),
+            Parsed::Shell(_)
+        ));
+        assert!(matches!(
+            Dialect::OpenCode.parse(opencode_shell),
+            Parsed::Shell(_)
+        ));
+    }
+
+    #[test]
+    fn only_the_pinned_cursor_content_tools_are_writes() {
+        // The exact Cursor content-tool name set is a live-verification gap, so
+        // only the fixture-pinned names are accepted (0.2.1 lesson: never guess a
+        // shape). An unknown tool is a miss, never a wrong parse.
+        let read = mutated_fixture("cursor-write.json", |v| {
+            v["tool_name"] = serde_json::json!("Read");
+        });
+        assert_eq!(Dialect::Cursor.parse_write(&read), None);
+        let delete = mutated_fixture("cursor-write.json", |v| {
+            v["tool_name"] = serde_json::json!("Delete");
+        });
+        assert_eq!(Dialect::Cursor.parse_write(&delete), None);
+    }
+
+    #[test]
+    fn write_parse_is_tolerant_of_malformed_payloads() {
+        for (dialect, name) in [
+            (Dialect::Cursor, "cursor-write.json"),
+            (Dialect::Cursor, "cursor-after-file-edit.json"),
+            (Dialect::OpenCode, "opencode-write-v1.json"),
+            (Dialect::OpenCode, "opencode-write-v2.json"),
+        ] {
+            let text = fixture_text(name);
+            let truncated: String = text.chars().take(text.chars().count() / 2).collect();
+            assert_eq!(dialect.parse_write(&truncated), None, "truncated {name}");
+        }
+        // Missing identity.
+        let no_tool = mutated_fixture("cursor-write.json", |v| {
+            v.as_object_mut().unwrap().remove("tool_name");
+        });
+        assert_eq!(Dialect::Cursor.parse_write(&no_tool), None);
+        // An `afterFileEdit` payload without the event marker is not a write.
+        let no_event = mutated_fixture("cursor-after-file-edit.json", |v| {
+            v.as_object_mut().unwrap().remove("hook_event_name");
+        });
+        assert_eq!(Dialect::Cursor.parse_write(&no_event), None);
+        // Wrong types.
+        let bad_type = mutated_fixture("cursor-write.json", |v| {
+            v["tool_name"] = serde_json::json!(7);
+        });
+        assert_eq!(Dialect::Cursor.parse_write(&bad_type), None);
+    }
+
+    #[test]
+    fn dialects_without_a_pinned_write_surface_return_none() {
+        // Task 1 pinned write shapes for Cursor and OpenCode only. Every other
+        // dialect reports "no write surface" rather than guessing (its post-tool
+        // or shell coverage is unaffected).
+        let cursor_write = fixture_text("cursor-write.json");
+        for d in [
+            Dialect::Claude,
+            Dialect::Qwen,
+            Dialect::Gemini,
+            Dialect::Copilot,
+            Dialect::Codex,
+            Dialect::Antigravity,
+        ] {
+            assert_eq!(d.parse_write(&cursor_write), None, "{d:?}");
+        }
     }
 
     #[test]

@@ -25,8 +25,36 @@ pub use crate::dialect::HookOutcome;
 use crate::dialect::{self, Dialect, Parsed, Resolved};
 use crate::observe;
 
+/// Which hook event the caller asked us to handle (`--event`). The default is the
+/// pre-tool decision path, so an invocation without the flag is byte-identical to
+/// the pre-V1.1 behaviour — a typo or a missing flag can never disarm the shell
+/// gate.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum HookEvent {
+    /// Pre-tool: judge a shell command (the original contract).
+    #[default]
+    PreToolUse,
+    /// File-write observation: label the written path for provenance so a tainted
+    /// session's output carries the taint into a later reader. Observation only —
+    /// it never blocks, and it never touches a command verdict.
+    Write,
+}
+
 /// Handle one hook payload for a given dialect, performing the daemon round-trip.
 pub fn handle_with(dialect: Dialect, input: &str) -> HookOutcome {
+    handle_with_event(dialect, input, HookEvent::PreToolUse)
+}
+
+/// Handle one hook payload for an explicit event kind (the `--event` flag).
+///
+/// [`HookEvent::Write`] is routed to write observation *before* any shell
+/// parsing and returns silent/0 unconditionally: a write label can never gate the
+/// agent. Every other event takes the exact pre-tool path below.
+pub fn handle_with_event(dialect: Dialect, input: &str, event: HookEvent) -> HookOutcome {
+    if event == HookEvent::Write {
+        observe_write_call(dialect, input);
+        return HookOutcome::silent();
+    }
     // Route on the explicit event marker BEFORE any shell parsing: a
     // PostToolUse payload reports a call that ALREADY ran. Re-judging it as a
     // proposal would double-log a command nobody proposed and "deny" an
@@ -149,12 +177,37 @@ fn observe_post_call(dialect: Dialect, input: &str) {
     }
 }
 
+/// Observe a file write by the agent's session as a provenance propagation step
+/// (V1.1): a session that has ingested untrusted content taints the paths it
+/// writes, so a later reader of that file inherits the taint. Same contract as
+/// the ingest observers: best-effort and silent — a parse miss, an untracked
+/// session, or an unreachable daemon never affects the agent.
+fn observe_write_call(dialect: Dialect, input: &str) {
+    let Some(call) = dialect.parse_write(input) else {
+        return;
+    };
+    if let Some(path) = observe::classify_tool_write(&call.tool, &call.input, &call.cwd) {
+        send_write(call.session_id.as_deref(), &path, &call.cwd);
+    }
+}
+
+/// Report a write observation to the daemon. Skips untracked sessions (a
+/// `None`/empty session can never be taint-tracked, so there is nothing to
+/// propagate — the same convention as [`send_ingest`]) and swallows any IPC error
+/// (observation never blocks the agent).
+fn send_write(session: Option<&str>, path: &str, cwd: &Path) {
+    let Some(session) = session.filter(|s| !s.is_empty()) else {
+        return;
+    };
+    let _ = Client::write_observed(session, path, cwd);
+}
+
 /// The narrow event-marker probe used to route PostToolUse payloads. Only the
 /// explicit `hook_event_name` the agent itself stamps decides — never payload
 /// shape (a PreToolUse shell payload misrouted onto the post path would
 /// bypass the decision gate, so a guess is never acceptable).
 #[derive(Debug, Deserialize)]
-struct HookEvent {
+struct EventMarker {
     #[serde(default)]
     hook_event_name: Option<String>,
 }
@@ -162,7 +215,7 @@ struct HookEvent {
 /// Is this payload a `PostToolUse` event? Malformed input, other events, and
 /// missing markers all answer no — the decision path is the default.
 fn is_post_tool_use(input: &str) -> bool {
-    serde_json::from_str::<HookEvent>(input)
+    serde_json::from_str::<EventMarker>(input)
         .ok()
         .and_then(|e| e.hook_event_name)
         .is_some_and(|name| name == "PostToolUse")
@@ -247,18 +300,55 @@ pub fn dialect_from_args<I: IntoIterator<Item = String>>(args: I) -> Dialect {
     Dialect::Claude
 }
 
-/// Read the hook payload from stdin and emit the outcome, picking the dialect
-/// from the process arguments.
-pub fn run() -> i32 {
-    let dialect = dialect_from_args(std::env::args().skip(1));
-    let stdin = std::io::stdin();
-    let stdout = std::io::stdout();
-    run_io(dialect, stdin.lock(), stdout.lock())
+/// Read the `--event <kind>` flag from argv, defaulting to the pre-tool path.
+///
+/// Unknown values fall back to the pre-tool path with a warning rather than
+/// failing or silently doing nothing: the shell gate is the default, so an
+/// unrecognized flag cannot weaken it.
+pub fn event_from_args<I: IntoIterator<Item = String>>(args: I) -> HookEvent {
+    let mut it = args.into_iter();
+    while let Some(a) = it.next() {
+        let value = if let Some(v) = a.strip_prefix("--event=") {
+            Some(v.to_string())
+        } else if a == "--event" {
+            it.next()
+        } else {
+            None
+        };
+        if let Some(v) = value {
+            return match v.as_str() {
+                "write" => HookEvent::Write,
+                other => {
+                    eprintln!("kintsugi-hook: unknown --event '{other}', using the pre-tool path");
+                    HookEvent::PreToolUse
+                }
+            };
+        }
+    }
+    HookEvent::PreToolUse
 }
 
-/// The hook over arbitrary reader/writer for a given dialect (testable).
-pub fn run_io<R: std::io::Read, W: std::io::Write>(
+/// Read the hook payload from stdin and emit the outcome, picking the dialect and
+/// event kind from the process arguments.
+pub fn run() -> i32 {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let dialect = dialect_from_args(args.iter().cloned());
+    let event = event_from_args(args);
+    let stdin = std::io::stdin();
+    let stdout = std::io::stdout();
+    run_io_event(dialect, event, stdin.lock(), stdout.lock())
+}
+
+/// The hook over arbitrary reader/writer for a given dialect (testable). Takes
+/// the original pre-tool path.
+pub fn run_io<R: std::io::Read, W: std::io::Write>(dialect: Dialect, reader: R, writer: W) -> i32 {
+    run_io_event(dialect, HookEvent::PreToolUse, reader, writer)
+}
+
+/// The hook over arbitrary reader/writer for a dialect and event kind (testable).
+pub fn run_io_event<R: std::io::Read, W: std::io::Write>(
     dialect: Dialect,
+    event: HookEvent,
     mut reader: R,
     mut writer: W,
 ) -> i32 {
@@ -267,7 +357,7 @@ pub fn run_io<R: std::io::Read, W: std::io::Write>(
         eprintln!("kintsugi-hook: failed to read stdin: {e}");
         return 0; // fail-open
     }
-    let outcome = handle_with(dialect, &input);
+    let outcome = handle_with_event(dialect, &input, event);
     if let Some(out) = outcome.stdout {
         let _ = writeln!(writer, "{out}");
     }
@@ -396,5 +486,72 @@ mod tests {
         assert!(!is_post_tool_use("not json"));
         assert!(!is_post_tool_use(r#"["an array"]"#));
         assert!(!is_post_tool_use("42"));
+    }
+
+    // ----- --event (V1.1 file-write observation) ------------------------------
+
+    #[test]
+    fn event_from_args_defaults_to_the_pre_tool_path() {
+        // No flag (every pre-V1.1 invocation) and an unknown value both take the
+        // exact original path — a typo can never silently disable the shell gate.
+        assert_eq!(event_from_args(Vec::<String>::new()), HookEvent::PreToolUse);
+        assert_eq!(
+            event_from_args(["--agent".to_string(), "opencode".to_string()]),
+            HookEvent::PreToolUse
+        );
+        assert_eq!(
+            event_from_args(["--event".to_string(), "writes".to_string()]),
+            HookEvent::PreToolUse
+        );
+        // Both flag forms.
+        assert_eq!(
+            event_from_args(["--event".to_string(), "write".to_string()]),
+            HookEvent::Write
+        );
+        assert_eq!(
+            event_from_args(["--agent=opencode".to_string(), "--event=write".to_string()]),
+            HookEvent::Write
+        );
+    }
+
+    #[test]
+    fn a_write_event_is_observation_only_and_never_gates() {
+        // No session → send_write skips before any IPC, so this is a pure unit
+        // test. The contract: silent, exit 0, whatever the payload.
+        let payload = r#"{
+            "tool": "write",
+            "args": { "filePath": "/work/repo/src/notes.rs" },
+            "cwd": "/work/repo"
+        }"#;
+        assert_eq!(
+            handle_with_event(Dialect::OpenCode, payload, HookEvent::Write),
+            HookOutcome::silent()
+        );
+    }
+
+    #[test]
+    fn a_write_event_never_routes_into_the_shell_decision_path() {
+        // Even a payload that would be a catastrophic shell command is inert on
+        // the write route: a write observation can never deny, and shell parsing
+        // is not entered at all.
+        let payload = r#"{"command":"rm -rf /","cwd":"/work"}"#;
+        assert_eq!(
+            handle_with_event(Dialect::Cursor, payload, HookEvent::Write),
+            HookOutcome::silent()
+        );
+        // Garbage is equally harmless.
+        assert_eq!(
+            handle_with_event(Dialect::OpenCode, "not json", HookEvent::Write),
+            HookOutcome::silent()
+        );
+    }
+
+    #[test]
+    fn run_io_event_handles_the_write_route() {
+        let input = br#"{"tool":"write","args":{"filePath":"/work/repo/x"},"cwd":"/work/repo"}"#;
+        let mut out = Vec::new();
+        let code = run_io_event(Dialect::OpenCode, HookEvent::Write, &input[..], &mut out);
+        assert_eq!(code, 0);
+        assert!(out.is_empty(), "a write observation writes nothing");
     }
 }
