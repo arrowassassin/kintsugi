@@ -628,3 +628,30 @@ the locked product decisions this build implements.
   which CI/headless can't build — same honest "not-CI-compiled" posture as the
   llama backend. GPUI was considered and declined: immature, macOS-first, and a
   weaker cross-platform story than the hard mac/Linux/Windows requirement allows.
+- T2.1/T2.2 (proof-of-human approval over IPC): the approve path mirrors the
+  privileged-shutdown ritual exactly rather than inventing a second auth scheme
+  — `AuthBegin("approve:<id>")` → password → one-shot proof, `None` (not `""`)
+  for absence so no placeholder reaches the crypto sink, and the op binding is
+  `approve:<id>` so a captured proof approves only the id it was minted for.
+  Default is `require_approval_proof = true`: a bare approve on a locked daemon
+  is refused loudly, written as a hash-chained `admin approve:<id>` event, and
+  counted by the shared `AuthThrottle` — the monotonic rule holds, it only ever
+  adds friction and can never unlock, and the resolved approval still walks the
+  ordinary `resolve_pending` path (kill-switch + exactly-once CAS) because auth
+  decides who may talk while the rules layer decides what may happen. Policy
+  scope is the held command's repo, so one repo can opt out without weakening
+  the default globally; an unprovisioned daemon keeps bare approval, since there
+  is nothing to prove and the queue must never brick. `Deny` stays bare (an agent
+  denying its own command is a nuisance, not a threat) and `PrunePending` stays
+  bare (queue-only, the log is untouched) — both documented in `docs/policy.md`.
+  The adversarial suite found a real hole while proving this: the privileged-op
+  handler never pinned its op string, so an `AuthBegin("approve:<id>")` challenge
+  could authorise a shutdown by echoing its own op back, and an unprovisioned
+  daemon would accept ANY op with no proof at all; the handler now pins
+  `SHUTDOWN_OP`, a tightening that only adds a refusal. The CLI half ships with
+  the daemon half deliberately — the daemon's error text tells the human to run
+  `kintsugi approve <id>`, which would be a dead end if T2.2 lagged behind. One
+  accepted consequence, stated because it looks like a bug: the challenge slot is
+  single and one-shot, so an approve challenge supersedes an unconsumed shutdown
+  challenge (and vice versa), and the op-binding check then rejects any proof
+  minted for the overwritten op — superseding can never transfer authority.
