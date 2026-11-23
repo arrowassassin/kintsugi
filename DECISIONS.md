@@ -943,3 +943,11 @@ the locked product decisions this build implements.
   still redacted), and `rand 0.7`/`glib 0.18` remain open Dependabot alerts pinned
   by `wry`/`dioxus-desktop` and `tray-icon`/`libappindicator` (unreachable-API
   unsoundness advisories in a tree CI cannot build).
+- The Homebrew formula is bumped to a release only AFTER its tag exists, as a
+  follow-up commit, and the sha256 is taken from the actual GitHub source archive
+  (`curl -L <url> | shasum -a 256`) rather than assumed. A formula naming an
+  unpublished tag breaks `brew install` for everyone on the tap, which is a worse
+  failure than a formula that is one release behind for an hour. Publishing the tap
+  itself stays human (STOP list), so this repo only ever holds a tap-ready copy:
+  two identical files (`Formula/kintsugi.rb` at the root, mirrored at
+  `packaging/homebrew/kintsugi.rb`) that a maintainer copies across.

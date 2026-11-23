@@ -5,6 +5,14 @@ All notable changes to Kintsugi are documented here. The format loosely follows
 
 ## [Unreleased]
 
+### Packaging
+- **Homebrew formula follows the release.** `Formula/kintsugi.rb` and its
+  `packaging/homebrew/` mirror move to v0.4.0 with the source tarball's real
+  sha256, so `brew install --build-from-source ./packaging/homebrew/kintsugi.rb`
+  stages something that exists (it still pointed at v0.3.1). Copying the file into
+  `kintsugi-tools/homebrew-tap` — and therefore `brew install kintsugi` — remains
+  the maintainer's step.
+
 Nothing yet — the next cycle's notes collect here.
 
 ## [0.4.0] — 2026-11-22
