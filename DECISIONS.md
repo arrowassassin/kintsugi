@@ -638,3 +638,19 @@ the locked product decisions this build implements.
   (unused workspace dep `kintsugi-app`, unused direct dep `anyhow` in
   kintsugi-core). A future MSRV bump is a deliberate decision recorded here,
   never a floating CI failure.
+- T0.2 (v0.4.0 release hygiene): `rusqlite` bumped 0.40.1 → 0.41.1, pulling
+  `libsqlite3-sys` 0.38.1 → 0.39.1 (bundled SQLite 3.54.1) — clears
+  RUSTSEC-2026-0459 from the engine that stores the tamper-evident log (a
+  crafted sibling WAL of differing page size could return uninitialized
+  page-cache memory). The 0.39-era pin rationale (libsqlite3-sys 0.38's
+  unstable `cfg_select!` failing on stable) is obsolete: the new combo
+  builds clean on the pinned MSRV. Full suite re-run post-bump — chain,
+  corpus, daemon incl. latency: 556 passed, 0 failed; the chain hash is
+  app-level SHA-256 and unaffected. CI gains a failing `cargo audit` job
+  (taiki-e/install-action; scoping in `.cargo/audit.toml`): the 15
+  pre-existing advisories all ride the opt-in `llama`/`download`
+  reqwest/quinn/rustls stack — compiled neither by CI nor shipped by
+  release builds — and are individually recorded there, not dismissed;
+  anything new fails loudly. The 4 unsound warnings (anyhow/lru/rustix/
+  tokio) print non-fatally and ride the next deliberate bump. New CI step
+  dependency flagged for human sign-off in the PR.

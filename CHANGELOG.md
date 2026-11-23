@@ -79,6 +79,16 @@ All notable changes to Kintsugi are documented here. The format loosely follows
   that fired). Built with Trunk + `cargo tauri` on a workstation (detached from the
   CI workspace; needs the platform webview + wasm target).
 
+### Security fixes (release hygiene)
+- **The audit log's storage engine no longer carries a known CVE.**
+  `rusqlite` 0.40.1 → 0.41.1 pulls `libsqlite3-sys` 0.38.1 → 0.39.1, whose
+  bundled SQLite 3.54.1 clears **RUSTSEC-2026-0459** (opening a database
+  beside a crafted sibling WAL file of differing page size could return
+  uninitialized page-cache memory; CVSS 4.0 Medium 6.8). The hash chain is
+  app-level SHA-256 and unaffected — verified by re-running the full chain,
+  corpus, daemon, and latency suites, which recompute every row hash under
+  the new engine.
+
 ### Build & CI hygiene
 - **CI runs the declared MSRV, not a floating stable.** All three CI jobs are
   pinned to the workspace `rust-version` (1.96.0) so CI, local dev, and the
@@ -88,6 +98,13 @@ All notable changes to Kintsugi are documented here. The format loosely follows
   root-caused in code, not suppressed: one duplicated `#[allow]` and two dead
   manifest entries (unused workspace dep `kintsugi-app`; unused direct dep
   `anyhow` in `kintsugi-core`) were removed.
+- **CI now gates on `cargo audit`.** A failing RustSec advisory step reads
+  `Cargo.lock` on every run. Advisories confined to the opt-in
+  `llama`/`download` backends — compiled neither by CI nor by the release
+  binaries — are individually recorded in `.cargo/audit.toml` with that
+  scoping rationale; any NEW advisory anywhere fails the build until a
+  human decides. Unsound advisories (upstream code properties) print but
+  do not fail.
 
 ## [0.2.1] — 2026-06-17
 
