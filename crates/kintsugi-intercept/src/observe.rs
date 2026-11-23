@@ -274,9 +274,17 @@ fn classify_read_path(path: &Path, workspace: &Path) -> Option<IngestSource> {
 /// against the workspace (the session cwd), so it is always within. An absolute
 /// path must share the workspace prefix. Lexical only — we must not touch the
 /// filesystem on the hot path, and the target may not exist yet.
+///
+/// Rootedness, not `is_relative()`, is the discriminator: on Windows a
+/// backslash-rooted path (`\etc\passwd`) carries no drive, so `Path::is_relative`
+/// reports it as relative even though it is anchored at the current volume's
+/// root. Sending it down the `..`-depth heuristic said "inside" and mislabeled an
+/// out-of-workspace path as workspace-owned (found by the write-propagation tests
+/// on the Windows CI runner).
 fn is_within(path: &Path, workspace: &Path) -> bool {
-    if path.is_relative() {
-        // Reject a relative path that climbs out with `..` past the root.
+    if !path.has_root() {
+        // No root at all: resolved against the workspace, so it is inside unless
+        // it climbs out with more `..` than it has components.
         let mut depth: i32 = 0;
         for c in path.components() {
             match c {
@@ -737,13 +745,14 @@ mod tests {
             r#"{"filePath":"src/notes.rs"}"#,
         ] {
             let got = classify_tool_write("write", &json(body), &ws()).expect("write path");
+            // Component-wise, not string-suffix: the separator is `\` on Windows.
             assert!(
-                got.ends_with("src/notes.rs"),
+                Path::new(&got).ends_with(Path::new("src").join("notes.rs")),
                 "must resolve the relative path against the workspace: {got}"
             );
             assert!(
-                Path::new(&got).is_absolute(),
-                "the taint key must be an absolute path: {got}"
+                Path::new(&got).has_root(),
+                "the taint key must be anchored at a root: {got}"
             );
         }
     }
@@ -784,6 +793,18 @@ mod tests {
         );
     }
 
+    // Windows-only: a backslash-rooted path carries no drive, so `Path::is_relative`
+    // calls it relative — but it is anchored at the volume root and can never be
+    // inside the workspace. The pre-fix depth heuristic labelled it workspace-owned,
+    // which is what the Windows CI runner caught.
+    #[cfg(windows)]
+    #[test]
+    fn a_root_relative_path_is_never_inside_the_workspace() {
+        assert!(!is_within(Path::new(r"\etc\passwd"), &ws()));
+        // …while a root-relative path that really is under the workspace stays in.
+        assert!(is_within(Path::new(r"\work\repo\src\notes.rs"), &ws()));
+    }
+
     // Unix-only: the input is a Unix-absolute path (see the note on
     // `out_of_workspace_reads_are_untrusted` for the Windows path model).
     #[cfg(unix)]
@@ -812,7 +833,10 @@ mod tests {
             &ws(),
         )
         .expect("write path");
-        assert!(got.ends_with("src/lib.rs"), "{got}");
+        assert!(
+            Path::new(&got).ends_with(Path::new("src").join("lib.rs")),
+            "{got}"
+        );
         assert!(!got.contains("TOKEN"), "content leaked into the identifier");
     }
 
