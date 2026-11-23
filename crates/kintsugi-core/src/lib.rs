@@ -25,7 +25,8 @@ pub mod taint;
 pub mod types;
 
 pub use anchor::{
-    anchor_key_id, checkpoint_bytes, sign_checkpoint, verify_checkpoint_signature, ANCHOR_CONTEXT,
+    anchor_key_id, checkpoint_bytes, sign_checkpoint, verify_checkpoint_signature, AnchorError,
+    Checkpoint, ANCHOR_CONTEXT, CHECKPOINT_FORMAT,
 };
 pub use log::{
     Anchor, ChainStatus, EventLog, Filter, LogError, LoggedEvent, PendingItem, GENESIS_HASH,

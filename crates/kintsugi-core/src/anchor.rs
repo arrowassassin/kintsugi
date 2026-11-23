@@ -38,6 +38,147 @@ use ed25519_dalek::{Signer, VerifyingKey, SIGNATURE_LENGTH};
 /// spaces never accept each other's signatures.
 pub const ANCHOR_CONTEXT: &[u8] = b"kintsugi.log.anchor.v1";
 
+/// The header line of an exported checkpoint file (the envelope's format tag).
+pub const CHECKPOINT_FORMAT: &str = "kintsugi-checkpoint/1";
+
+/// Failures while reading back an exported checkpoint file. Distinguishing
+/// "not a checkpoint" / "malformed" / "missing field" lets the verify path
+/// name the problem instead of crying "tampered" on a mangled file.
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum AnchorError {
+    #[error("not a kintsugi checkpoint (expected the header line {CHECKPOINT_FORMAT})")]
+    NotCheckpoint,
+    #[error("checkpoint line {0} is malformed (expected key=value)")]
+    MalformedLine(usize),
+    #[error("checkpoint field 'seq' is not a valid integer: {0}")]
+    BadSeq(String),
+    #[error("checkpoint is missing the {0} field")]
+    MissingField(&'static str),
+}
+
+/// One exported chain-head checkpoint: the five canonical fields plus the
+/// detached signature (absent while unsigned). This is what
+/// `kintsugi anchor export` writes, what the `anchors` table records, and
+/// what `kintsugi anchor verify` reads back.
+///
+/// `ts` is the whole-second RFC3339 UTC string that was signed — it is stored
+/// verbatim (never reformatted) so the recorded row and the exported file
+/// rebuild identical canonical bytes.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Checkpoint {
+    /// Caller-supplied log identity for the checkpoint (e.g. `user@host`).
+    pub origin: String,
+    /// The anchored sequence number.
+    pub seq: i64,
+    /// The anchored head hash.
+    pub head: String,
+    /// Hex verifying pubkey of the signing vault key (empty while unsigned).
+    pub key_id: String,
+    /// Whole-second RFC3339 UTC — the exact string covered by the signature.
+    pub ts: String,
+    /// Detached signature over [`Checkpoint::bytes`] (hex); `None` while
+    /// unsigned.
+    pub sig: Option<String>,
+}
+
+impl Checkpoint {
+    /// The canonical signing bytes (the five fields; see [`checkpoint_bytes`]).
+    pub fn bytes(&self) -> Vec<u8> {
+        checkpoint_bytes(&self.origin, self.seq, &self.head, &self.key_id, &self.ts)
+    }
+
+    /// Whether this checkpoint carries a signature that verifies under its
+    /// own `key_id`. Unsigned checkpoints return `false` (they assert
+    /// nothing). Fail-closed on a malformed `sig`/`key_id`.
+    pub fn signature_is_valid(&self) -> bool {
+        let Some(sig) = &self.sig else {
+            return false;
+        };
+        match hex::decode(sig) {
+            Ok(bytes) => verify_checkpoint_signature(&self.key_id, &self.bytes(), &bytes),
+            Err(_) => false,
+        }
+    }
+
+    /// Render the human-readable, paste-able text envelope: a format header,
+    /// one `key=value` line per field, `sig` only when signed. Values run to
+    /// end-of-line (an origin may contain spaces); newlines in a value are
+    /// impossible by construction (`kintsugi anchor export` strips them).
+    pub fn render(&self) -> String {
+        let mut s = String::with_capacity(96 + self.origin.len() + self.head.len());
+        s.push_str(CHECKPOINT_FORMAT);
+        s.push('\n');
+        for (key, value) in [
+            ("origin", self.origin.as_str()),
+            ("seq", &self.seq.to_string()),
+            ("head", self.head.as_str()),
+            ("key_id", self.key_id.as_str()),
+            ("ts", self.ts.as_str()),
+        ] {
+            s.push_str(key);
+            s.push('=');
+            s.push_str(value);
+            s.push('\n');
+        }
+        if let Some(sig) = &self.sig {
+            s.push_str("sig=");
+            s.push_str(sig);
+            s.push('\n');
+        }
+        s
+    }
+
+    /// Read back a rendered checkpoint envelope. Blank lines and unknown
+    /// `key=value` extension lines are ignored (C2SP-style forward
+    /// compatibility — they are outside the signature); a wrong header,
+    /// a line without `=`, a non-integer `seq`, or a missing required field
+    /// is an error naming the problem.
+    pub fn parse(text: &str) -> Result<Checkpoint, AnchorError> {
+        let mut lines = text.lines();
+        match lines.next() {
+            Some(h) if h.trim() == CHECKPOINT_FORMAT => {}
+            _ => return Err(AnchorError::NotCheckpoint),
+        }
+        let mut origin = None;
+        let mut seq = None;
+        let mut head = None;
+        let mut key_id = None;
+        let mut ts = None;
+        let mut sig = None;
+        for (idx, line) in lines.enumerate() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let Some((key, value)) = line.split_once('=') else {
+                return Err(AnchorError::MalformedLine(idx + 2)); // header is line 1
+            };
+            match key {
+                "origin" => origin = Some(value.to_string()),
+                "seq" => {
+                    seq = Some(
+                        value
+                            .parse::<i64>()
+                            .map_err(|_| AnchorError::BadSeq(value.to_string()))?,
+                    )
+                }
+                "head" => head = Some(value.to_string()),
+                "key_id" => key_id = Some(value.to_string()),
+                "ts" => ts = Some(value.to_string()),
+                "sig" => sig = Some(value.to_string()),
+                _ => {} // Unknown extension line: outside the signature, ignored.
+            }
+        }
+        Ok(Checkpoint {
+            origin: origin.ok_or(AnchorError::MissingField("origin"))?,
+            seq: seq.ok_or(AnchorError::MissingField("seq"))?,
+            head: head.ok_or(AnchorError::MissingField("head"))?,
+            key_id: key_id.ok_or(AnchorError::MissingField("key_id"))?,
+            ts: ts.ok_or(AnchorError::MissingField("ts"))?,
+            sig,
+        })
+    }
+}
+
 /// The canonical, deterministic bytes a checkpoint signature covers.
 ///
 /// Exactly five string fields in RFC 8785 key order (`head`, `key_id`,

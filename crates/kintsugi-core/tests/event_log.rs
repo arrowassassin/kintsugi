@@ -15,6 +15,19 @@ fn allow() -> Verdict {
     Verdict::rules(Class::Safe, Decision::Allow, "test")
 }
 
+/// A minimal unsigned checkpoint for anchor-guard tests (the exact ts is
+/// irrelevant to the guard; it must merely be valid RFC3339).
+fn cp(origin: &str, seq: i64, head: &str, key_id: &str) -> kintsugi_core::anchor::Checkpoint {
+    kintsugi_core::anchor::Checkpoint {
+        origin: origin.into(),
+        seq,
+        head: head.into(),
+        key_id: key_id.into(),
+        ts: "2026-11-22T12:34:56Z".into(),
+        sig: None,
+    }
+}
+
 #[test]
 fn writes_three_events_with_linked_chain() {
     let log = EventLog::open_in_memory().unwrap();
@@ -329,7 +342,7 @@ fn anchor_round_trip_record_and_latest() {
 
     let e1 = log.log_event(&sample("ls -la"), &allow(), None).unwrap();
     let a1 = log
-        .record_anchor("workstation-1", 1, &e1.hash, "key-1")
+        .record_anchor(&cp("workstation-1", 1, &e1.hash, "key-1"))
         .unwrap();
     assert_eq!(a1.seq, 1);
     assert_eq!(a1.head, e1.hash);
@@ -345,7 +358,9 @@ fn anchor_round_trip_record_and_latest() {
     let e2 = log
         .log_event(&sample("git status"), &allow(), None)
         .unwrap();
-    let a2 = log.record_anchor("workstation-1", 2, &e2.hash, "").unwrap();
+    let a2 = log
+        .record_anchor(&cp("workstation-1", 2, &e2.hash, ""))
+        .unwrap();
     assert_eq!(a2.seq, 2);
     assert_ne!(a2.id, a1.id, "a new row, not a mutation of the first");
     assert_eq!(log.latest_anchor().unwrap(), Some(a2));
@@ -361,9 +376,11 @@ fn anchor_refuses_a_lower_seq_than_the_last_anchor() {
         log.log_event(&sample(raw), &allow(), None).unwrap();
     }
     let (_, head3) = log.chain_head().unwrap();
-    let a = log.record_anchor("origin", 3, &head3, "").unwrap();
+    let a = log.record_anchor(&cp("origin", 3, &head3, "")).unwrap();
 
-    let err = log.record_anchor("origin", 2, "deadbeef", "").unwrap_err();
+    let err = log
+        .record_anchor(&cp("origin", 2, "deadbeef", ""))
+        .unwrap_err();
     assert!(
         matches!(err, kintsugi_core::LogError::Fork(_)),
         "lower seq must be refused as a fork, got {err:?}"
@@ -377,10 +394,10 @@ fn anchor_refuses_the_same_seq_with_a_different_head() {
     let log = EventLog::open_in_memory().unwrap();
     log.log_event(&sample("one"), &allow(), None).unwrap();
     let (_, head) = log.chain_head().unwrap();
-    let a = log.record_anchor("origin", 1, &head, "").unwrap();
+    let a = log.record_anchor(&cp("origin", 1, &head, "")).unwrap();
 
     let err = log
-        .record_anchor("origin", 1, "not-the-recorded-head", "")
+        .record_anchor(&cp("origin", 1, "not-the-recorded-head", ""))
         .unwrap_err();
     assert!(
         matches!(err, kintsugi_core::LogError::Fork(_)),
@@ -394,12 +411,12 @@ fn anchor_is_idempotent_for_an_identical_seq_and_head() {
     let log = EventLog::open_in_memory().unwrap();
     log.log_event(&sample("one"), &allow(), None).unwrap();
     let (_, head) = log.chain_head().unwrap();
-    let first = log.record_anchor("origin", 1, &head, "").unwrap();
+    let first = log.record_anchor(&cp("origin", 1, &head, "")).unwrap();
 
     // Re-recording the exact checkpoint returns the SAME row — the guard
     // keys on (seq, head), not on the metadata (origin/key_id).
     let again = log
-        .record_anchor("even-another-origin", 1, &head, "other-key")
+        .record_anchor(&cp("even-another-origin", 1, &head, "other-key"))
         .unwrap();
     assert_eq!(again, first, "the existing anchor row is returned");
     // No duplicate row: an appended second row would be the new latest.
@@ -421,7 +438,7 @@ fn purge_then_reanchor_at_the_new_head_is_accepted() {
         .unwrap();
     log.log_event(&sample("npm test"), &allow(), None).unwrap();
     let (_, head3) = log.chain_head().unwrap();
-    let before = log.record_anchor("origin", 3, &head3, "").unwrap();
+    let before = log.record_anchor(&cp("origin", 3, &head3, "")).unwrap();
 
     let removed = log
         .purge_matching(
@@ -452,7 +469,9 @@ fn purge_then_reanchor_at_the_new_head_is_accepted() {
 
     // Re-anchoring at the new head is accepted (per the documented rule)
     // and becomes the latest anchor.
-    let after = log.record_anchor("origin", new_seq, &new_head, "").unwrap();
+    let after = log
+        .record_anchor(&cp("origin", new_seq, &new_head, ""))
+        .unwrap();
     assert_eq!(after.seq, new_seq);
     assert_eq!(after.head, new_head);
     assert_eq!(log.latest_anchor().unwrap(), Some(after));
@@ -481,8 +500,8 @@ fn anchor_writes_never_touch_the_events_table() {
     let before = snapshot(&log);
     let (seq, head) = log.chain_head().unwrap();
 
-    log.record_anchor("origin", seq, &head, "key").unwrap();
-    log.record_anchor("origin", seq - 1, "deadbeef", "key")
+    log.record_anchor(&cp("origin", seq, &head, "key")).unwrap();
+    log.record_anchor(&cp("origin", seq - 1, "deadbeef", "key"))
         .unwrap_err();
 
     assert_eq!(

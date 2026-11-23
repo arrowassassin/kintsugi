@@ -681,3 +681,26 @@ the locked product decisions this build implements.
   auditable; the escaping is cross-checked against `serde_json` on hostile
   input and the full body is pinned byte-for-byte, so the hand-rolling is
   locked, not trusted.
+- T1.4 (anchor CLI): the checkpoint file is a line-based `key=value` envelope
+  behind a `kintsugi-checkpoint/1` header, not JSON, because the artifact's job
+  is to survive being copied through a chat window or a password manager — a
+  human must be able to read it and a future version must be able to extend it.
+  Unknown keys are ignored and live outside the signature (C2SP-style forward
+  compatibility); a missing required field or a non-integer `seq` is a named
+  error, so `verify` never cries "tampered" at a mangled file it can diagnose.
+  Five verdicts, five exit codes (`0` INTACT, `1` STALE, `2` TAMPERED, `3` bad
+  signature, `4` UNVERIFIABLE) — an automation caller must be able to tell a
+  normal append from a rewrite without parsing prose, and `UNVERIFIABLE` is
+  deliberately distinct from `INVALID`: "I cannot check this" is not the same
+  claim as "this was forged". Timestamp precision is whole-second RFC3339 so
+  format-then-parse is a fixed point: the recorded anchor row rebuilds the exact
+  signed bytes, and no second copy of the checkpoint is ever stored. Export
+  records BEFORE it hands anything out (a refused fork must leave the user
+  holding nothing) and verifies the password against the vault before computing
+  anything, so a mistyped password cannot attribute an anchor to the real key.
+  Anchoring never talks to the daemon and never opens a socket — spine #5 (no
+  egress) is upheld by construction, and the copy is the user's deliberate act.
+  Residual, documented in `docs/anchoring.md`: a checkpoint makes tampering
+  *evident to whoever holds a copy*, not impossible; delete every copy and the
+  guarantee goes with it, and the first exported checkpoint is where the
+  guarantee starts.
