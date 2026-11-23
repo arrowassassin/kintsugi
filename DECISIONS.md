@@ -628,3 +628,19 @@ the locked product decisions this build implements.
   which CI/headless can't build — same honest "not-CI-compiled" posture as the
   llama backend. GPUI was considered and declined: immature, macOS-first, and a
   weaker cross-platform story than the hard mac/Linux/Windows requirement allows.
+- Phase 6 V1.1 · advisory dependency hint (hardening item H): the Tier-2
+  ambiguous-taint band gains an escalation-only `DependencyHint`
+  (LikelyDependent | LikelyIndependent | Unknown), computed deterministically —
+  pure string matching of the command against the session's already-redacted
+  untrusted identifiers, so it adds no inference call and cannot bypass the
+  recorder's ScoreBudget. LikelyDependent may escalate the attended Hold → Deny
+  with the reason prefixed `advisory:dependent` (the audit marker); the other
+  outcomes are text-only. The band is the trifecta floor's Hold/Annotate
+  engagement, re-derived from the floor's own three inputs (the reason text
+  alone can't prove membership — a leg-bearing command is already ambiguous at
+  baseline, so the floor rarely RAISES the class there). Safe is never scored;
+  Catastrophic keeps summary-only; unattended is unchanged. Scorer plumbing is a
+  defaulted `score_with_hint` trait method, so the workstation-only llama
+  backend (not CI-built) inherits today's exact behavior until its prompt
+  extension lands; policy allowlist / decision memory keep the final human say.
+
