@@ -52,9 +52,24 @@ pub enum Request {
     // Struct variants (not newtype-of-String): serde's internally-tagged enums
     // cannot represent a tagged newtype wrapping a primitive.
     PendingStatus { id: String },
-    /// "A human approved this queued command id."
-    Approve { id: String },
-    /// "A human denied this queued command id."
+    /// "A human approved this queued command id." Since Phase 7 (anchored
+    /// trust) this is a *privileged* op on a locked daemon: it carries the
+    /// nonce + proof from `AuthBegin { op: "approve:<id>" }`. A bare approve
+    /// (both fields absent) is refused loudly, audited, and throttled under the
+    /// default policy (`[security] require_approval_proof = true`); a daemon
+    /// with no vault accepts it bare (the shutdown mirror — there is no secret
+    /// to prove possession of).
+    Approve {
+        id: String,
+        /// The challenge nonce + proof (hex). `None` on the bare path —
+        /// modeled as absence, NOT an empty string, so no placeholder ever
+        /// flows into the proof-verification crypto sink.
+        nonce: Option<String>,
+        /// See `nonce`.
+        proof: Option<String>,
+    },
+    /// "A human denied this queued command id." Stays bare by design: an agent
+    /// denying its own held command is a nuisance, not a threat.
     Deny { id: String },
     /// "Drop every still-pending entry from the queue without recording an audit
     /// row per one — the bulk recovery for orphaned holds."
@@ -306,9 +321,27 @@ impl Client {
         }
     }
 
-    /// Approve a queued command (records the human decision; may snapshot).
+    /// Approve a queued command bare — no proof. Kept for callers that predate
+    /// approval auth (the TUI, the desktop app). A daemon with a provisioned
+    /// vault under the default policy refuses this with a loud, actionable
+    /// error ("approval requires proof — run `kintsugi approve <id>`"), which
+    /// those callers surface verbatim; the human then approves interactively.
     pub fn approve(id: &str) -> Result<()> {
-        expect_ack(round_trip(&Request::Approve { id: id.to_string() })?)
+        Self::approve_with_proof(id, None, None)
+    }
+
+    /// Approve a queued command with the nonce-bound proof from
+    /// [`auth_begin`](Self::auth_begin)`("approve:<id>")`. Pass
+    /// `Some(nonce_hex)` + `Some(proof_hex)` for the authenticated path; pass
+    /// `None`/`None` when the daemon reported no vault (`locked = false`) and
+    /// no proof is required. Absence is modeled as `None`, never an empty
+    /// string, so a placeholder can't be mistaken for a real nonce.
+    pub fn approve_with_proof(id: &str, nonce: Option<&str>, proof: Option<&str>) -> Result<()> {
+        expect_ack(round_trip(&Request::Approve {
+            id: id.to_string(),
+            nonce: nonce.map(str::to_string),
+            proof: proof.map(str::to_string),
+        })?)
     }
 
     /// Deny a queued command.

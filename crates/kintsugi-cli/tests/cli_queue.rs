@@ -24,12 +24,18 @@ fn queue_and_approve_with_running_daemon() {
     std::env::set_var("KINTSUGI_CONFIG", &config);
 
     // Start the real daemon binary (sibling of the `kintsugi` test binary).
+    // The vault resolver is pointed at an absent file so the daemon stays on the
+    // unprovisioned path (approval auth off) and the test never prompts for a
+    // password or touches the machine's real vault — same convention as the
+    // other cli tests. Phase 7 note: without this pin, a machine with a
+    // provisioned vault would (correctly) refuse the bare approve here.
     let daemon_bin =
         std::path::Path::new(env!("CARGO_BIN_EXE_kintsugi")).with_file_name("kintsugi-daemon");
     let mut daemon = Command::new(&daemon_bin)
         .env("KINTSUGI_SOCKET", &sock)
         .env("KINTSUGI_DB", &db)
         .env("KINTSUGI_CONFIG", &config)
+        .env("KINTSUGI_VAULT", tmp.path().join("absent-vault.json"))
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
@@ -52,6 +58,7 @@ fn queue_and_approve_with_running_daemon() {
     let common = |c: &mut Command| {
         c.env("KINTSUGI_SOCKET", &sock)
             .env("KINTSUGI_DB", &db)
+            .env("KINTSUGI_VAULT", tmp.path().join("absent-vault.json"))
             .env("NO_COLOR", "1");
     };
 

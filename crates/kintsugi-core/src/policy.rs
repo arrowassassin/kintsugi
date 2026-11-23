@@ -8,6 +8,10 @@
 //! Security spine: policy may always *add* caution (a `deny` rule escalates any
 //! command to Hold/Deny). A policy `allow` may tame the ambiguous band, but it
 //! **never downgrades a rule-based catastrophic block** — that hard floor stands.
+//! The one auth-posture knob (`[security] require_approval_proof`, default on)
+//! follows the same monotonic shape: it can only ever add friction to the
+//! approve path, and turning it off is a deliberate, visible configuration
+//! choice — never a silent downgrade.
 
 use serde::Deserialize;
 
@@ -29,6 +33,23 @@ pub struct Policy {
     /// Provenance (taint-aware trifecta guard) settings.
     #[serde(default)]
     pub provenance: Provenance,
+    /// Security-posture settings.
+    #[serde(default)]
+    pub security: Security,
+}
+
+/// Security-posture settings (`[security]`).
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub struct Security {
+    /// Whether approving a held command over IPC requires proof of the admin
+    /// password. Absent ⇒ required (the Phase 7 default, a deliberate
+    /// human-approved behavior change): a same-user agent process that can
+    /// reach the owner-only socket and speak the protocol cannot approve its
+    /// own held command silently — the attempt fails loudly and is audited.
+    /// This only *adds* friction (the spine's monotonic rule); the opt-out
+    /// (`false`) restores the pre-Phase-7 bare-approve flow.
+    #[serde(default)]
+    pub require_approval_proof: Option<bool>,
 }
 
 /// Provenance / taint-aware flow-control settings (`[provenance]`).
@@ -87,6 +108,12 @@ impl Policy {
             provenance: Provenance {
                 enabled: repo.provenance.enabled.or(global.provenance.enabled),
             },
+            security: Security {
+                require_approval_proof: repo
+                    .security
+                    .require_approval_proof
+                    .or(global.security.require_approval_proof),
+            },
         }
     }
 
@@ -98,6 +125,14 @@ impl Policy {
     /// Whether the provenance trifecta guard is enabled (default: true).
     pub fn provenance_enabled(&self) -> bool {
         self.provenance.enabled.unwrap_or(true)
+    }
+
+    /// Whether IPC approval requires an admin-password proof (default: true —
+    /// see [`Security::require_approval_proof`]). Only meaningful on a daemon
+    /// with a provisioned vault; with no vault there is nothing to prove and
+    /// approval stays bare (the shutdown mirror).
+    pub fn require_approval_proof(&self) -> bool {
+        self.security.require_approval_proof.unwrap_or(true)
     }
 
     /// Decide what this policy says about a command. Deny wins over allow.
@@ -245,9 +280,39 @@ mod tests {
                 deny: vec!["deploy".into()],
             },
             provenance: Provenance::default(),
+            security: Security::default(),
         };
         assert_eq!(p.action_for("deploy now"), PolicyAction::Deny);
         assert_eq!(p.risk_threshold(), DEFAULT_THRESHOLD);
+    }
+
+    #[test]
+    fn approval_proof_defaults_on_and_parses_off() {
+        // Absent ⇒ required (the Phase 7 default: a same-user agent approving its
+        // own held command becomes loud, failed, and audited instead of silent).
+        assert!(Policy::default().require_approval_proof());
+        assert!(Policy::parse("mode = \"attended\"")
+            .unwrap()
+            .require_approval_proof());
+        // Explicitly disabled (the documented opt-out for the pre-Phase-7 flow).
+        let off = Policy::parse("[security]\nrequire_approval_proof = false").unwrap();
+        assert!(!off.require_approval_proof());
+        // Explicit on.
+        let on = Policy::parse("[security]\nrequire_approval_proof = true").unwrap();
+        assert!(on.require_approval_proof());
+    }
+
+    #[test]
+    fn merge_repo_overrides_approval_proof_in_both_directions() {
+        // Repo policy overrides global per the existing precedence.
+        let global = Policy::parse("[security]\nrequire_approval_proof = true").unwrap();
+        let repo = Policy::parse("[security]\nrequire_approval_proof = false").unwrap();
+        assert!(!Policy::merge(global, repo).require_approval_proof());
+        // … and a repo can re-arm what a global opted out of (monotonic: the
+        // override is a scope choice, never a silent downgrade everywhere).
+        let global_off = Policy::parse("[security]\nrequire_approval_proof = false").unwrap();
+        let repo_on = Policy::parse("[security]\nrequire_approval_proof = true").unwrap();
+        assert!(Policy::merge(global_off, repo_on).require_approval_proof());
     }
 
     #[test]
