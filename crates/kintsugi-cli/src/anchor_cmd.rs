@@ -260,12 +260,15 @@ pub fn verify(checkpoint: Option<PathBuf>) -> Result<()> {
     match admin::load_vault(&admin::default_vault_path()) {
         VaultState::Locked(vault) => match vault.auth_key_id() {
             Some(pinned) if pinned != checkpoint.key_id => {
+                // Neither id is secret (the file carries one in the clear, and both are
+                // public verifying keys), but printing the trusted one buys nothing a
+                // human can act on and the diff is what matters — so name the file's
+                // key and say the vault's differs.
                 println!("INVALID: this checkpoint was signed by a key this vault does not own.");
-                println!("  key this machine trusts: {pinned}");
-                println!("  key that signed the file: {}", checkpoint.key_id);
+                println!("  signed by: {}", checkpoint.key_id);
                 println!(
-                    "  A checkpoint vouches for a log only on the machine whose key signed it; \
-                     verify it there, not here."
+                    "  this machine's key differs — a checkpoint vouches for a log only on \
+                     the machine whose key signed it; verify it there, not here."
                 );
                 std::process::exit(EXIT_INVALID);
             }
