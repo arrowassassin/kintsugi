@@ -11,6 +11,9 @@
 //! Design constraints it honors (`kintsugi-provenance-design.md` §3.1/§3.5/§3.7):
 //! - **Identifier only.** A source is recorded by url / path / tool name, never by
 //!   the content bytes it returned (spine #6). We never read a fetched body here.
+//!   V1.1's post-tool path ([`classify_result_ingest`]) keeps that rule: it
+//!   consults the tool *result* only for presence (did content come back at
+//!   all?), and still records identifiers from the call's input.
 //! - **Sound, over-approximate.** When unsure, taint (a false positive is a UX
 //!   cost the provenance trail + one-key approve absorb; a missed taint is a hole).
 //! - **Trusted by default: the repo's own files.** A read *inside* the workspace
@@ -74,6 +77,52 @@ pub fn classify_tool_ingest(
             classify_read_path(Path::new(&p), workspace)
         }
         None => None,
+    }
+}
+
+/// Classify a *completed* content-tool call whose result has entered the
+/// agent's context (V1.1 result-content observation, fed by a `PostToolUse`-style
+/// event). Purely additive on top of the pre-tool act taint: this can only ADD
+/// a label, never remove or soften one.
+///
+/// Identifier-only (spine #6): the `source_id` comes from the call's INPUT
+/// (url / path / tool name) via [`classify_tool_ingest`] — never from the
+/// response. The response is consulted for *presence* only, by gross shape:
+/// did content actually come back? Its field names and bytes are never read —
+/// a redacted blob such as `{"redacted": true}` (Cursor cloud agents redact
+/// MCP output to exactly that) is still untrusted content entering the session
+/// and counts as content-bearing.
+///
+/// An empty/absent result (`null`, `""`, `{}`, `[]`, or a bare scalar) means
+/// nothing entered the session, so nothing is labeled. With the response kept
+/// opaque, emptiness is the only error signal we may act on; a non-empty error
+/// string is deliberately over-approximated as content — sound beats precise,
+/// and a false taint costs one approval keypress.
+pub fn classify_result_ingest(
+    tool: &str,
+    input: &serde_json::Value,
+    response: &serde_json::Value,
+    workspace: &Path,
+) -> Option<IngestSource> {
+    if !is_content_bearing(response) {
+        return None;
+    }
+    // The source id comes from the input only; the response contributes
+    // nothing but this go-ahead. Reuses the act path's content-tool set,
+    // MCP name shape, and workspace trust boundary unchanged.
+    classify_tool_ingest(tool, input, workspace)
+}
+
+/// Did this tool *result* actually carry content into the session? Gross
+/// shape only — never field names, never bytes (spine #6).
+fn is_content_bearing(response: &serde_json::Value) -> bool {
+    match response {
+        serde_json::Value::Null => false,
+        serde_json::Value::String(s) => !s.trim().is_empty(),
+        serde_json::Value::Object(o) => !o.is_empty(),
+        serde_json::Value::Array(a) => !a.is_empty(),
+        // A bare number/boolean is a status or flag, not content.
+        serde_json::Value::Bool(_) | serde_json::Value::Number(_) => false,
     }
 }
 
@@ -494,5 +543,134 @@ mod tests {
                 "https://evil.example/x"
             ))
         );
+    }
+
+    // ---- Post-tool RESULT observation (V1.1) ---------------------------------
+    fn result_call(tool: &str, input: &str, response: &str) -> Option<IngestSource> {
+        classify_result_ingest(tool, &json(input), &json(response), &ws())
+    }
+
+    #[test]
+    fn post_result_taints_with_the_input_identifier_never_the_response() {
+        // The response smuggles a token; the recorded id must come from the
+        // INPUT url and contain not one byte of the response (spine #6).
+        let got = result_call(
+            "WebFetch",
+            r#"{"url":"https://evil.example/poison","prompt":"s"}"#,
+            r#""page body with a smuggled token sk-live-ABCDEF""#,
+        );
+        assert_eq!(
+            got,
+            Some(IngestSource::new(
+                SourceKind::Web,
+                "https://evil.example/poison"
+            ))
+        );
+        let src = got.expect("asserted Some above");
+        assert!(
+            !src.id.contains("sk-live"),
+            "response bytes must never become the identifier"
+        );
+    }
+
+    #[test]
+    fn post_mcp_result_taints_by_name_shape_with_an_opaque_response() {
+        // The response is an arbitrary object; its field names are never read.
+        assert_eq!(
+            result_call(
+                "mcp__webdocs__fetch_page",
+                r#"{"url":"https://example.com/advisory"}"#,
+                r##"{"markdown":"# Example Advisory","anything":"goes"}"##,
+            ),
+            Some(IngestSource::new(SourceKind::Mcp, "mcp/webdocs/fetch_page"))
+        );
+    }
+
+    #[test]
+    fn a_redacted_post_result_blob_is_still_content_bearing() {
+        // Cursor cloud agents redact MCP postToolUse output to
+        // `{"redacted": true}` — a redacted blob is still untrusted content
+        // entering the session, so it counts as a result.
+        assert_eq!(
+            result_call(
+                "mcp__webdocs__fetch_page",
+                r#"{"url":"https://example.com/advisory"}"#,
+                r#"{"redacted": true}"#,
+            ),
+            Some(IngestSource::new(SourceKind::Mcp, "mcp/webdocs/fetch_page"))
+        );
+    }
+
+    #[test]
+    fn empty_or_absent_post_results_never_taint() {
+        // An empty/absent result means nothing entered the session. With the
+        // response kept opaque, emptiness is the only error signal we may act
+        // on; a non-empty error STRING is deliberately over-approximated as
+        // content (sound beats precise, and a false taint is one keypress).
+        for response in [
+            serde_json::Value::Null, // absent / failed
+            json(r#""""#),           // empty error text
+            json(r#"{}"#),           // nothing came back
+            json(r#"[]"#),
+            json("5"), // a bare status scalar, not content
+            json("true"),
+        ] {
+            assert_eq!(
+                classify_result_ingest(
+                    "WebFetch",
+                    &json(r#"{"url":"https://evil.example/p"}"#),
+                    &response,
+                    &ws()
+                ),
+                None,
+                "response {response}"
+            );
+        }
+    }
+
+    // Unix-only: the out-of-workspace case uses a Unix-absolute path (same
+    // reason as `out_of_workspace_reads_are_untrusted` above).
+    #[cfg(unix)]
+    #[test]
+    fn post_read_results_reuse_the_workspace_trust_boundary() {
+        // The post path must not widen or narrow the act path's boundary: an
+        // in-workspace read stays trusted even post-hoc; an out-of-workspace
+        // read is untrusted content that entered the session.
+        let content = r#""the file's contents""#;
+        assert_eq!(
+            result_call("Read", r#"{"file_path":"/work/repo/src/main.rs"}"#, content),
+            None
+        );
+        assert_eq!(
+            result_call("Read", r#"{"file_path":"/etc/motd"}"#, content),
+            Some(IngestSource::new(SourceKind::File, "/etc/motd"))
+        );
+    }
+
+    #[test]
+    fn post_search_results_taint_with_the_query_even_as_an_array_response() {
+        // A result ARRAY (search hits, file listings) is content-bearing; the
+        // recorded id stays the input query, per the identifier-only rule.
+        assert_eq!(
+            result_call(
+                "WebSearch",
+                r#"{"query":"rust hooks"}"#,
+                r#"[{"title":"Rust hooks","url":"https://example.com/h"}]"#,
+            ),
+            Some(IngestSource::new(SourceKind::SearchResult, "rust hooks"))
+        );
+    }
+
+    #[test]
+    fn post_results_of_non_content_tools_and_identifierless_inputs_are_skipped() {
+        let content = r#""stuff""#;
+        // An edit is not an ingest channel, whatever it returned.
+        assert_eq!(
+            result_call("Edit", r#"{"file_path":"src/x.rs"}"#, content),
+            None
+        );
+        // A content tool whose input carries no identifier: never invent one
+        // from the response bytes — a miss, not a guess (spine #6).
+        assert_eq!(result_call("WebFetch", "{}", content), None);
     }
 }

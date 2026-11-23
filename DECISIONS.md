@@ -628,3 +628,16 @@ the locked product decisions this build implements.
   which CI/headless can't build — same honest "not-CI-compiled" posture as the
   llama backend. GPUI was considered and declined: immature, macOS-first, and a
   weaker cross-platform story than the hard mac/Linux/Windows requirement allows.
+- Phase 6 V1.1, post-tool result observation (plan Task 2): `Dialect::parse_post`
+  + `observe::classify_result_ingest` + a `hook_event_name == "PostToolUse"`
+  route that fires BEFORE shell parsing (a completed call is never re-judged as
+  a proposal) taint a session from what a content tool actually RETURNED —
+  Claude (`tool_response`, fixture-verified against the v2.1.330 docs) and
+  Codex (schema-verified MCP shape) live; Antigravity parses its documented
+  `toolCall.args` shape but carries no result bytes, so it stays honestly
+  parse-only (act-confirmation limit). The result is opaque by rule: only its
+  presence is consulted, identifiers come from the call's INPUT, and a redacted
+  `{"redacted": true}` blob still counts as content entering. Purely additive —
+  the pre-tool act taint is untouched (bridge test proves both persist), and
+  Qwen/Gemini/Copilot/Cursor/OpenCode return `None` rather than guessing at
+  unpinned shapes (the 0.2.1 lesson).
