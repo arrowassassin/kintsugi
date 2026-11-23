@@ -342,12 +342,16 @@ impl Client {
     ///
     /// Bounded: this is the call the TUI makes when you open a Detail view, and an
     /// unbounded wait there freezes the whole interface for as long as the daemon
-    /// takes. Two seconds is generous for a single SQLite read; past that the caller
-    /// gets an error it can render honestly instead of a hung window.
+    /// takes. The budget is deliberately generous — a cold local-socket connect plus
+    /// a single SQLite read measured multiple seconds on `windows-latest` CI, so a
+    /// tight bound would turn a slow machine into a false "daemon busy". Past it the
+    /// caller gets an error it can render honestly instead of a hung window.
+    pub const PROVENANCE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
     pub fn provenance(cmd: &ProposedCommand) -> Result<(bool, Vec<kintsugi_core::ProvStep>)> {
         let resp = round_trip_within(
             &Request::Provenance(cmd.clone()),
-            Some(std::time::Duration::from_secs(2)),
+            Some(Self::PROVENANCE_TIMEOUT),
         )?;
         match resp {
             Response::Provenance { tainted, trail } => Ok((tainted, trail)),
