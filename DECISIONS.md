@@ -891,3 +891,13 @@ the locked product decisions this build implements.
   query stops matching, would obscure readable tests to satisfy a detector that
   is working as designed; the dismissal reason is the honest classification and
   is visible in the Security tab.
+- Gate v0.4.0 (P-1): widened the confident-safe recognizer with strictly read-only
+  verbs (git/kubectl/docker/helm/terraform/gh/npm/cargo/go queries + text filters)
+  to shrink the Ambiguous→Hold prompt band. Deep-research verdict recorded in
+  `docs/classifier-research.md`: fatigue is fixed statelessly in the classifier —
+  stored per-command "allow always" memory was REJECTED (over-allow drift, rideable
+  entries), and no model may ever gate or downgrade (guardrail-evasion evidence).
+  Safety invariants: the secret-path guard applies to every addition, and
+  subcommand-gated tools match the verb at position 0 only, because a value-taking
+  flag's VALUE could impersonate a safe verb (`kubectl -n get delete …`) — that
+  hole is test-pinned closed. Catastrophic floor untouched.

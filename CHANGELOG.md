@@ -14,6 +14,27 @@ proof-of-human approval over IPC — on top of Phase 6 **V1.1 provenance** (the 
 now watches what agents read *and* write) and the release hygiene that makes this
 version shippable. Bundles everything since 0.3.1.
 
+### Gate — fewer prompts, same floor
+- **Widened confident-safe recognizer.** The Tier-1 rules now recognize more
+  strictly read-only commands as SAFE, so they run without a prompt: additional
+  `git` read verbs (`ls-tree`, `rev-list`, `merge-base`, `show-ref`, `name-rev`,
+  `cherry`, `count-objects`, `diff-tree`/`-files`/`-index`, `var`, `version`,
+  `--version`), infra query verbs (`kubectl get/describe/logs/explain/top/…`,
+  `docker|podman ps/images/logs/inspect/…`, `helm list/status/history/show/get`,
+  `terraform|tofu plan/validate/show/output/providers/graph`), read-only `gh`
+  forms (`pr|issue|run|release|repo|workflow|gist|label` × `view|list|status|
+  diff|checks`, `search *`, `auth status`), package-manager query verbs
+  (`npm view/info/explain/why/list`, `cargo locate-project/verify-project/pkgid`,
+  `go env`/`go mod graph|why|verify`), and pure text filters/checksums (`tr`,
+  `comm`, `join`, `tac`, `nl`, `paste`, `sha*sum`, `uptime`, `lsof`, …).
+  Two invariants hold for every addition: the global secret-path guard still
+  applies (a read-only program pointed at `~/.ssh`/`.env` is never silently
+  safe), and subcommand-gated tools match the verb at **position 0 only** — a
+  value-taking flag can't smuggle a dangerous subcommand past the check
+  (`kubectl -n get delete …` stays flagged; `go env -w` stays flagged). The
+  catastrophic floor is untouched and test-pinned. Rationale + research record:
+  `docs/classifier-research.md`.
+
 ### Security fixes
 - **The dependency advisory backlog is cleared, and the audit gate is strict
   again.** `cargo audit`'s 15-entry ignore list (the opt-in `llama`/`download`

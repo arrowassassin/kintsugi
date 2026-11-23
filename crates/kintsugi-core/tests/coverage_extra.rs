@@ -65,7 +65,8 @@ fn infra_and_container_branches() {
     cat("tofu destroy");
     amb("helm install rel chart");
     amb("docker run ubuntu");
-    amb("kubectl get pods");
+    // Widened-safe recognizer: read-only infra queries no longer prompt.
+    safe("kubectl get pods");
 }
 
 #[test]

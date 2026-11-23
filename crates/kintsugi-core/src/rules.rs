@@ -1172,11 +1172,80 @@ fn is_safe(prog: &str, args: &[&str]) -> bool {
     }
 
     const SAFE: &[&str] = &[
-        "ls", "ll", "pwd", "echo", "printf", "grep", "egrep", "fgrep", "rg", "ag", "head", "tail",
-        "wc", "sort", "uniq", "cut", "less", "more", "man", "which", "type", "whoami", "id",
-        "hostname", "uname", "date", "ps", "df", "du", "free", "tree", "stat", "file", "basename",
-        "dirname", "realpath", "readlink", "true", "false", "sleep", "clear", "env", "printenv",
-        "tldr", "jq", "yq", "diff", "cmp", "column",
+        "ls",
+        "ll",
+        "pwd",
+        "echo",
+        "printf",
+        "grep",
+        "egrep",
+        "fgrep",
+        "rg",
+        "ag",
+        "head",
+        "tail",
+        "wc",
+        "sort",
+        "uniq",
+        "cut",
+        "less",
+        "more",
+        "man",
+        "which",
+        "type",
+        "whoami",
+        "id",
+        "hostname",
+        "uname",
+        "date",
+        "ps",
+        "df",
+        "du",
+        "free",
+        "tree",
+        "stat",
+        "file",
+        "basename",
+        "dirname",
+        "realpath",
+        "readlink",
+        "true",
+        "false",
+        "sleep",
+        "clear",
+        "env",
+        "printenv",
+        "tldr",
+        "jq",
+        "yq",
+        "diff",
+        "cmp",
+        "column",
+        // Pure text filters / checksums / system-info readers. All strictly
+        // read-only; the secret-path guard above still applies to every one.
+        "tr",
+        "comm",
+        "join",
+        "tac",
+        "rev",
+        "nl",
+        "fold",
+        "paste",
+        "expand",
+        "unexpand",
+        "cksum",
+        "md5sum",
+        "sha1sum",
+        "sha256sum",
+        "sha512sum",
+        "shasum",
+        "b2sum",
+        "uptime",
+        "who",
+        "nproc",
+        "arch",
+        "locale",
+        "lsof",
     ];
 
     // `cat`/`find`/`sed` are only safe in their read-only forms.
@@ -1202,15 +1271,38 @@ fn is_safe(prog: &str, args: &[&str]) -> bool {
                     | Some("metadata")
                     | Some("bench")
                     | Some("nextest")
+                    | Some("locate-project")
+                    | Some("verify-project")
+                    | Some("pkgid")
             ) || args.iter().any(|a| *a == "--version" || *a == "-V")
         }
         "npm" | "pnpm" | "yarn" => {
             return matches!(
                 first_subcommand(args).as_deref(),
-                Some("test") | Some("ls") | Some("audit") | Some("outdated") | Some("--version")
+                Some("test")
+                    | Some("ls")
+                    | Some("list")
+                    | Some("audit")
+                    | Some("outdated")
+                    | Some("view")
+                    | Some("info")
+                    | Some("explain")
+                    | Some("why")
+                    | Some("--version")
             )
         }
         "go" => {
+            // `go env` only reads unless `-w`/`-u` (which write the config);
+            // `go mod graph|why|verify` are read-only module queries.
+            if args.first() == Some(&"env") {
+                return !args.iter().any(|a| *a == "-w" || *a == "-u");
+            }
+            if args.first() == Some(&"mod") {
+                return matches!(
+                    args.get(1).copied(),
+                    Some("graph") | Some("why") | Some("verify")
+                );
+            }
             return matches!(
                 first_subcommand(args).as_deref(),
                 Some("build")
@@ -1220,13 +1312,99 @@ fn is_safe(prog: &str, args: &[&str]) -> bool {
                     | Some("list")
                     | Some("version")
                     | Some("doc")
-            )
+            );
         }
         "pytest" => return true,
+        // Infra/CLI tools below match the read verb at POSITION 0 only — never
+        // via first_subcommand. A value-taking flag before the verb would let
+        // its VALUE stand in for the subcommand (`kubectl -n get delete …`
+        // reads "get" as the verb while the real one is `delete`), turning a
+        // catastrophic command SAFE. Position-0 matching fails toward caution:
+        // a flags-first invocation just prompts (Ambiguous), never unlocks.
+        "kubectl" => {
+            return matches!(
+                args.first().copied(),
+                Some("get")
+                    | Some("describe")
+                    | Some("logs")
+                    | Some("explain")
+                    | Some("top")
+                    | Some("api-resources")
+                    | Some("api-versions")
+                    | Some("cluster-info")
+                    | Some("version")
+                    | Some("--version")
+            )
+        }
+        "docker" | "podman" => {
+            return matches!(
+                args.first().copied(),
+                Some("ps")
+                    | Some("images")
+                    | Some("logs")
+                    | Some("inspect")
+                    | Some("history")
+                    | Some("port")
+                    | Some("top")
+                    | Some("stats")
+                    | Some("version")
+                    | Some("info")
+                    | Some("diff")
+                    | Some("--version")
+            )
+        }
+        "helm" => {
+            return matches!(
+                args.first().copied(),
+                Some("list")
+                    | Some("ls")
+                    | Some("status")
+                    | Some("history")
+                    | Some("show")
+                    | Some("get")
+                    | Some("version")
+                    | Some("--version")
+            )
+        }
+        "terraform" | "tofu" => {
+            return matches!(
+                args.first().copied(),
+                Some("plan")
+                    | Some("validate")
+                    | Some("show")
+                    | Some("output")
+                    | Some("providers")
+                    | Some("graph")
+                    | Some("version")
+                    | Some("--version")
+            )
+        }
+        "gh" => return is_safe_gh(args),
         _ => {}
     }
 
     SAFE.contains(&prog)
+}
+
+/// Read-only `gh` (GitHub CLI) forms: a resource group followed by a read verb,
+/// both in leading position (a flags-first invocation is never matched, so a
+/// flag value can't stand in for the verb — same rationale as the position-0
+/// rule for kubectl/docker/helm). `gh api` is deliberately absent: it can issue
+/// mutating requests. `gh run download` writes files, so `download` is not a
+/// read verb here.
+fn is_safe_gh(args: &[&str]) -> bool {
+    match (args.first().copied(), args.get(1).copied()) {
+        (Some("status") | Some("--version"), _) => true,
+        (Some("auth"), Some("status")) => true,
+        (Some("search"), Some(sub)) => {
+            matches!(sub, "repos" | "issues" | "prs" | "code" | "commits")
+        }
+        (
+            Some("pr" | "issue" | "run" | "release" | "repo" | "workflow" | "gist" | "label"),
+            Some(verb),
+        ) => matches!(verb, "view" | "list" | "status" | "diff" | "checks"),
+        _ => false,
+    }
 }
 
 fn is_safe_git(args: &[&str]) -> bool {
@@ -1238,7 +1416,9 @@ fn is_safe_git(args: &[&str]) -> bool {
         Some(
             "status" | "diff" | "log" | "show" | "remote" | "describe" | "rev-parse" | "ls-files"
             | "blame" | "shortlog" | "whatchanged" | "fetch" | "config" | "branch" | "tag"
-            | "stash" | "ls-remote" | "cat-file" | "reflog" | "grep" | "bisect",
+            | "stash" | "ls-remote" | "cat-file" | "reflog" | "grep" | "bisect" | "ls-tree"
+            | "rev-list" | "merge-base" | "show-ref" | "name-rev" | "cherry" | "count-objects"
+            | "diff-tree" | "diff-files" | "diff-index" | "var" | "version" | "help",
         ) => {
             // `branch`/`tag`/`stash` are only safe in their non-destructive forms.
             let destructive = args.iter().any(|a| {
@@ -1249,6 +1429,9 @@ fn is_safe_git(args: &[&str]) -> bool {
             });
             !destructive
         }
+        // All-flags invocations have no subcommand; `git --version` is the one
+        // read-only form worth recognizing there.
+        None => args.contains(&"--version"),
         _ => false,
     }
 }
@@ -1708,6 +1891,212 @@ mod tests {
         }
         // Uninstalling an unrelated package is not self-protection.
         assert_ne!(class_of("cargo uninstall ripgrep"), Class::Catastrophic);
+    }
+
+    // --- Widened confident-safe recognizer (fewer prompts, same floor) -------
+    // Each entry is strictly read-only. The point of these tests is symmetry:
+    // every widened verb has a neighboring negative proving the mutating form
+    // of the same tool still prompts (or hard-blocks), and that a value-taking
+    // flag can't smuggle a dangerous subcommand past the position-0 match.
+
+    #[test]
+    fn read_only_text_filters_are_safe() {
+        for s in [
+            "tr a-z A-Z",
+            "comm -12 a.txt b.txt",
+            "join a.txt b.txt",
+            "tac log.txt",
+            "rev names.txt",
+            "nl main.rs",
+            "fold -w 80 notes.txt",
+            "paste a.txt b.txt",
+            "sha256sum release.tar.gz",
+            "sha1sum blob.bin",
+            "md5sum file.iso",
+            "shasum -a 256 file.bin",
+            "cksum data.bin",
+            "b2sum data.bin",
+            "uptime",
+            "who",
+            "nproc",
+            "arch",
+            "locale",
+            "lsof -i :8080",
+        ] {
+            assert_eq!(class_of(s), Class::Safe, "expected SAFE: {s}");
+        }
+    }
+
+    #[test]
+    fn new_safe_entries_still_respect_the_secret_guard() {
+        // The global secret-path guard applies to every widened entry: a
+        // read-only program pointed at a credential is never silently safe.
+        for s in [
+            "sha256sum ~/.ssh/id_rsa",
+            "cksum .env",
+            "paste ~/.aws/credentials b.txt",
+        ] {
+            assert_ne!(class_of(s), Class::Safe, "secret must not be SAFE: {s}");
+        }
+    }
+
+    #[test]
+    fn git_read_verbs_are_safe() {
+        for s in [
+            "git ls-tree HEAD",
+            "git rev-list --count HEAD",
+            "git merge-base main feature",
+            "git show-ref",
+            "git name-rev HEAD",
+            "git cherry -v",
+            "git count-objects -v",
+            "git diff-tree -r HEAD",
+            "git diff-files",
+            "git var GIT_AUTHOR_IDENT",
+            "git version",
+            "git --version",
+        ] {
+            assert_eq!(class_of(s), Class::Safe, "expected SAFE: {s}");
+        }
+    }
+
+    #[test]
+    fn infra_query_verbs_are_safe() {
+        for s in [
+            "kubectl get pods -n prod",
+            "kubectl describe pod web-0",
+            "kubectl logs web-0 --tail 100",
+            "kubectl explain deployment.spec",
+            "kubectl top pods",
+            "kubectl api-resources",
+            "kubectl cluster-info",
+            "kubectl version",
+            "docker ps -a",
+            "docker images",
+            "docker logs api",
+            "docker inspect api",
+            "docker history nginx",
+            "docker --version",
+            "podman ps",
+            "helm list -A",
+            "helm status release1",
+            "helm history release1",
+            "helm get values release1",
+            "terraform plan",
+            "terraform validate",
+            "terraform show",
+            "terraform output db_host",
+            "terraform providers",
+            "tofu plan",
+        ] {
+            assert_eq!(class_of(s), Class::Safe, "expected SAFE: {s}");
+        }
+    }
+
+    #[test]
+    fn gh_read_verbs_are_safe() {
+        for s in [
+            "gh pr view 41",
+            "gh pr list",
+            "gh pr diff 41",
+            "gh pr checks 41",
+            "gh pr status",
+            "gh issue list",
+            "gh issue view 7",
+            "gh run list",
+            "gh run view 123",
+            "gh release list",
+            "gh repo view",
+            "gh workflow list",
+            "gh label list",
+            "gh search repos kintsugi",
+            "gh auth status",
+            "gh status",
+            "gh --version",
+        ] {
+            assert_eq!(class_of(s), Class::Safe, "expected SAFE: {s}");
+        }
+    }
+
+    #[test]
+    fn gh_mutating_verbs_stay_flagged() {
+        for s in [
+            "gh pr merge 41",
+            "gh pr create",
+            "gh api repos/o/r/issues -f title=x",
+            "gh release create v1.0.0",
+            "gh repo delete o/r",
+            "gh issue close 7",
+            "gh run cancel 123",
+            "gh run download 123",
+            "gh auth login",
+        ] {
+            assert_eq!(class_of(s), Class::Ambiguous, "expected AMBIGUOUS: {s}");
+        }
+    }
+
+    #[test]
+    fn package_and_build_query_verbs_are_safe() {
+        for s in [
+            "npm view react version",
+            "npm info lodash",
+            "npm explain glob",
+            "pnpm why esbuild",
+            "yarn why lodash",
+            "npm list --depth 1",
+            "cargo locate-project",
+            "cargo verify-project",
+            "cargo pkgid",
+            "go env GOPATH",
+            "go mod graph",
+            "go mod why example.com/pkg",
+            "go mod verify",
+        ] {
+            assert_eq!(class_of(s), Class::Safe, "expected SAFE: {s}");
+        }
+    }
+
+    #[test]
+    fn flag_value_cannot_spoof_a_safe_subcommand() {
+        // In each line the "safe" verb is actually the VALUE of a value-taking
+        // flag; the real subcommand is dangerous. Position-0 matching must not
+        // be fooled into SAFE (fail toward caution: prompting is fine, silence
+        // is not).
+        for s in [
+            "kubectl -n get delete pod web-0",
+            "docker --context ps rm api",
+            "helm --namespace list uninstall release1",
+            "terraform -chdir=plan apply",
+        ] {
+            assert_ne!(
+                class_of(s),
+                Class::Safe,
+                "spoofed verb must not be SAFE: {s}"
+            );
+        }
+    }
+
+    #[test]
+    fn mutating_infra_verbs_stay_flagged() {
+        // The catastrophic floor is untouched…
+        assert_eq!(class_of("kubectl delete pod web-0"), Class::Catastrophic);
+        assert_eq!(class_of("terraform destroy"), Class::Catastrophic);
+        assert_eq!(class_of("helm uninstall release1"), Class::Catastrophic);
+        assert_eq!(class_of("docker system prune -af"), Class::Catastrophic);
+        // …and the mutating middle still prompts.
+        for s in [
+            "kubectl apply -f deploy.yaml",
+            "kubectl exec -it web-0 -- sh",
+            "docker run -it ubuntu",
+            "docker rm api",
+            "helm install release1 chart/",
+            "terraform apply",
+            "terraform fmt",
+            "go env -w GOOS=linux",
+            "npm install",
+        ] {
+            assert_eq!(class_of(s), Class::Ambiguous, "expected AMBIGUOUS: {s}");
+        }
     }
 
     #[test]
