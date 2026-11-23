@@ -709,3 +709,11 @@ the locked product decisions this build implements.
   invented id; and Cursor's hook *registration* is deferred because its exact
   content-tool name set is a live-verification gap — the Cursor parse path is
   pinned, tested, and ready for the wiring.
+- Phase 6 V1.1 · MCP ingest parity: an ALLOWED fetch-shaped `kintsugi-exec` call
+  (curl/wget GET, `git clone`) now emits the same `ObservedIngest` as the hook
+  path, after the exec and before the output is returned to the calling agent.
+  The fetched stdout/stderr stays agent-only — never stored or logged (spine #6);
+  the URL identifier is redacted at the daemon's single ingest boundary
+  (`with_redacted_source_id`) as before. Denied, held, and upload-shaped (`curl
+  -d`) calls label nothing; observation remains best-effort and never blocks.
+
