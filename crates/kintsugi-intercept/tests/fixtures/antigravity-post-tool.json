@@ -1,0 +1,15 @@
+{
+  "toolCall": {
+    "name": "read_url_content",
+    "args": {
+      "Url": "https://example.com/advisory"
+    }
+  },
+  "stepIdx": 5,
+  "error": "",
+  "conversationId": "ec33ebf9-0cba-4100-8142-c61503f6c587",
+  "workspacePaths": ["/work/repo"],
+  "transcriptPath": "~/.gemini/antigravity/brain/ec33ebf9-0cba-4100-8142-c61503f6c587/.system_generated/logs/transcript.jsonl",
+  "artifactDirectoryPath": "~/.gemini/antigravity/brain/ec33ebf9-0cba-4100-8142-c61503f6c587",
+  "modelName": "gemini-3.6-flash-medium"
+}

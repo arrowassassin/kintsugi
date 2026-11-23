@@ -1,0 +1,15 @@
+{
+  "session_id": "b1e5d0a2-3f47-4c98-9d62-1a7b8c5e2f30",
+  "transcript_path": "/Users/p0is0n/.codex/sessions/2026/11/22/rollout-2026-11-22T10-31-04.jsonl",
+  "cwd": "/work/repo",
+  "hook_event_name": "PostToolUse",
+  "model": "gpt-5.1-codex",
+  "permission_mode": "default",
+  "turn_id": "turn_7",
+  "tool_name": "mcp__webdocs__fetch_page",
+  "tool_use_id": "tu_9c2f41",
+  "tool_input": {
+    "url": "https://example.com/advisory"
+  },
+  "tool_response": "Example Advisory — opaque result content returned by the MCP tool. Identifier-only recording applies; these bytes never persist."
+}

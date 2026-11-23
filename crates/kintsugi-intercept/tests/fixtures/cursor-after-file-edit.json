@@ -1,0 +1,20 @@
+{
+  "file_path": "/work/repo/src/notes.rs",
+  "edits": [
+    { "old_string": "// draft notes", "new_string": "// reviewed notes" }
+  ],
+  "conversation_id": "conv-4d2f9a1c",
+  "generation_id": "gen-77e3b2",
+  "model": "claude-opus-4-7-thinking-max",
+  "model_id": "claude-opus-4-7",
+  "model_params": [
+    { "id": "thinking", "value": "true" },
+    { "id": "context", "value": "1m" },
+    { "id": "effort", "value": "max" }
+  ],
+  "hook_event_name": "afterFileEdit",
+  "cursor_version": "1.7.2",
+  "workspace_roots": ["/work/repo"],
+  "user_email": "user@example.com",
+  "transcript_path": null
+}
