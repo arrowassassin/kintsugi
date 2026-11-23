@@ -321,3 +321,175 @@ fn chain_head_ignores_taint_events_outside_the_chain() {
         "a taint append is not a chain append"
     );
 }
+
+#[test]
+fn anchor_round_trip_record_and_latest() {
+    let log = EventLog::open_in_memory().unwrap();
+    assert_eq!(log.latest_anchor().unwrap(), None, "no anchor recorded yet");
+
+    let e1 = log.log_event(&sample("ls -la"), &allow(), None).unwrap();
+    let a1 = log
+        .record_anchor("workstation-1", 1, &e1.hash, "key-1")
+        .unwrap();
+    assert_eq!(a1.seq, 1);
+    assert_eq!(a1.head, e1.hash);
+    assert_eq!(a1.origin, "workstation-1");
+    assert_eq!(a1.key_id, "key-1");
+    assert_eq!(
+        a1.sig, None,
+        "checkpoint signing lands in a later wave; sig stays NULL"
+    );
+    assert_eq!(log.latest_anchor().unwrap(), Some(a1.clone()));
+
+    // A later anchor at the newer head becomes the latest.
+    let e2 = log
+        .log_event(&sample("git status"), &allow(), None)
+        .unwrap();
+    let a2 = log.record_anchor("workstation-1", 2, &e2.hash, "").unwrap();
+    assert_eq!(a2.seq, 2);
+    assert_ne!(a2.id, a1.id, "a new row, not a mutation of the first");
+    assert_eq!(log.latest_anchor().unwrap(), Some(a2));
+}
+
+#[test]
+fn anchor_refuses_a_lower_seq_than_the_last_anchor() {
+    // The shape a restored-from-backup older events table produces: the
+    // anchors table survived (last anchor at seq 3) but the chain now ends
+    // earlier. The C2SP no-fork invariant: refuse, never fake continuity.
+    let log = EventLog::open_in_memory().unwrap();
+    for raw in ["one", "two", "three"] {
+        log.log_event(&sample(raw), &allow(), None).unwrap();
+    }
+    let (_, head3) = log.chain_head().unwrap();
+    let a = log.record_anchor("origin", 3, &head3, "").unwrap();
+
+    let err = log.record_anchor("origin", 2, "deadbeef", "").unwrap_err();
+    assert!(
+        matches!(err, kintsugi_core::LogError::Fork(_)),
+        "lower seq must be refused as a fork, got {err:?}"
+    );
+    // The refusal must not append anything: the last anchor is unchanged.
+    assert_eq!(log.latest_anchor().unwrap(), Some(a));
+}
+
+#[test]
+fn anchor_refuses_the_same_seq_with_a_different_head() {
+    let log = EventLog::open_in_memory().unwrap();
+    log.log_event(&sample("one"), &allow(), None).unwrap();
+    let (_, head) = log.chain_head().unwrap();
+    let a = log.record_anchor("origin", 1, &head, "").unwrap();
+
+    let err = log
+        .record_anchor("origin", 1, "not-the-recorded-head", "")
+        .unwrap_err();
+    assert!(
+        matches!(err, kintsugi_core::LogError::Fork(_)),
+        "same seq with a different head is a fork, got {err:?}"
+    );
+    assert_eq!(log.latest_anchor().unwrap(), Some(a));
+}
+
+#[test]
+fn anchor_is_idempotent_for_an_identical_seq_and_head() {
+    let log = EventLog::open_in_memory().unwrap();
+    log.log_event(&sample("one"), &allow(), None).unwrap();
+    let (_, head) = log.chain_head().unwrap();
+    let first = log.record_anchor("origin", 1, &head, "").unwrap();
+
+    // Re-recording the exact checkpoint returns the SAME row — the guard
+    // keys on (seq, head), not on the metadata (origin/key_id).
+    let again = log
+        .record_anchor("even-another-origin", 1, &head, "other-key")
+        .unwrap();
+    assert_eq!(again, first, "the existing anchor row is returned");
+    // No duplicate row: an appended second row would be the new latest.
+    assert_eq!(log.latest_anchor().unwrap(), Some(first.clone()));
+    assert_eq!(log.latest_anchor().unwrap().unwrap().id, first.id);
+}
+
+#[test]
+fn purge_then_reanchor_at_the_new_head_is_accepted() {
+    // Purge rebuilds the chain, so the head legitimately changes. The
+    // audit:purge marker is appended AFTER the rechain and lands above every
+    // seq ever used (AUTOINCREMENT never renumbers or reuses), so the new
+    // head always satisfies the no-fork guard — the anchor series records
+    // the discontinuity plainly instead of faking continuity.
+    let log = EventLog::open_in_memory().unwrap();
+    log.log_event(&sample("git status"), &allow(), None)
+        .unwrap();
+    log.log_event(&sample("rm -rf build"), &allow(), None)
+        .unwrap();
+    log.log_event(&sample("npm test"), &allow(), None).unwrap();
+    let (_, head3) = log.chain_head().unwrap();
+    let before = log.record_anchor("origin", 3, &head3, "").unwrap();
+
+    let removed = log
+        .purge_matching(
+            &Filter {
+                grep: Some("npm test".into()),
+                ..Filter::default()
+            },
+            "privacy",
+        )
+        .unwrap();
+    assert_eq!(removed, 1);
+
+    // The marker preserves the why, and the rebuilt chain is valid.
+    let all = log
+        .query(&Filter {
+            include_redacted: true,
+            ..Filter::default()
+        })
+        .unwrap();
+    assert!(all.iter().any(|e| e.reason == "audit:purge"));
+    assert!(log.verify_chain().unwrap().is_intact());
+
+    let (new_seq, new_head) = log.chain_head().unwrap();
+    assert!(
+        new_seq > before.seq,
+        "the audit:purge marker lands above every previously used seq"
+    );
+
+    // Re-anchoring at the new head is accepted (per the documented rule)
+    // and becomes the latest anchor.
+    let after = log.record_anchor("origin", new_seq, &new_head, "").unwrap();
+    assert_eq!(after.seq, new_seq);
+    assert_eq!(after.head, new_head);
+    assert_eq!(log.latest_anchor().unwrap(), Some(after));
+    assert!(log.verify_chain().unwrap().is_intact());
+}
+
+#[test]
+fn anchor_writes_never_touch_the_events_table() {
+    // Spine #4: anchors are a NEW stream, not an edit stream. Neither an
+    // accepted anchor nor a refused fork attempt may mutate a single events
+    // row (same count, same seqs, same hashes, same contents).
+    let log = EventLog::open_in_memory().unwrap();
+    for raw in ["one", "two", "three"] {
+        log.log_event(&sample(raw), &allow(), None).unwrap();
+    }
+    let snapshot = |log: &EventLog| {
+        log.query(&Filter {
+            include_redacted: true,
+            ..Filter::default()
+        })
+        .unwrap()
+        .into_iter()
+        .map(|e| (e.seq, e.hash, e.command))
+        .collect::<Vec<_>>()
+    };
+    let before = snapshot(&log);
+    let (seq, head) = log.chain_head().unwrap();
+
+    log.record_anchor("origin", seq, &head, "key").unwrap();
+    log.record_anchor("origin", seq - 1, "deadbeef", "key")
+        .unwrap_err();
+
+    assert_eq!(
+        snapshot(&log),
+        before,
+        "the events table is never mutated by anchor code"
+    );
+    assert_eq!(log.chain_head().unwrap(), (seq, head));
+    assert!(log.verify_chain().unwrap().is_intact());
+}
