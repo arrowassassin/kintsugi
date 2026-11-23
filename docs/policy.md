@@ -33,6 +33,12 @@ deny = ["git push *", "kubectl * --context=prod"]
 # The taint-aware "lethal trifecta" guard (untrusted input + a sensitive read + an
 # egress sink). On by default; set false to disable the trifecta escalation.
 enabled = true
+
+[security]
+# Require proof of the admin password to approve a held command. On by default:
+# with a provisioned vault a bare approve (an agent approving its own held
+# command) fails loudly and is audited. Set false to restore bare approval.
+require_approval_proof = true
 ```
 
 ## Matching
@@ -63,3 +69,39 @@ lethal trifecta and is escalated deterministically — held (attended) or denied
 (unattended), never silently allowed. Taint only ever *adds* caution; it can never
 downgrade a block. See [`provenance.md`](provenance.md) for the full model and the
 `kintsugi provenance` trail view.
+
+## Approval auth (`[security]`)
+
+Approving a held command over the daemon socket is a **privileged** operation when
+an admin vault exists. With `require_approval_proof` on (the default),
+`Approve` must carry the nonce-bound proof produced by the admin password — the
+same ritual `kintsugi stop` uses: `AuthBegin("approve:<id>")` → password prompt →
+one-shot, nonce-bound, id-bound proof. The password never crosses the socket.
+
+What that changes for a same-user agent process that can reach the owner-only
+socket:
+
+- A **bare** approve is refused with an actionable error, recorded as a
+  hash-chained `admin approve:<id>` audit row ("self-approval blocked"), and
+  counted by the same throttle as shutdown auth (5 free attempts, then a 30 s
+  lockout that doubles, capped at 1 h).
+- A **Deny** and `PrunePending` stay bare: an agent denying its own held command
+  is a nuisance, not a threat, and prune touches only the queue, never the log.
+- With **no vault** (never provisioned) approval stays bare — there is no secret
+  to prove possession of, and the queue must not brick for users who have not
+  provisioned one.
+
+Honest boundary: this is not a boundary against malicious code already running
+as your user. It makes self-approval **loud, failed, and audited** instead of
+silent. The proof's op binding is `approve:<id>`, so a captured proof approves
+exactly one id, once.
+
+Opting out restores the pre-0.4.0 bare flow for that scope:
+
+```toml
+[security]
+require_approval_proof = false
+```
+
+The scope is the held command's repo (the same `.kintsugi.toml` that produced the
+hold), so one project can opt out without weakening the default everywhere.

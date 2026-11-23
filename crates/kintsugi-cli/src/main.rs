@@ -1341,7 +1341,11 @@ fn cmd_resolve_pending(id: &str, approve: bool) -> Result<()> {
     let full = item.command.id.to_string();
     let short = full.get(..8).unwrap_or(&full);
     if approve {
-        Client::approve(&full).context("approve")?;
+        // The exact shutdown ritual: AuthBegin → password prompt → nonce-bound
+        // proof. A same-user agent shelling out to this can still reach the
+        // daemon directly — the daemon's own auth gate is what stops it — but
+        // it cannot get the password.
+        approve_via_daemon(&full).context("approve")?;
         if is_in_band(&item.command.agent) {
             println!("✓ approved {short} — the requesting agent may now proceed.");
         } else {
@@ -1437,8 +1441,10 @@ fn cmd_run(id: Option<&str>) -> Result<()> {
 
     // Approve via the daemon: snapshots the predicted paths, logs the Allow
     // resolution, and marks the queue entry resolved (CAS, exactly once). Honors
-    // the kill-switch.
-    Client::approve(&full).context("approve for run")?;
+    // the kill-switch. On a locked daemon this carries the admin-password proof
+    // (the human already typed a confirmation code on the real terminal; the
+    // password is the anchor a same-user process can't type for you).
+    approve_via_daemon(&full).context("approve for run")?;
     // Execute the raw command (preserving chaining/redirects) in its original
     // directory, inheriting stdio so the user sees output live.
     let status = run_in_shell(&item.command.cwd, &item.command.raw)?;
@@ -2039,6 +2045,39 @@ fn stop_via_daemon() -> Result<()> {
             anyhow::bail!("not stopping — {e}");
         }
     }
+}
+
+/// Ask the running daemon to approve queued command `id`, proving knowledge of
+/// the admin password via a challenge-response when it is locked — the exact
+/// shutdown ritual. The password never crosses the socket; only a one-time,
+/// nonce-bound, id-bound proof does. When the daemon reports no vault
+/// (`locked = false`), approval is sent bare: there is no secret to prove
+/// possession of, and the *daemon* decides that (this client's environment
+/// can't redirect the check). Daemon-side errors are surfaced verbatim.
+fn approve_via_daemon(id: &str) -> Result<()> {
+    let op = format!("approve:{id}");
+    let (locked, nonce, salt, params) =
+        Client::auth_begin(&op).context("begin approval handshake")?;
+
+    // `None` on the unlocked path (no vault) so no placeholder ever stands in
+    // for a real nonce/proof; `Some(..)` carries the challenge-response when
+    // locked.
+    let auth: Option<(String, String)> = if locked {
+        let pw = admin_cmd::read_admin_password("Admin password to approve: ")?;
+        let nonce_bytes = hex::decode(&nonce).context("decode challenge nonce")?;
+        let proof =
+            kintsugi_core::admin::compute_proof(&pw, &salt, params, &nonce_bytes, op.as_bytes())
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+        Some((nonce, hex::encode(proof)))
+    } else {
+        None
+    };
+
+    let (nonce_arg, proof_arg) = match &auth {
+        Some((n, p)) => (Some(n.as_str()), Some(p.as_str())),
+        None => (None, None),
+    };
+    Client::approve_with_proof(id, nonce_arg, proof_arg)
 }
 
 /// The GitHub repo + installer URL. The installer is the single source of

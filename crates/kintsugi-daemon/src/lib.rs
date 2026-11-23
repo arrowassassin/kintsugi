@@ -101,7 +101,14 @@ pub struct Daemon {
     /// ([`current_vault`](Self::current_vault)) — never cached — so a re-provision
     /// or password change applies immediately, with no restart and no stale-copy bug.
     vault_path: PathBuf,
-    /// The last challenge nonce issued (and its op), consumed once by `Shutdown`.
+    /// The last challenge nonce issued (and its op), consumed once by `Shutdown`
+    /// or `Approve`. The slot is deliberately single and one-shot: a challenge
+    /// is bound to exactly one op (`"shutdown"` or `"approve:<id>"`) and one
+    /// use. A consequence, accepted by design: an `AuthBegin` for approve
+    /// supersedes any unconsumed shutdown challenge and vice versa — the
+    /// op-binding check then rejects any proof minted for the overwritten op,
+    /// so the supersede can never authorize the other operation (documented in
+    /// docs/policy.md and pinned by `approval_auth.rs`).
     pending: RefCell<Option<(Vec<u8>, String)>>,
     /// Set when an authenticated shutdown has been accepted; the serve loop exits.
     shutdown: Cell<bool>,
@@ -233,6 +240,12 @@ fn needs_queue_entry(cmd: &ProposedCommand, class: kintsugi_core::Class) -> bool
     }
     !AGENTS_WITH_NATIVE_ASK.contains(&cmd.agent.as_str())
 }
+
+/// The only op string [`shutdown_op`](Daemon::shutdown_op) serves. The proof's
+/// op binding is checked against THIS constant, not against the caller's op
+/// echo: a challenge minted for any other op (`"approve:<id>"`, junk) must
+/// never authorize a shutdown by replaying the same op string back.
+const SHUTDOWN_OP: &str = "shutdown";
 
 impl Daemon {
     /// Open the daemon backed by the event log at `db_path`, creating parent dirs.
@@ -552,6 +565,19 @@ impl Daemon {
         nonce_hex: Option<&str>,
         proof_hex: Option<&str>,
     ) -> ipc::Response {
+        // Pin the op: this handler serves `shutdown` only. Without the pin, a
+        // challenge minted for another op (e.g. `AuthBegin("approve:<id>")`)
+        // could authorize a shutdown by echoing the same op string back — the
+        // proof would verify over that op — and an unprovisioned daemon would
+        // shut down on ANY op string, no proof at all. Found by the Phase 7
+        // approval-auth adversarial suite (`approval_auth.rs`); a monotonic
+        // tightening (adds a refusal, never removes one).
+        if op != SHUTDOWN_OP {
+            self.record_admin(op, false, "op not served by shutdown");
+            return ipc::Response::Error {
+                message: format!("shutdown requires a `{SHUTDOWN_OP}` challenge"),
+            };
+        }
         let vault = match self.current_vault() {
             VaultState::Degraded(_) => {
                 self.record_admin(op, false, "vault degraded");
@@ -620,6 +646,154 @@ impl Daemon {
             self.record_admin(op, false, "authentication failed");
             ipc::Response::Error {
                 message: "authentication failed".into(),
+            }
+        }
+    }
+
+    /// Complete an authenticated approval of queued command `id` (Phase 7,
+    /// anchored trust — the proof-of-human gate on self-approval).
+    ///
+    /// The design mirrors [`shutdown_op`](Self::shutdown_op) exactly:
+    /// - No vault → there is no secret to prove possession of, so approval is
+    ///   bare (the owner-only socket is the boundary; documented honestly in
+    ///   docs/security-assessment.md). This keeps the queue usable for users
+    ///   who never provisioned a vault — the gate must never brick the queue.
+    /// - Locked vault + bare request → **the threat case**: a same-user agent
+    ///   process that reached the socket tries to approve its own held
+    ///   command. Refused loudly with an actionable pointer at the human path,
+    ///   audited as a hash-chained `self-approval blocked` event, and counted
+    ///   by the same [`AuthThrottle`] as shutdown auth (5 free attempts, then
+    ///   30 s → doubling lockout, capped at 1 h) so hammering is defeated.
+    /// - Locked vault + nonce + proof → the one-shot pending challenge is
+    ///   consumed, the proof is verified op-bound (`"approve:<id>"`, so a proof
+    ///   can approve only the id it was issued for), and on success the
+    ///   approval resolves through the *usual* [`resolve_pending`] path — the
+    ///   kill-switch guard and the exactly-once CAS still apply. Auth decides
+    ///   *who may talk*; the rules layer still decides *what may happen*
+    ///   (spine: auth adds friction, it never unlocks).
+    /// - Policy opt-out (`[security] require_approval_proof = false`) accepts
+    ///   a bare approve again. The policy scope is the held command's repo
+    ///   (the same `.kintsugi.toml` scope that produced the hold), so one repo
+    ///   can opt out without weakening the default everywhere.
+    ///
+    /// `Deny` and `PrunePending` deliberately stay bare: an agent denying its
+    /// own held command is a nuisance, not a threat, and prune touches only the
+    /// queue, never the log.
+    fn approve_op(
+        &self,
+        id: &str,
+        nonce_hex: Option<&str>,
+        proof_hex: Option<&str>,
+    ) -> ipc::Response {
+        let op = format!("approve:{id}");
+        // The auth gate's policy scope: the held command's repo (same scope
+        // that decided the hold); the daemon's own cwd when the id is unknown.
+        let cwd = self
+            .log
+            .pending_command(id)
+            .ok()
+            .flatten()
+            .map(|c| c.cwd)
+            .unwrap_or_else(|| {
+                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+            });
+        let require_proof = load_policy(&cwd).require_approval_proof();
+
+        let vault = match self.current_vault() {
+            VaultState::Degraded(_) => {
+                self.record_admin(&op, false, "vault degraded");
+                return ipc::Response::Error {
+                    message: "admin vault is degraded; refusing privileged operations".into(),
+                };
+            }
+            // Unprovisioned: no lock exists, so a bare approval is allowed —
+            // the exact shutdown mirror.
+            VaultState::Unprovisioned => {
+                self.record_admin(&op, true, "unprovisioned");
+                return self.resolve_pending_response(id, Decision::Allow);
+            }
+            VaultState::Locked(v) => v,
+        };
+        // Brute-force lockout: shared with shutdown auth (same bounds). After
+        // repeated failures, refuse without even checking the proof; the
+        // attempt is still audited. A success resets the shared budget.
+        if let Some(rem) = self.throttle.borrow().lockout_remaining() {
+            self.record_admin(&op, false, "locked out");
+            return ipc::Response::Error {
+                message: format!(
+                    "too many failed attempts; locked out for {}s",
+                    rem.as_secs() + 1
+                ),
+            };
+        }
+        // Absence is None, never an empty string: a placeholder must never
+        // stand in for a real nonce/proof in the crypto path.
+        let nonce_hex = nonce_hex.filter(|s| !s.trim().is_empty());
+        let proof_hex = proof_hex.filter(|s| !s.trim().is_empty());
+        match (nonce_hex, proof_hex) {
+            // Bare under the opt-out: the pre-Phase-7 behavior, restored.
+            (None, None) if !require_proof => self.resolve_pending_response(id, Decision::Allow),
+            // Bare under the default: the self-approval attempt. Loud, audited,
+            // throttled — never silent.
+            (None, None) => {
+                self.throttle.borrow_mut().record_failure();
+                self.record_admin(&op, false, "self-approval blocked");
+                ipc::Response::Error {
+                    message: format!(
+                        "approval requires proof — run `kintsugi approve {id}` (or \
+                          `kintsugi run {id}`) and enter the admin password; see \
+                          docs/policy.md to allow bare approval"
+                    ),
+                }
+            }
+            // The one-shot challenge is consumed regardless of the outcome.
+            (Some(nonce_hex), Some(proof_hex)) => {
+                let pending = self.pending.borrow_mut().take();
+                let ok = match pending {
+                    Some((issued_nonce, issued_op)) => {
+                        match (hex::decode(nonce_hex), hex::decode(proof_hex)) {
+                            (Ok(nonce), Ok(proof)) => {
+                                issued_op == op
+                                    && issued_nonce == nonce
+                                    && vault.verify_proof(&nonce, op.as_bytes(), &proof)
+                            }
+                            _ => false,
+                        }
+                    }
+                    None => false,
+                };
+                if ok {
+                    self.throttle.borrow_mut().reset();
+                    self.record_admin(&op, true, "authenticated");
+                    self.resolve_pending_response(id, Decision::Allow)
+                } else {
+                    self.throttle.borrow_mut().record_failure();
+                    // Distinguish a wrong password from a vault that simply
+                    // can't carry a proof (pre-v2): the latter fails for every
+                    // password, so point at the one-line fix instead.
+                    if !vault.supports_proof() {
+                        self.record_admin(&op, false, "vault missing proof key");
+                        return ipc::Response::Error {
+                            message: "admin vault has no auth key — re-run `kintsugi admin \
+                                  provision --force` (the daemon picks it up immediately, no \
+                                  restart needed)"
+                                .into(),
+                        };
+                    }
+                    self.record_admin(&op, false, "authentication failed");
+                    ipc::Response::Error {
+                        message: "authentication failed".into(),
+                    }
+                }
+            }
+            // Half an attempt (a nonce without a proof or vice versa): not
+            // bare, and not a proof — count it as a failed attempt.
+            _ => {
+                self.throttle.borrow_mut().record_failure();
+                self.record_admin(&op, false, "authentication failed");
+                ipc::Response::Error {
+                    message: "authentication failed".into(),
+                }
             }
         }
     }
@@ -1120,7 +1294,12 @@ impl Daemon {
                     message: e.to_string(),
                 },
             },
-            ipc::Request::Approve { id } => self.resolve_pending_response(&id, Decision::Allow),
+            // Proof-of-human approval (Phase 7): authenticated on a locked
+            // daemon, audited + throttled when bare. `Deny`/`PrunePending`
+            // stay bare by design (nuisance, not threat / queue-only).
+            ipc::Request::Approve { id, nonce, proof } => {
+                self.approve_op(&id, nonce.as_deref(), proof.as_deref())
+            }
             ipc::Request::Deny { id } => self.resolve_pending_response(&id, Decision::Deny),
             ipc::Request::PrunePending => match self.log.prune_pending() {
                 Ok(n) => ipc::Response::Pending {

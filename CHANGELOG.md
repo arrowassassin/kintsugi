@@ -42,6 +42,24 @@ hardening pass from the review panels. Bundles everything since 0.2.1.
   only the stored log row is redacted — the existing model, unchanged. Still
   out of scope, honestly: sub-prompt secrets (`psql` → `\password`) and novel
   flags.
+- **Self-approval over IPC is now loud, failed, and audited (Phase 7 T2.1/T2.2).**
+  The socket is owner-only, but a same-user agent process can reach it and speak
+  the protocol — so a bare `Approve { id }` used to release an agent's own held
+  command silently, making the log's "a human approved this" a false claim
+  against the exact threat the queue exists for. With a provisioned vault and the
+  default `[security] require_approval_proof = true`, an approval now needs the
+  admin challenge (`AuthBegin("approve:<id>")` → password → op-bound one-shot
+  proof) through `kintsugi approve <id>`; a bare attempt is refused with an
+  actionable error, recorded as a hash-chained `admin approve:<id>` row
+  ("self-approval blocked"), and counted by the same lockout throttle as
+  privileged shutdown. Auth decides who may talk; the rules layer still decides
+  what may happen — the kill-switch and exactly-once CAS still run on the
+  resolved approval. A daemon with no vault keeps bare approval (there is no
+  secret to prove, and the queue must not brick); `Deny`/`PrunePending` stay bare
+  by design. Found while adversarially testing this: the privileged-op handler
+  never pinned its op string, so a challenge minted for another op could
+  authorise a shutdown and an unprovisioned daemon accepted any op with no proof
+  at all — now pinned to `"shutdown"`.
 - **Taint `source_id` is redacted before it can reach a log row or the model.**
   A provenance source identifier is meant to be an identifier only, but a URL is
   an identifier that can carry a credential (`https://u:tok@host/p`, a colonless

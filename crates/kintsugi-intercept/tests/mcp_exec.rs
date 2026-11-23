@@ -240,6 +240,12 @@ fn held_command_runs_after_human_approves_in_band() {
     std::env::set_var("KINTSUGI_SOCKET", tmp.path().join("kintsugi.sock"));
     std::env::set_var("KINTSUGI_DB", tmp.path().join("events.db"));
     std::env::set_var("KINTSUGI_CONFIG", tmp.path().join("none.toml"));
+    // Pin an absent vault so this test's daemon stays unprovisioned regardless
+    // of the machine it runs on: Phase 7 makes a locked daemon refuse a bare
+    // approve, which would (correctly) wedge this test's bare-approver loop on
+    // a machine that dogfoods a provisioned vault. Same convention as the cli
+    // tests ("never touches the machine's real vault or a tty").
+    std::env::set_var("KINTSUGI_VAULT", tmp.path().join("absent-vault.json"));
     std::env::set_var("KINTSUGI_APPROVAL_TIMEOUT", "10"); // enable in-band wait
 
     let work = tmp.path().join("work");
