@@ -960,3 +960,8 @@ the locked product decisions this build implements.
   plain-binary type short of building an `.mcpb` bundle. The registry step is a
   manual `workflow_dispatch` run, after `cargo publish`, so publishing stays human
   (STOP list); it authenticates with GitHub OIDC, so no registry token is stored.
+- 0.4.1 is a crate-only release to get the `mcp-name:` README line onto crates.io for the
+  MCP Registry: only the `kintsugi` crate is republished. The other workspace crates
+  stay at 0.4.0 on crates.io, which the `version = "0.4.0"` (^0.4.0) requirements still
+  resolve, so no code ships that was not already released. GitHub release binaries
+  and the Homebrew formula stay at v0.4.0 until the next full release.
