@@ -4,16 +4,16 @@
 # For the tap: copy this file (identical to `Formula/kintsugi.rb` at the repo
 # root) to `Formula/kintsugi.rb` in the `kintsugi-tools/homebrew-tap` repo,
 # then users run:
-#   brew install kintsugi-tools/kintsugi/kintsugi
+#   brew install kintsugi-tools/tap/kintsugi
 #
 # On each release: bump `url` to the new tag and set `sha256` to the source
 # tarball's checksum (`curl -L <url> | shasum -a 256`). See docs/homebrew.md.
 class Kintsugi < Formula
   desc "Local-first safety layer for AI coding agents"
   homepage "https://github.com/kintsugi-tools/kintsugi"
-  url "https://github.com/kintsugi-tools/kintsugi/archive/refs/tags/v0.4.0.tar.gz"
-  # sha256 of the GitHub auto-generated source archive for the v0.4.0 tag.
-  sha256 "e78bf8476228c8b65c304011dc300322ded87ad1ef47ad942a240691d39e2029"
+  url "https://github.com/kintsugi-tools/kintsugi/archive/refs/tags/v0.4.1.tar.gz"
+  # sha256 of the GitHub auto-generated source archive for the v0.4.1 tag.
+  sha256 "0073e4efc7f9f38cf43a841e0a753337221c3053fbe030c9571c0dd8b1c9ef0a"
   license "MIT"
   head "https://github.com/kintsugi-tools/kintsugi.git", branch: "main"
 

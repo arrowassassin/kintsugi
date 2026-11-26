@@ -22,9 +22,9 @@ A tap is just a GitHub repo named `homebrew-<name>` with formulae under `Formula
    ```
 4. Users install with:
    ```sh
-   brew install kintsugi-tools/kintsugi/kintsugi
+   brew install kintsugi-tools/tap/kintsugi
    # or
-   brew tap kintsugi-tools/kintsugi && brew install kintsugi
+   brew tap kintsugi-tools/tap && brew install kintsugi
    ```
 
 The formula builds the whole Rust workspace and installs all five binaries

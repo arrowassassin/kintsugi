@@ -966,3 +966,5 @@ the locked product decisions this build implements.
   resolve, so no code ships that was not already released. GitHub release binaries
   and the Homebrew formula stay at v0.4.0 until the next full release.
 - Plugin manifest versions (`.claude-plugin/marketplace.json`, `plugin/kintsugi/.claude-plugin/plugin.json`) track the workspace version.
+- 0.4.1 got a full GitHub release after all, so the Homebrew formula follows it to v0.4.1.
+- Desktop macOS builds move to the macos-15 arm64 runner (macos-14 retired); x86_64 stays cross-compiled there.
