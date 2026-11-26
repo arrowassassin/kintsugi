@@ -22,6 +22,8 @@ every agent did. Local-first: no cloud, no account, nothing leaves your machine.
 
 **Website:** https://kintsugi.tools/ · **Docs:** [`docs/`](docs/)
 
+- MCP Registry name: `mcp-name: io.github.kintsugi-tools/kintsugi`
+
 ![Kintsugi: a destructive command is held before it runs, denied, and lands on the tamper-evident timeline; then the live TUI](https://kintsugi.tools/cast.svg)
 
 *Real Kintsugi output, looping: hold card → denied timeline → live TUI. (Static

@@ -955,3 +955,8 @@ the locked product decisions this build implements.
   claim mechanism Glama requires for org-owned repos. It is pure metadata — no code,
   no network behaviour, no change to the security spine — and Glama's own container
   build installs the published release binary rather than anything new in this repo.
+- MCP Registry listing goes through the crates.io package (`registryType: cargo`):
+  the npm name `kintsugi` belongs to an unrelated project, and the registry has no
+  plain-binary type short of building an `.mcpb` bundle. The registry step is a
+  manual `workflow_dispatch` run, after `cargo publish`, so publishing stays human
+  (STOP list); it authenticates with GitHub OIDC, so no registry token is stored.
