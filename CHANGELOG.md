@@ -5,6 +5,11 @@ All notable changes to Kintsugi are documented here. The format loosely follows
 
 ## [Unreleased]
 
+### Listing
+- **`glama.json`** at the repo root names the maintainer, so the `kintsugi-mcp`
+  server (`kintsugi-exec` tool) can be claimed on Glama's MCP directory. Metadata
+  only; no code or behaviour change.
+
 ### Packaging
 - **Homebrew formula follows the release.** `Formula/kintsugi.rb` and its
   `packaging/homebrew/` mirror move to v0.4.0 with the source tarball's real

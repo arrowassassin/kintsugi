@@ -951,3 +951,7 @@ the locked product decisions this build implements.
   itself stays human (STOP list), so this repo only ever holds a tap-ready copy:
   two identical files (`Formula/kintsugi.rb` at the root, mirrored at
   `packaging/homebrew/kintsugi.rb`) that a maintainer copies across.
+- Directory listing (Glama): a root `glama.json` naming the maintainer is the
+  claim mechanism Glama requires for org-owned repos. It is pure metadata — no code,
+  no network behaviour, no change to the security spine — and Glama's own container
+  build installs the published release binary rather than anything new in this repo.
