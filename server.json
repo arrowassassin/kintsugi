@@ -1,0 +1,22 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.kintsugi-tools/kintsugi",
+  "title": "Kintsugi",
+  "description": "Guards AI agents' shell commands: holds dangerous ones, makes them undoable, logs everything.",
+  "repository": {
+    "url": "https://github.com/kintsugi-tools/kintsugi",
+    "source": "github"
+  },
+  "websiteUrl": "https://kintsugi.tools/",
+  "version": "0.0.0",
+  "packages": [
+    {
+      "registryType": "cargo",
+      "identifier": "kintsugi",
+      "version": "0.0.0",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

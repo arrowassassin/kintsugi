@@ -5,6 +5,16 @@ All notable changes to Kintsugi are documented here. The format loosely follows
 
 ## [Unreleased]
 
+### Listing
+- **`glama.json`** at the repo root names the maintainer, so the `kintsugi-mcp`
+  server (`kintsugi-exec` tool) can be claimed on Glama's MCP directory. Metadata
+  only; no code or behaviour change.
+- **Official MCP Registry.** `server.json` describes the server as
+  `io.github.kintsugi-tools/kintsugi` (crates.io package `kintsugi`, which
+  installs `kintsugi-mcp`); the README carries the visible `mcp-name:` line the
+  registry checks on crates.io; and the manual `Publish to MCP Registry` workflow
+  lists a version after the maintainer has published that crate.
+
 ### Packaging
 - **Homebrew formula follows the release.** `Formula/kintsugi.rb` and its
   `packaging/homebrew/` mirror move to v0.4.0 with the source tarball's real
