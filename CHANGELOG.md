@@ -7,6 +7,7 @@ All notable changes to Kintsugi are documented here. The format loosely follows
 
 - Claude Code plugin manifests report version 0.4.1 (were 0.1.0).
 - Homebrew formula builds v0.4.1; 0.4.1 now has a GitHub release with binaries.
+- Desktop release builds macOS on `macos-15`; GitHub retired the `macos-14` runner image.
 
 ## [0.4.1] — 2026-11-26
 
