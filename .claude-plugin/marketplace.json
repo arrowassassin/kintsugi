@@ -12,7 +12,7 @@
       "displayName": "Kintsugi Safety Layer",
       "source": "./plugin/kintsugi",
       "description": "Intercept commands before they run, hold the dangerous ones for one-key approval, make destructive actions reversible, and keep a tamper-evident audit log. Requires the Kintsugi binaries (`cargo install kintsugi` or Homebrew).",
-      "version": "0.1.0",
+      "version": "0.4.1",
       "author": { "name": "kintsugi-tools" },
       "homepage": "https://github.com/kintsugi-tools/kintsugi",
       "license": "MIT",

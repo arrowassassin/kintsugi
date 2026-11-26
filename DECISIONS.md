@@ -965,3 +965,4 @@ the locked product decisions this build implements.
   stay at 0.4.0 on crates.io, which the `version = "0.4.0"` (^0.4.0) requirements still
   resolve, so no code ships that was not already released. GitHub release binaries
   and the Homebrew formula stay at v0.4.0 until the next full release.
+- Plugin manifest versions (`.claude-plugin/marketplace.json`, `plugin/kintsugi/.claude-plugin/plugin.json`) track the workspace version.

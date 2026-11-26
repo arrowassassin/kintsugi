@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "kintsugi",
   "displayName": "Kintsugi Safety Layer",
-  "version": "0.1.0",
+  "version": "0.4.1",
   "description": "Local-first safety layer for AI coding agents: intercepts commands before they run, holds the dangerous ones for one-key approval, makes destructive actions reversible, and keeps a tamper-evident audit log. Wires Claude Code to the Kintsugi binaries (install separately via `cargo install kintsugi` or Homebrew).",
   "author": {
     "name": "kintsugi-tools",
