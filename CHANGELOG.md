@@ -5,6 +5,14 @@ All notable changes to Kintsugi are documented here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-11-26
+
+### Release
+- Crate-only release so crates.io shows the README's `mcp-name:` line, which the
+  official MCP Registry checks before listing `io.github.kintsugi-tools/kintsugi`.
+  No code change; only the `kintsugi` crate is republished (the other workspace
+  crates stay at 0.4.0, which `^0.4.0` still matches).
+
 ### Listing
 - **`glama.json`** at the repo root names the maintainer, so the `kintsugi-mcp`
   server (`kintsugi-exec` tool) can be claimed on Glama's MCP directory. Metadata
