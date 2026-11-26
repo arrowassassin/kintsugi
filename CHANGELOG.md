@@ -5,6 +5,8 @@ All notable changes to Kintsugi are documented here. The format loosely follows
 
 ## [Unreleased]
 
+- Claude Code plugin manifests report version 0.4.1 (were 0.1.0).
+
 ## [0.4.1] — 2026-11-26
 
 ### Release
